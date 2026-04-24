@@ -1,0 +1,15 @@
+[project]
+name = "qq"
+version = "0.1.0"
+description = "Lightweight async distributed task queue"
+requires-python = ">=3.13"
+dependencies = ["pydantic>=2.6", "orjson>=3.10", "anyio>=4.4", "uvloop>=0.22.1"]
+
+[project.optional-dependencies]
+redis = ["redis>=5.0"]
+nats = ["nats-py>=2.7"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
