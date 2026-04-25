@@ -8,9 +8,8 @@ import anyio
 from redis.asyncio import Redis
 
 from ..exceptions import InvalidReceiptType, NotConnected
-from ..serializers import JSONSerializer, Serializer
-
 from ..message import Message
+from ..serializers import JSONSerializer, Serializer
 from .base import Broker, Delivery
 
 _MOVE_LUA = """
@@ -104,7 +103,7 @@ class RedisBroker(Broker):
 			if not_before.tzinfo is None
 			else not_before.timestamp()
 		)
-		await self.r.zadd(self._zset(msg.queue), {msg: score})
+		await self.r.zadd(self._zset(msg.queue), {self.serializer.marshal(msg): score})
 
 	async def _pump_scheduled(self, queues: list[str]) -> None:
 		if self._move_sha is None:

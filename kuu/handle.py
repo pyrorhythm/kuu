@@ -7,6 +7,7 @@ from uuid import UUID
 import anyio
 
 from kuu.exceptions import NotConnected, TaskError
+from kuu.results.base import result_key
 
 if TYPE_CHECKING:
 	from kuu.app import Kuu
@@ -26,7 +27,7 @@ class TaskHandle[Res]:
 
 	@property
 	def key(self) -> str:
-		return self.message.headers.get("idempotency_key") or str(self.message.id)
+		return result_key(self.message)
 
 	async def _poll_once(self) -> tuple[bool, Res]:
 		if self.app.results is None:

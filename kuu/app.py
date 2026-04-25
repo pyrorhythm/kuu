@@ -27,6 +27,9 @@ class Kuu:
 		middleware: list[Middleware] | None = None,
 		results: ResultBackend | None = None,
 		serializer: Serializer = JSONSerializer(),
+		result_ttl: float = 86400,
+		result_replay: bool = True,
+		result_store_errors: bool = True,
 	):
 		self.broker = broker
 		self.results = results
@@ -35,6 +38,9 @@ class Kuu:
 		self.middleware: list[Middleware] = list(middleware or [])
 		self.registry = Registry()
 		self.events = Events()
+		self.result_ttl = result_ttl
+		self.result_replay = result_replay
+		self.result_store_errors = result_store_errors
 
 	@overload
 	def task[**P, R](

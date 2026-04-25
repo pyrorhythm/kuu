@@ -3,11 +3,18 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from .._import import get_type_fqn, get_type_from_fqn
+from ..message import Message
 from ..result import Result
 from ..serializers import (
 	JSONSerializer,
 	Serializer,
 )
+
+IDEMPOTENCY_HEADER = "idempotency_key"
+
+
+def result_key(msg: Message) -> str:
+	return msg.headers.get(IDEMPOTENCY_HEADER) or str(msg.id)
 
 
 class ResultBackend(Protocol):
@@ -41,4 +48,11 @@ class ResultBackend(Protocol):
 	async def setnx(self, key: str, result: Result, ttl: float | None = None) -> bool: ...
 
 
-__all__ = ["Result", "ResultBackend", "Serializer", "JSONSerializer"]
+__all__ = [
+	"Result",
+	"ResultBackend",
+	"Serializer",
+	"JSONSerializer",
+	"result_key",
+	"IDEMPOTENCY_HEADER",
+]

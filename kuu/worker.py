@@ -14,6 +14,8 @@ from kuu.context import Context
 from kuu.exceptions import RejectErr, RetryErr, UnknownTask
 from kuu.middleware.base import run_chain
 from kuu.outcome import Fail, Ok, Outcome, Reject, Retry
+from kuu.result import Result
+from kuu.results.base import result_key
 
 if TYPE_CHECKING:
 	from kuu.app import Kuu
@@ -97,6 +99,21 @@ class Worker:
 
 		outcome: Outcome
 		cancelled = False
+		results = self.app.results
+		key = result_key(msg)
+
+		if results is not None and self.app.result_replay:
+			cached = await results.get(key)
+			if cached is not None and cached.status == "ok":
+				with anyio.CancelScope(shield=True):
+					await self._finalize(delivery, msg, Ok(0.0))
+				async with self._inflight_lock:
+					self._inflight -= 1
+					if self._inflight == 0:
+						self._idle.set()
+				self._sem.release()
+				return
+
 		try:
 			if task is None:
 				raise UnknownTask(msg.task)
@@ -118,7 +135,14 @@ class Worker:
 				return r
 
 			started = time.perf_counter()
-			await run_chain(ctx, self.app.middleware, _terminal)
+			value = await run_chain(ctx, self.app.middleware, _terminal)
+			if results is not None:
+				payload, type_fqn = results.encode(value)
+				await results.set(
+					key,
+					Result(status="ok", value=payload, type=type_fqn),
+					ttl=self.app.result_ttl,
+				)
 			outcome = Ok(time.perf_counter() - started)
 		except RetryErr as r:
 			outcome = Retry(
@@ -131,6 +155,18 @@ class Worker:
 		except BaseException as e:
 			outcome = Fail(e)
 			cancelled = isinstance(e, anyio.get_cancelled_exc_class())
+			if (
+				results is not None
+				and self.app.result_store_errors
+				and msg.attempt + 1 >= msg.max_attempts
+				and not cancelled
+			):
+				with anyio.CancelScope(shield=True):
+					await results.set(
+						key,
+						Result(status="error", error=f"{type(e).__name__}: {e}"),
+						ttl=self.app.result_ttl,
+					)
 
 		with anyio.CancelScope(shield=True):
 			await self._finalize(delivery, msg, outcome)
