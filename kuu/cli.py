@@ -111,7 +111,3 @@ def _info(
 			t.max_attempts,
 			t.timeout,
 		)
-
-
-if __name__ == "__main__":
-	app()

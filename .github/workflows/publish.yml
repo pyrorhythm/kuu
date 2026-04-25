@@ -1,12 +1,14 @@
 name: publish
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
+  pull_request:
+    types: [closed]
+    branches:
+      - master
 
 jobs:
   publish:
+    if: github.event.pull_request.merged == true && github.event.pull_request.head.ref == 'dev'
     runs-on: ubuntu-latest
     environment:
       name: pypi

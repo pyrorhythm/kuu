@@ -45,7 +45,7 @@ dependencies = [
 ]
 
 [project.scripts]
-kuu = "kuu.cli:main"
+kuu = "kuu.cli:app"
 
 [project.optional-dependencies]
 msgspec = ["msgspec>=0.21"]
