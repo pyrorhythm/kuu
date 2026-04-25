@@ -111,10 +111,12 @@ class NatsBroker(Broker):
     async def consume(self, queues: list[str], prefetch: int) -> AsyncIterator[Delivery[Msg]]:
         for q in queues:
             await self.declare(q)
+
         subs = {
             q: await self.js.pull_subscribe(self._subject(q), durable=self._durable(q))
             for q in queues
         }
+
         async with anyio.create_task_group() as tg:
             tg.start_soon(self._pump_scheduled)
 

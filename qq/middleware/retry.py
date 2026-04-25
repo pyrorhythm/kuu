@@ -4,7 +4,7 @@ import random
 from typing import Any
 
 from ..context import Context
-from ..exceptions import Reject, Retry
+from ..exceptions import RejectErr, RetryErr
 from .base import Next
 
 
@@ -23,9 +23,9 @@ class RetryMiddleware:
             return await call_next()
         try:
             return await call_next()
-        except Reject:
+        except RejectErr:
             raise
-        except Retry as r:
+        except RetryErr as r:
             delay = r.delay if r.delay is not None else self._backoff(ctx.message.attempt)
             ctx.state["retry_delay"] = delay
             raise
@@ -33,4 +33,4 @@ class RetryMiddleware:
             if ctx.message.attempt + 1 >= ctx.message.max_attempts:
                 raise
             ctx.state["retry_delay"] = self._backoff(ctx.message.attempt)
-            raise Retry(delay=ctx.state["retry_delay"], reason="exception")
+            raise RetryErr(delay=ctx.state["retry_delay"], reason="exception")
