@@ -56,11 +56,7 @@ class MemoryBroker(Broker):
 		return datetime.now(timezone.utc).timestamp()
 
 	def _ts(self, dt: datetime) -> float:
-		return (
-			dt.replace(tzinfo=timezone.utc).timestamp()
-			if dt.tzinfo is None
-			else dt.timestamp()
-		)
+		return dt.replace(tzinfo=timezone.utc).timestamp() if dt.tzinfo is None else dt.timestamp()
 
 	async def _push(self, queue: str, msg: Message) -> None:
 		await self.declare(queue)
@@ -75,9 +71,7 @@ class MemoryBroker(Broker):
 	async def schedule(self, msg: Message, not_before: datetime) -> None:
 		await self.declare(msg.queue)
 		async with self._sched_lock:
-			heapq.heappush(
-				self._scheduled, (self._ts(not_before), next(self._seq), msg.queue, msg)
-			)
+			heapq.heappush(self._scheduled, (self._ts(not_before), next(self._seq), msg.queue, msg))
 			self._sched_event.set()
 			self._sched_event = anyio.Event()
 

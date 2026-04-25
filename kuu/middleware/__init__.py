@@ -5,11 +5,10 @@ from .retry import RetryMiddleware
 from .timeout import TimeoutMiddleware
 
 __all__ = [
-    "Middleware",
-    "run_chain",
-    "RetryMiddleware",
-    "TimeoutMiddleware",
-    "LoggingMiddleware",
-    "ResultsMiddleware",
+	"Middleware",
+	"run_chain",
+	"RetryMiddleware",
+	"TimeoutMiddleware",
+	"LoggingMiddleware",
+	"ResultsMiddleware",
 ]
-

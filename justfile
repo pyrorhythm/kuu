@@ -14,10 +14,10 @@ lint PATH=".":
     uv run ruff check --fix-only "{{ PATH }}"
     uv run ruff format "{{ PATH }}"
 
-typecheck PATH="src":
+typecheck PATH="kuu":
     uv run pyrefly check "{{ PATH }}"
 
-push-commit MSG: sync lint (typecheck 'src') (test '-q' 'no')
+push-commit MSG: sync lint typecheck (test '-q' 'no')
     git add .
     git commit -m "{{ MSG }}"
     git push
@@ -35,7 +35,7 @@ tag-push SEMVER:
     git tag -a "{{ SEMVER }}" -m "release: {{ SEMVER }}"
     git push origin "{{ SEMVER }}"
 
-release SEMVER: sync lint (typecheck 'src') (test '-q' 'no') (bump SEMVER) (release-git SEMVER) (tag-push SEMVER)
+release SEMVER: sync lint typecheck (test '-q' 'no') (bump SEMVER) (release-git SEMVER) (tag-push SEMVER)
 
 [arg('q', long='quiet', short='q', value='-q')]
 [arg('tb', long='tb')]
