@@ -4,9 +4,9 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
-	from qq.app import Q
-	from qq.message import Message
-	from qq.task import Task
+	from kuu.app import Kuu
+	from kuu.message import Message
+	from kuu.task import Task
 
 
 type Phase = Literal["enqueue", "process"]
@@ -14,7 +14,7 @@ type Phase = Literal["enqueue", "process"]
 
 @dataclass
 class Context:
-	app: Q
+	app: Kuu
 	message: Message
 	phase: Phase
 	task: Task | None = None

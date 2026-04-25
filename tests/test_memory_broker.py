@@ -5,8 +5,8 @@ from datetime import datetime, timedelta, timezone
 import anyio
 import pytest
 
-from qq.brokers.memory import MemoryBroker
-from qq.message import Message, Payload
+from kuu.brokers.memory import MemoryBroker
+from kuu.message import Message, Payload
 
 
 def _msg(**kw) -> Message:

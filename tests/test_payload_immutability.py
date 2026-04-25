@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from qq.message import Message, Payload
+from kuu.message import Message, Payload
 
 
 def test_payload_is_frozen_so_middleware_cannot_mutate_in_place():

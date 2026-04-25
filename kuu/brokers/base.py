@@ -3,16 +3,13 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Protocol
 
 from ..message import Message
 
 
-class Receipt: ...
-
-
 @dataclass
-class Delivery[Receipt = Any]:
+class Delivery[Receipt]:
 	message: Message
 	receipt: Receipt
 	queue: str

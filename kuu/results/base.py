@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from qq._import import get_type_fqn, get_type_from_fqn
-from qq.result import Result
-from qq.serializers.base import Serializer
-from qq.serializers.json import JSONSerializer
+from .._import import get_type_fqn, get_type_from_fqn
+from ..result import Result
+from ..serializers import (
+	JSONSerializer,
+	Serializer,
+)
 
 
 class ResultBackend(Protocol):

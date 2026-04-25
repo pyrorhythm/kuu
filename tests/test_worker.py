@@ -6,14 +6,14 @@ from typing import Any
 import anyio
 import pytest
 
-from qq.app import Q
-from qq.brokers.memory import MemoryBroker
-from qq.exceptions import RetryErr
-from qq.middleware import RetryMiddleware
-from qq.worker import Worker
+from kuu.app import Kuu
+from kuu.brokers.memory import MemoryBroker
+from kuu.exceptions import RetryErr
+from kuu.middleware import RetryMiddleware
+from kuu.worker import Worker
 
 
-async def _run_worker_until(app: Q, predicate, *, timeout: float = 3.0) -> None:
+async def _run_worker_until(app: Kuu, predicate, *, timeout: float = 3.0) -> None:
 	"""Run a worker in a task group until `predicate()` is true, then cancel."""
 	worker = Worker(app, queues=["default"], concurrency=4)
 
@@ -30,7 +30,7 @@ async def _run_worker_until(app: Q, predicate, *, timeout: float = 3.0) -> None:
 
 @pytest.mark.anyio
 async def test_blocking_task_runs_off_event_loop_thread():
-	app = Q(broker=MemoryBroker())
+	app = Kuu(broker=MemoryBroker())
 	main_thread = threading.get_ident()
 	captured: dict[str, Any] = {}
 
@@ -49,7 +49,7 @@ async def test_blocking_task_runs_off_event_loop_thread():
 
 @pytest.mark.anyio
 async def test_async_task_runs_on_event_loop_thread():
-	app = Q(broker=MemoryBroker())
+	app = Kuu(broker=MemoryBroker())
 	main_thread = threading.get_ident()
 	captured: dict[str, Any] = {}
 
@@ -68,7 +68,7 @@ async def test_async_task_runs_on_event_loop_thread():
 
 @pytest.mark.anyio
 async def test_retry_err_causes_re_delivery_with_attempt_incremented():
-	app = Q(broker=MemoryBroker(), middleware=[RetryMiddleware(base=0.01, cap=0.05)])
+	app = Kuu(broker=MemoryBroker(), middleware=[RetryMiddleware(base=0.01, cap=0.05)])
 	attempts: list[int] = []
 
 	@app.task(max_attempts=3)
@@ -86,7 +86,7 @@ async def test_retry_err_causes_re_delivery_with_attempt_incremented():
 
 @pytest.mark.anyio
 async def test_blocking_flag_rejects_async_function():
-	app = Q(broker=MemoryBroker())
+	app = Kuu(broker=MemoryBroker())
 
 	with pytest.raises(TypeError, match="blocking=True"):
 

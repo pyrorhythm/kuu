@@ -6,7 +6,7 @@ from typing import Any, Literal, overload
 import orjson
 from pydantic import BaseModel
 
-from qq.serializers.base import Serializer
+from .base import Serializer
 
 msgspec_json = None
 

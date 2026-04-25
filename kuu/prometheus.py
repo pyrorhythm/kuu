@@ -6,7 +6,7 @@ from uuid import UUID
 from prometheus_client import REGISTRY, CollectorRegistry, Counter, Gauge, Histogram
 
 if TYPE_CHECKING:
-	from .app import Q
+	from .app import Kuu
 	from .message import Message
 
 
@@ -61,7 +61,7 @@ class PrometheusMetrics:
 
 	def __init__(
 		self,
-		app: Q,
+		app: Kuu,
 		namespace: str = "qq",
 		registry: CollectorRegistry = REGISTRY,
 		duration_buckets: tuple[float, ...] = _default_duration_buckets,

@@ -2,24 +2,39 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from qq.app import Q
-from qq.brokers.memory import MemoryBroker
-from qq.scheduler.scheduler import Scheduler, _build_expr
+from kuu.app import Kuu
+from kuu.brokers.memory import MemoryBroker
+from kuu.scheduler import Scheduler, IntervalJob
+from kuu.scheduler.scheduler import _build_expr
 
 
 def test_structured_kwargs_apply_smaller_field_zero_default():
 	# hour=10 should fire at 10:00:00 once a day, not every minute of hour 10
 	expr = _build_expr(
-		second=None, minute=None, hour=10, day=None, month=None, day_of_week=None,
-		second_interval=None, minute_interval=None, hour_interval=None,
+		second=None,
+		minute=None,
+		hour=10,
+		day=None,
+		month=None,
+		day_of_week=None,
+		second_interval=None,
+		minute_interval=None,
+		hour_interval=None,
 	)
 	assert expr == "0 0 10 * * *"
 
 
 def test_hour_interval_shorthand_expands_to_step_form():
 	expr = _build_expr(
-		second=None, minute=None, hour=None, day=None, month=None, day_of_week=None,
-		second_interval=None, minute_interval=None, hour_interval=4,
+		second=None,
+		minute=None,
+		hour=None,
+		day=None,
+		month=None,
+		day_of_week=None,
+		second_interval=None,
+		minute_interval=None,
+		hour_interval=4,
 	)
 	assert expr == "0 0 */4 * * *"
 
@@ -29,22 +44,35 @@ def test_specifying_both_field_and_interval_is_rejected():
 
 	with pytest.raises(ValueError, match="hour"):
 		_build_expr(
-			second=None, minute=None, hour=10, day=None, month=None, day_of_week=None,
-			second_interval=None, minute_interval=None, hour_interval=4,
+			second=None,
+			minute=None,
+			hour=10,
+			day=None,
+			month=None,
+			day_of_week=None,
+			second_interval=None,
+			minute_interval=None,
+			hour_interval=4,
 		)
 
 
 def test_list_field_expands_to_comma_separated():
 	expr = _build_expr(
-		second=None, minute=[0, 15, 30, 45], hour=None,
-		day=None, month=None, day_of_week=None,
-		second_interval=None, minute_interval=None, hour_interval=None,
+		second=None,
+		minute=[0, 15, 30, 45],
+		hour=None,
+		day=None,
+		month=None,
+		day_of_week=None,
+		second_interval=None,
+		minute_interval=None,
+		hour_interval=None,
 	)
 	assert expr == "0 0,15,30,45 * * * *"
 
 
 def test_immediate_start_schedules_first_run_at_now():
-	app = Q(broker=MemoryBroker())
+	app = Kuu(broker=MemoryBroker())
 	sched = Scheduler(app)
 	before = datetime.now(timezone.utc)
 	job = sched.cron(task="t", hour=4, immediate_start=True)
@@ -54,11 +82,13 @@ def test_immediate_start_schedules_first_run_at_now():
 
 
 def test_interval_job_skips_missed_runs_after_long_pause():
-	from qq.scheduler.job import IntervalJob
 
 	t0 = datetime(2026, 4, 25, 12, 0, 0, tzinfo=timezone.utc)
 	job = IntervalJob(
-		id="j", task_name="t", every=timedelta(seconds=10), next_run=t0,
+		id="j",
+		task_name="t",
+		every=timedelta(seconds=10),
+		next_run=t0,
 	)
 	# pretend we resumed 95 seconds late
 	now = t0 + timedelta(seconds=95)

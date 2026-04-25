@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from prometheus_client import CollectorRegistry
 
-from qq.app import Q
-from qq.brokers.memory import MemoryBroker
-from qq.message import Message, Payload
-from qq.prometheus import PrometheusMetrics
+from kuu.app import Kuu
+from kuu.brokers.memory import MemoryBroker
+from kuu.message import Message, Payload
+from kuu.prometheus import PrometheusMetrics
 
 
 def _msg() -> Message:
@@ -17,7 +17,7 @@ def _val(metric, **labels) -> float:
 
 
 async def test_success_path_increments_counters_and_settles_in_flight():
-	app = Q(broker=MemoryBroker())
+	app = Kuu(broker=MemoryBroker())
 	m = PrometheusMetrics(app, registry=CollectorRegistry())
 
 	msg = _msg()
@@ -38,7 +38,7 @@ async def test_fail_then_dead_decrements_in_flight_only_once():
 
 	Metrics must increment failed_total and dead_total each, but
 	in_flight must drop by exactly 1 (not 2)."""
-	app = Q(broker=MemoryBroker())
+	app = Kuu(broker=MemoryBroker())
 	m = PrometheusMetrics(app, registry=CollectorRegistry())
 
 	msg = _msg()
@@ -54,7 +54,7 @@ async def test_fail_then_dead_decrements_in_flight_only_once():
 
 async def test_reject_path_dead_alone_still_settles_in_flight():
 	"""RejectErr path emits only task_dead (no task_failed beforehand)."""
-	app = Q(broker=MemoryBroker())
+	app = Kuu(broker=MemoryBroker())
 	m = PrometheusMetrics(app, registry=CollectorRegistry())
 
 	msg = _msg()
@@ -66,7 +66,7 @@ async def test_reject_path_dead_alone_still_settles_in_flight():
 
 
 async def test_retry_records_delay_histogram():
-	app = Q(broker=MemoryBroker())
+	app = Kuu(broker=MemoryBroker())
 	m = PrometheusMetrics(app, registry=CollectorRegistry())
 
 	msg = _msg()

@@ -10,22 +10,22 @@ import anyio
 import anyio.to_thread
 from anyio.abc import CancelScope, TaskGroup
 
-from qq.context import Context
-from qq.exceptions import RejectErr, RetryErr, UnknownTask
-from qq.middleware.base import run_chain
-from qq.outcome import Fail, Ok, Outcome, Reject, Retry
+from kuu.context import Context
+from kuu.exceptions import RejectErr, RetryErr, UnknownTask
+from kuu.middleware.base import run_chain
+from kuu.outcome import Fail, Ok, Outcome, Reject, Retry
 
 if TYPE_CHECKING:
-	from qq.app import Q
-	from qq.brokers.base import Delivery
+	from kuu.app import Kuu
+	from kuu.brokers.base import Delivery
 
-log = logging.getLogger("qq.worker")
+log = logging.getLogger("kuu.worker")
 
 
 class Worker:
 	def __init__(
 		self,
-		app: Q,
+		app: Kuu,
 		queues: list[str] | None = None,
 		concurrency: int = 64,
 		prefetch: int | None = None,

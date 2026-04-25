@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from redis.asyncio import Redis
 
-from qq.exceptions import NotConnected
-from qq.serializers import JSONSerializer
-from qq.serializers.base import Serializer
+from ..exceptions import NotConnected
+from ..serializers import JSONSerializer
+from ..serializers.base import Serializer
 
 from .base import Result, ResultBackend
 

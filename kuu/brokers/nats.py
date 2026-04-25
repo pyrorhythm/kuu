@@ -10,8 +10,8 @@ from nats.aio.msg import Msg
 from nats.js import JetStreamContext
 from nats.js.api import ConsumerConfig, RetentionPolicy, StreamConfig
 
-from qq.exceptions import InvalidReceiptType
-from qq.serializers import JSONSerializer, Serializer
+from ..exceptions import InvalidReceiptType
+from ..serializers import JSONSerializer, Serializer
 
 from ..message import Message
 from .base import Broker, Delivery

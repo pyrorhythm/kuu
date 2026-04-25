@@ -8,13 +8,13 @@ import anyio
 import typer
 from typer import Argument, Option
 
-from qq._import import import_object, import_tasks
-from qq.app import Q
-from qq.worker import Worker
+from kuu._import import import_object, import_tasks
+from kuu.app import Kuu
+from kuu.worker import Worker
 
-log = logging.getLogger("qq.cli")
+log = logging.getLogger("kuu.cli")
 
-app = typer.Typer(name="qq")
+app = typer.Typer(name="kuu")
 
 _fqn_re = re.compile(
 	r"^[a-zA-Z_][a-zA-Z0-9_]*"
@@ -23,12 +23,12 @@ _fqn_re = re.compile(
 )
 
 
-def _load_app(fqn: str) -> Q:
+def _load_app(fqn: str) -> Kuu:
 	if not _fqn_re.fullmatch(fqn):
 		raise SystemExit(f"invalid app target: {fqn!r}; expected 'module[:attr]'")
 	app = import_object(fqn)
-	if not isinstance(app, Q):
-		raise SystemExit(f"{fqn!r} is not a qq.Q instance")
+	if not isinstance(app, Kuu):
+		raise SystemExit(f"{fqn!r} is not a kuu.Q instance")
 	return app
 
 

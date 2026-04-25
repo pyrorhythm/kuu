@@ -6,9 +6,9 @@ from dataclasses import field
 from typing import TYPE_CHECKING, Any, Awaitable, Mapping, cast
 
 if TYPE_CHECKING:
-	from qq._types import _Fn
-	from qq.app import Q
-	from qq.handle import TaskHandle
+	from kuu._types import _Fn
+	from kuu.app import Kuu
+	from kuu.handle import TaskHandle
 
 
 async def if_async[T](arg: T | Awaitable[T]) -> T:
@@ -22,11 +22,11 @@ class Task[**P, Res]:
 	max_attempts: int = 5
 	timeout: float | None = None
 	blocking: bool = False
-	_bound_app: Q | None = field(default=None, repr=False)
+	_bound_app: Kuu | None = field(default=None, repr=False)
 
 	def __init__(
 		self,
-		manager: Q,
+		manager: Kuu,
 		original_func: _Fn[P, Res],
 		task_name: str,
 		task_queue: str,

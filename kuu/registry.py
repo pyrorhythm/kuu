@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-	from qq.task import Task
+	from kuu.task import Task
 
 
 class Registry:

@@ -9,12 +9,12 @@ from typing import TYPE_CHECKING
 import anyio
 from croniter import croniter
 
-from qq.message import Payload
-from qq.scheduler.job import BaseJob, CronJob, IntervalJob
-from qq.task import Task
+from ..message import Payload
+from .job import BaseJob, CronJob, IntervalJob
+from ..task import Task
 
 if TYPE_CHECKING:
-	from qq.app import Q
+	from ..app import Kuu
 
 log = logging.getLogger("qq.scheduler")
 
@@ -108,7 +108,7 @@ def _build_expr(
 
 
 class Scheduler:
-	def __init__(self, app: Q):
+	def __init__(self, app: Kuu):
 		self.app = app
 		self.jobs: list[BaseJob] = []
 

@@ -4,22 +4,22 @@ import inspect
 from datetime import datetime, timezone
 from typing import Any, overload
 
-from ._import import object_fqn
-from ._types import _Fn, _FnAsync, _Wrap
-from .brokers.base import Broker
-from .context import Context
-from .events import Events
-from .handle import TaskHandle
-from .message import Message, Payload
-from .middleware.base import Middleware, run_chain
-from .registry import Registry
-from .results.base import ResultBackend
-from .serializers.base import Serializer
-from .serializers.json import JSONSerializer
-from .task import Task
+from kuu._import import object_fqn
+from kuu._types import _Fn, _FnAsync, _Wrap
+from kuu.brokers.base import Broker
+from kuu.context import Context
+from kuu.events import Events
+from kuu.handle import TaskHandle
+from kuu.message import Message, Payload
+from kuu.middleware.base import Middleware, run_chain
+from kuu.registry import Registry
+from kuu.results.base import ResultBackend
+from kuu.serializers.base import Serializer
+from kuu.serializers.json import JSONSerializer
+from kuu.task import Task
 
 
-class Q:
+class Kuu:
 	def __init__(
 		self,
 		broker: Broker,

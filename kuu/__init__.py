@@ -1,4 +1,4 @@
-from .app import Q
+from .app import Kuu
 from .brokers.base import Broker, Delivery
 from .context import Context
 from .exceptions import NotConnected, RejectErr, RetryErr, TaskError
@@ -10,7 +10,7 @@ from .handle import TaskHandle
 from .task import Task
 
 __all__ = [
-	"Q",
+	"Kuu",
 	"Task",
 	"TaskHandle",
 	"Message",

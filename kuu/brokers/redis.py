@@ -7,8 +7,8 @@ from typing import Awaitable, Callable, NamedTuple, cast
 import anyio
 from redis.asyncio import Redis
 
-from qq.exceptions import InvalidReceiptType, NotConnected
-from qq.serializers import JSONSerializer, Serializer
+from ..exceptions import InvalidReceiptType, NotConnected
+from ..serializers import JSONSerializer, Serializer
 
 from ..message import Message
 from .base import Broker, Delivery

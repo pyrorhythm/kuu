@@ -6,17 +6,17 @@ from uuid import UUID
 
 import anyio
 
-from qq.exceptions import NotConnected, TaskError
+from kuu.exceptions import NotConnected, TaskError
 
 if TYPE_CHECKING:
-	from qq.app import Q
-	from qq.message import Message
+	from kuu.app import Kuu
+	from kuu.message import Message
 
 
 class TaskHandle[Res]:
 	__slots__ = ("message", "app")
 
-	def __init__(self, message: Message, app: Q) -> None:
+	def __init__(self, message: Message, app: Kuu) -> None:
 		self.message = message
 		self.app = app
 
@@ -30,7 +30,7 @@ class TaskHandle[Res]:
 
 	async def _poll_once(self) -> tuple[bool, Res]:
 		if self.app.results is None:
-			raise NotConnected("no result backend configured on Q(results=...)")
+			raise NotConnected("no result backend configured on Kuu(results=...)")
 		r = await self.app.results.get(self.key)
 		if r is None:
 			return False, typing.cast("Res", None)
