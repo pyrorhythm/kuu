@@ -51,6 +51,7 @@ class Kuu:
 		max_attempts: int = ...,
 		timeout: float | None = ...,
 		blocking: bool = ...,
+		**labels: Any,
 	) -> _Wrap[P, R]: ...
 
 	@overload
