@@ -2,4 +2,5 @@ line-length = 100
 
 [format]
 preview = true
-indent-style = 'tab'
+
+indent-style = "tab"
