@@ -1,0 +1,69 @@
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+
+from qq.app import Q
+from qq.brokers.memory import MemoryBroker
+from qq.scheduler.scheduler import Scheduler, _build_expr
+
+
+def test_structured_kwargs_apply_smaller_field_zero_default():
+	# hour=10 should fire at 10:00:00 once a day, not every minute of hour 10
+	expr = _build_expr(
+		second=None, minute=None, hour=10, day=None, month=None, day_of_week=None,
+		second_interval=None, minute_interval=None, hour_interval=None,
+	)
+	assert expr == "0 0 10 * * *"
+
+
+def test_hour_interval_shorthand_expands_to_step_form():
+	expr = _build_expr(
+		second=None, minute=None, hour=None, day=None, month=None, day_of_week=None,
+		second_interval=None, minute_interval=None, hour_interval=4,
+	)
+	assert expr == "0 0 */4 * * *"
+
+
+def test_specifying_both_field_and_interval_is_rejected():
+	import pytest
+
+	with pytest.raises(ValueError, match="hour"):
+		_build_expr(
+			second=None, minute=None, hour=10, day=None, month=None, day_of_week=None,
+			second_interval=None, minute_interval=None, hour_interval=4,
+		)
+
+
+def test_list_field_expands_to_comma_separated():
+	expr = _build_expr(
+		second=None, minute=[0, 15, 30, 45], hour=None,
+		day=None, month=None, day_of_week=None,
+		second_interval=None, minute_interval=None, hour_interval=None,
+	)
+	assert expr == "0 0,15,30,45 * * * *"
+
+
+def test_immediate_start_schedules_first_run_at_now():
+	app = Q(broker=MemoryBroker())
+	sched = Scheduler(app)
+	before = datetime.now(timezone.utc)
+	job = sched.cron(task="t", hour=4, immediate_start=True)
+	after = datetime.now(timezone.utc)
+
+	assert before <= job.next_run <= after
+
+
+def test_interval_job_skips_missed_runs_after_long_pause():
+	from qq.scheduler.job import IntervalJob
+
+	t0 = datetime(2026, 4, 25, 12, 0, 0, tzinfo=timezone.utc)
+	job = IntervalJob(
+		id="j", task_name="t", every=timedelta(seconds=10), next_run=t0,
+	)
+	# pretend we resumed 95 seconds late
+	now = t0 + timedelta(seconds=95)
+	job.schedule_next(now)
+	# next_run should be the first interval strictly after `now`, not `t0+10s`
+	assert job.next_run > now
+	# and should snap to a 10s grid relative to t0
+	assert (job.next_run - t0).total_seconds() == 100

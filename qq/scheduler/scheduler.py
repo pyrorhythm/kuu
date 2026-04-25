@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING
 
 import anyio
 from croniter import croniter
-from pydantic_core import ArgsKwargs
 
+from qq.message import Payload
 from qq.scheduler.job import BaseJob, CronJob, IntervalJob
 from qq.task import Task
 
@@ -119,7 +119,7 @@ class Scheduler:
 		self,
 		interval: timedelta,
 		task: str | Task,
-		args: ArgsKwargs = ArgsKwargs(()),
+		args: Payload = Payload(),
 		*,
 		id: str | None = None,
 		queue: str | None = None,
@@ -145,7 +145,7 @@ class Scheduler:
 	def cron(
 		self,
 		task: str | Task,
-		args: ArgsKwargs = ArgsKwargs(()),
+		args: Payload = Payload(),
 		*,
 		expr: str | None = None,
 		second: CronField = None,

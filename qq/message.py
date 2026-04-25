@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID, uuid4
 
 from pydantic import (
@@ -11,7 +11,13 @@ from pydantic import (
 	Field,
 	FutureDatetime,
 )
-from pydantic_core import ArgsKwargs
+
+
+class Payload(BaseModel):
+	model_config = ConfigDict(frozen=True)
+
+	args: tuple[Any, ...] = ()
+	kwargs: dict[str, Any] = Field(default_factory=dict)
 
 
 class Message(BaseModel):
@@ -20,7 +26,7 @@ class Message(BaseModel):
 	id: Annotated[UUID, Field(default_factory=uuid4)]
 	task: Annotated[str, Field(min_length=1)]
 	queue: Annotated[str, Field(min_length=1)]
-	payload: ArgsKwargs
+	payload: Payload = Field(default_factory=Payload)
 	headers: Annotated[dict[str, str], Field(default_factory=dict)]
 	attempt: Annotated[int, Field(default=0, ge=0)]
 	max_attempts: Annotated[int, Field(default=5, gt=0)]

@@ -6,7 +6,8 @@ from .message import Message
 from .middleware.base import Middleware
 from .results.base import Result, ResultBackend
 from .serializers import JSONSerializer, Serializer
-from .task import Task, TaskHandle
+from .handle import TaskHandle
+from .task import Task
 
 __all__ = [
 	"Q",

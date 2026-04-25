@@ -6,7 +6,8 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 from croniter import croniter
-from pydantic_core import ArgsKwargs
+
+from ..message import Payload
 
 if TYPE_CHECKING:
 	pass
@@ -23,7 +24,7 @@ def _next_after(expr: str, after: datetime) -> datetime:
 class BaseJob(ABC):
 	id: str
 	task_name: str
-	args: ArgsKwargs = ArgsKwargs(())
+	args: Payload = field(default_factory=Payload)
 	queue: str | None = None
 	headers: dict[str, str] | None = None
 	max_attempts: int | None = None

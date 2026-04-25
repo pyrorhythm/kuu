@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -9,9 +11,9 @@ class Registry:
 		self._by_name: dict[str, Task] = {}
 
 	def add(self, task: Task) -> None:
-		if task.name in self._by_name:
-			raise ValueError(f"duplicate task name: {task.name}")
-		self._by_name[task.name] = task
+		if task.task_name in self._by_name:
+			raise ValueError(f"duplicate task name: {task.task_name}")
+		self._by_name[task.task_name] = task
 
 	def get(self, name: str) -> Task | None:
 		return self._by_name.get(name)

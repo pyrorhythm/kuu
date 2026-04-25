@@ -10,6 +10,7 @@ import anyio
 import anyio.to_thread
 from anyio.abc import CancelScope, TaskGroup
 
+from qq.context import Context
 from qq.exceptions import RejectErr, RetryErr, UnknownTask
 from qq.middleware.base import run_chain
 from qq.outcome import Fail, Ok, Outcome, Reject, Retry
@@ -17,7 +18,6 @@ from qq.outcome import Fail, Ok, Outcome, Reject, Retry
 if TYPE_CHECKING:
 	from qq.app import Q
 	from qq.brokers.base import Delivery
-	from qq.context import Context
 
 log = logging.getLogger("qq.worker")
 

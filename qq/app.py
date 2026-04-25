@@ -4,15 +4,13 @@ import inspect
 from datetime import datetime, timezone
 from typing import Any, overload
 
-from pydantic_core import ArgsKwargs
-
 from ._import import object_fqn
 from ._types import _Fn, _FnAsync, _Wrap
 from .brokers.base import Broker
 from .context import Context
 from .events import Events
 from .handle import TaskHandle
-from .message import Message
+from .message import Message, Payload
 from .middleware.base import Middleware, run_chain
 from .registry import Registry
 from .results.base import ResultBackend
@@ -93,7 +91,7 @@ class Q:
 		self,
 		task_name: str,
 		task: Task | None,
-		args: ArgsKwargs,
+		args: Payload,
 		queue: str | None,
 		not_before: datetime | None,
 		headers: dict[str, str] | None,
@@ -136,9 +134,9 @@ class Q:
 		max_attempts: int | None = None,
 	) -> _FnAsync[P, TaskHandle[Res]]:
 		async def _(*args: P.args, **kwargs: P.kwargs) -> TaskHandle[Res]:
-			payload = ArgsKwargs(args, kwargs)
+			payload = Payload(args=args, kwargs=kwargs)
 			msg = self._build_message(
-				task.name,
+				task.task_name,
 				task,
 				payload,
 				queue=queue,
@@ -154,7 +152,7 @@ class Q:
 	async def enqueue_by_name(
 		self,
 		task: str,
-		args: ArgsKwargs = ArgsKwargs(()),
+		args: Payload = Payload(),
 		queue: str | None = None,
 		not_before: datetime | None = None,
 		headers: dict[str, str] | None = None,

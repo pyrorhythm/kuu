@@ -1,0 +1,78 @@
+from __future__ import annotations
+
+from prometheus_client import CollectorRegistry
+
+from qq.app import Q
+from qq.brokers.memory import MemoryBroker
+from qq.message import Message, Payload
+from qq.prometheus import PrometheusMetrics
+
+
+def _msg() -> Message:
+	return Message(task="t", queue="q", payload=Payload())
+
+
+def _val(metric, **labels) -> float:
+	return metric.labels(**labels)._value.get()
+
+
+async def test_success_path_increments_counters_and_settles_in_flight():
+	app = Q(broker=MemoryBroker())
+	m = PrometheusMetrics(app, registry=CollectorRegistry())
+
+	msg = _msg()
+	await app.events.task_received.send(msg)
+	await app.events.task_started.send(msg)
+	await app.events.task_succeeded.send(msg, 0.123)
+
+	assert _val(m.received, task="t", queue="q") == 1
+	assert _val(m.started, task="t", queue="q") == 1
+	assert _val(m.succeeded, task="t", queue="q") == 1
+	assert _val(m.in_flight, task="t", queue="q") == 0
+	# duration histogram has at least one observation
+	assert m.duration.labels("t", "q")._sum.get() > 0
+
+
+async def test_fail_then_dead_decrements_in_flight_only_once():
+	"""Worker emits both task_failed and task_dead on terminal Fail.
+
+	Metrics must increment failed_total and dead_total each, but
+	in_flight must drop by exactly 1 (not 2)."""
+	app = Q(broker=MemoryBroker())
+	m = PrometheusMetrics(app, registry=CollectorRegistry())
+
+	msg = _msg()
+	await app.events.task_started.send(msg)
+	exc = RuntimeError("boom")
+	await app.events.task_failed.send(msg, exc)
+	await app.events.task_dead.send(msg)
+
+	assert _val(m.in_flight, task="t", queue="q") == 0
+	assert _val(m.failed, task="t", queue="q", exc="RuntimeError") == 1
+	assert _val(m.dead, task="t", queue="q") == 1
+
+
+async def test_reject_path_dead_alone_still_settles_in_flight():
+	"""RejectErr path emits only task_dead (no task_failed beforehand)."""
+	app = Q(broker=MemoryBroker())
+	m = PrometheusMetrics(app, registry=CollectorRegistry())
+
+	msg = _msg()
+	await app.events.task_started.send(msg)
+	await app.events.task_dead.send(msg)
+
+	assert _val(m.in_flight, task="t", queue="q") == 0
+	assert _val(m.dead, task="t", queue="q") == 1
+
+
+async def test_retry_records_delay_histogram():
+	app = Q(broker=MemoryBroker())
+	m = PrometheusMetrics(app, registry=CollectorRegistry())
+
+	msg = _msg()
+	await app.events.task_started.send(msg)
+	await app.events.task_retried.send(msg, 5.0)
+
+	assert _val(m.retried, task="t", queue="q") == 1
+	assert _val(m.in_flight, task="t", queue="q") == 0
+	assert m.retry_delay.labels("t", "q")._sum.get() == 5.0
