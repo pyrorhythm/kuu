@@ -1,6 +1,8 @@
 __pycache__
 .venv
+.idea
+**/.*
+!.github
 uv.lock
 example
-.idea
 dist

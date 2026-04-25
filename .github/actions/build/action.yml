@@ -1,0 +1,32 @@
+name: "build package"
+description: "... builds package?"
+author: pyrorhyhtm
+runs:
+  using: "composite"
+  steps:
+    - name: -> setup justfile
+      uses: extractions/setup-just@v3
+      with:
+        just-version: "*"
+
+    - name: -> setup python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: "pyproject.toml"
+
+    - name: -> setup uv
+      uses: astral-sh/setup-uv@v7
+
+    - name: -> sync dependencies
+      run: just sync
+      shell: bash
+
+    - name: -> build package
+      run: just build
+      shell: bash
+
+    - name: -> upload built package to artifacts
+      uses: actions/upload-artifact@v6
+      with:
+        name: build-dist
+        path: dist/
