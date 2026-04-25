@@ -5,9 +5,8 @@ import sys
 from dataclasses import field
 from typing import TYPE_CHECKING, Any, Awaitable, Mapping, cast
 
-from qq._types import _Fn
-
 if TYPE_CHECKING:
+	from qq._types import _Fn
 	from qq.app import Q
 	from qq.handle import TaskHandle
 
@@ -22,6 +21,7 @@ class Task[**P, Res]:
 	original_func: _Fn[P, Res]
 	max_attempts: int = 5
 	timeout: float | None = None
+	blocking: bool = False
 	_bound_app: Q | None = field(default=None, repr=False)
 
 	def __init__(
@@ -33,6 +33,7 @@ class Task[**P, Res]:
 		task_labels: Mapping[str, Any],
 		max_attempts: int = 5,
 		timeout: float | None = None,
+		blocking: bool = False,
 	) -> None:
 		self._bound_app = manager
 
@@ -44,6 +45,13 @@ class Task[**P, Res]:
 
 		self.max_attempts = max_attempts
 		self.timeout = timeout
+		self.blocking = blocking
+
+		if blocking and inspect.iscoroutinefunction(original_func):
+			raise TypeError(
+				f"task {task_name!r}: blocking=True is for sync functions; "
+				"async functions should not be offloaded to a thread"
+			)
 
 		new_name = f"{self.original_func.__name__}_qq"
 		self.original_func.__name__ = new_name

@@ -46,6 +46,7 @@ class Q:
 		queue: str | None = ...,
 		max_attempts: int = ...,
 		timeout: float | None = ...,
+		blocking: bool = ...,
 	) -> _Wrap[P, R]: ...
 
 	@overload
@@ -58,6 +59,7 @@ class Q:
 		queue: str | None = None,
 		max_attempts: int = 5,
 		timeout: float | None = None,
+		blocking: bool = False,
 		**labels: Any,
 	) -> _Wrap[P, R] | Task[P, R]:
 
@@ -73,6 +75,7 @@ class Q:
 					task_labels=labels,
 					max_attempts=max_attempts,
 					timeout=timeout,
+					blocking=blocking,
 				)
 				self.registry.add(t)
 				return t
@@ -111,10 +114,9 @@ class Q:
 		self,
 		msg: Message,
 		task: Task[Any, Any] | None,
-		args: Any,
 		not_before: datetime | None,
 	) -> None:
-		ctx = Context(app=self, message=msg, phase="enqueue", task=task, args=args)
+		ctx = Context(app=self, message=msg, phase="enqueue", task=task)
 
 		async def _terminal(_c: Context) -> None:
 			if not_before is not None and not_before > datetime.now(timezone.utc):
@@ -144,7 +146,7 @@ class Q:
 				headers=headers,
 				max_attempts=max_attempts,
 			)
-			await self._dispatch(msg, task, payload, not_before)
+			await self._dispatch(msg, task, not_before)
 			return TaskHandle[Res](message=msg, app=self)
 
 		return _
@@ -168,5 +170,5 @@ class Q:
 			headers=headers,
 			max_attempts=max_attempts,
 		)
-		await self._dispatch(msg, t, args, not_before)
+		await self._dispatch(msg, t, not_before)
 		return TaskHandle[Any](message=msg, app=self)

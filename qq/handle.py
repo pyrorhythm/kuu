@@ -7,10 +7,10 @@ from uuid import UUID
 import anyio
 
 from qq.exceptions import NotConnected, TaskError
-from qq.message import Message
 
 if TYPE_CHECKING:
 	from qq.app import Q
+	from qq.message import Message
 
 
 class TaskHandle[Res]:

@@ -1,6 +1,7 @@
-from typing import Callable, Coroutine
+from typing import TYPE_CHECKING, Callable, Coroutine
 
-from .task import Task
+if TYPE_CHECKING:
+	from .task import Task
 
 type _FnAsync[**P, R] = Callable[P, Coroutine[None, None, R]]
 type _Fn[**P, R] = Callable[P, R] | _FnAsync[P, R]

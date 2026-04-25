@@ -4,17 +4,20 @@ import inspect
 import logging
 import signal
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import anyio
+import anyio.to_thread
 from anyio.abc import CancelScope, TaskGroup
 
-from qq.app import Q
-from qq.brokers.base import Delivery
-from qq.context import Context
 from qq.exceptions import RejectErr, RetryErr, UnknownTask
 from qq.middleware.base import run_chain
 from qq.outcome import Fail, Ok, Outcome, Reject, Retry
+
+if TYPE_CHECKING:
+	from qq.app import Q
+	from qq.brokers.base import Delivery
+	from qq.context import Context
 
 log = logging.getLogger("qq.worker")
 
@@ -87,7 +90,7 @@ class Worker:
 	async def _handle(self, delivery: Delivery) -> None:
 		msg = delivery.message
 		task = self.app.registry.get(msg.task)
-		ctx = Context(app=self.app, message=msg, phase="process", task=task, delivery=delivery)
+		ctx = Context(app=self.app, message=msg, phase="process", task=task)
 
 		with anyio.CancelScope(shield=True):
 			await self.app.events.task_received.send(msg)
@@ -100,21 +103,22 @@ class Worker:
 
 			notnil_task = task
 
-			ctx.args = msg.payload
-
 			async def _terminal(c: Context) -> Any:
 				await self.app.events.task_started.send(c.message)
-				r = (
-					notnil_task.original_func(*msg.payload.args, **msg.payload.kwargs)  # type:ignore
-					if c.args is None
-					else notnil_task.original_func(*c.args.args, **c.args.kwargs)  # type:ignore
-				)
+				payload = c.message.payload
+				if notnil_task.blocking:
+
+					def _call() -> Any:
+						return notnil_task.original_func(*payload.args, **payload.kwargs)  # type:ignore
+
+					return await anyio.to_thread.run_sync(_call, abandon_on_cancel=True)
+				r = notnil_task.original_func(*payload.args, **payload.kwargs)  # type:ignore
 				if inspect.isawaitable(r):
 					r = await r
 				return r
 
 			started = time.perf_counter()
-			ctx.result = await run_chain(ctx, self.app.middleware, _terminal)
+			await run_chain(ctx, self.app.middleware, _terminal)
 			outcome = Ok(time.perf_counter() - started)
 		except RetryErr as r:
 			outcome = Retry(
@@ -125,7 +129,6 @@ class Worker:
 		except RejectErr as r:
 			outcome = Reject(r.requeue)
 		except BaseException as e:
-			ctx.exc = e
 			outcome = Fail(e)
 			cancelled = isinstance(e, anyio.get_cancelled_exc_class())
 
