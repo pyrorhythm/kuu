@@ -9,14 +9,12 @@ from typing import Any
 import anyio
 from anyio.abc import CancelScope, TaskGroup
 
+from qq.app import Q
+from qq.brokers.base import Delivery
+from qq.context import Context
+from qq.exceptions import RejectErr, RetryErr, UnknownTask
+from qq.middleware.base import run_chain
 from qq.outcome import Fail, Ok, Outcome, Reject, Retry
-
-from ._import import type_from_fqn
-from .app import Q
-from .brokers.base import Delivery
-from .context import Context
-from .exceptions import RejectErr, RetryErr, UnknownTask
-from .middleware.base import run_chain
 
 log = logging.getLogger("qq.worker")
 
@@ -86,7 +84,7 @@ class Worker:
 
 			handlers.start_soon(self._handle, delivery)
 
-	async def _handle(self, delivery: Delivery[Any]) -> None:
+	async def _handle(self, delivery: Delivery) -> None:
 		msg = delivery.message
 		task = self.app.registry.get(msg.task)
 		ctx = Context(app=self.app, message=msg, phase="process", task=task, delivery=delivery)
@@ -102,12 +100,15 @@ class Worker:
 
 			notnil_task = task
 
-			target = task.args_model or type_from_fqn(msg.args_type)
-			ctx.args = self.app.serializer.deserialize(msg.payload, target) if msg.payload else None
+			ctx.args = msg.payload
 
 			async def _terminal(c: Context) -> Any:
 				await self.app.events.task_started.send(c.message)
-				r = notnil_task.fn() if c.args is None else notnil_task.fn(c.args)
+				r = (
+					notnil_task.original_func(*msg.payload.args, **msg.payload.kwargs)  # type:ignore
+					if c.args is None
+					else notnil_task.original_func(*c.args.args, **c.args.kwargs)  # type:ignore
+				)
 				if inspect.isawaitable(r):
 					r = await r
 				return r

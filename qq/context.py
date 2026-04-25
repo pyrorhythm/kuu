@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from pydantic_core import ArgsKwargs
+
 from .message import Message
 
 if TYPE_CHECKING:
@@ -18,7 +20,7 @@ class Context:
 	phase: str
 	task: Task | None = None
 	delivery: Delivery | None = None
-	args: Any = None
+	args: ArgsKwargs = ArgsKwargs(())
 	result: Any = None
 	exc: BaseException | None = None
 	state: dict[str, Any] = field(default_factory=dict)

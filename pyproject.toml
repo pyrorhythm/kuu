@@ -14,7 +14,7 @@ dependencies = [
 [project.optional-dependencies]
 redis = ["redis>=5.0"]
 nats = ["nats-py>=2.7"]
-msgpack = ["msgpack>=1.0"]
+msgspec = ["msgspec>=0.21"]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff"]
 
 [project.scripts]

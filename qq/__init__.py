@@ -1,4 +1,3 @@
-from .abc.serializer import QSerializerProtocol
 from .app import Q
 from .brokers.base import Broker, Delivery
 from .context import Context
@@ -6,7 +5,7 @@ from .exceptions import NotConnected, RejectErr, RetryErr, TaskError
 from .message import Message
 from .middleware.base import Middleware
 from .results.base import Result, ResultBackend
-from .serializers.json import OrjsonSerializer
+from .serializers import JSONSerializer, Serializer
 from .task import Task, TaskHandle
 
 __all__ = [
@@ -24,6 +23,6 @@ __all__ = [
 	"Delivery",
 	"Result",
 	"ResultBackend",
-	"QSerializerProtocol",
-	"OrjsonSerializer",
+	"Serializer",
+	"JSONSerializer",
 ]

@@ -107,7 +107,7 @@ def _info(
 		log.info(
 			"%s\tqueue=%s max_attempts=%s timeout=%s",
 			name,
-			t.queue,
+			t.task_queue,
 			t.max_attempts,
 			t.timeout,
 		)

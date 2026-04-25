@@ -112,21 +112,6 @@ def object_fqn(obj: object) -> str:
 	return f"{obj.__module__}.{obj.__class__.__name__}"
 
 
-def type_fqn(tp: type) -> str:
-	return f"{tp.__module__}:{tp.__qualname__}"
-
-
-def type_from_fqn(fqn: str | None) -> type | None:
-	if not fqn:
-		return None
-	try:
-		obj = import_object(fqn)
-	except Exception as exc:
-		logger.warning("cannot import type from fqn %s: %s", fqn, exc)
-		return None
-	return obj if isinstance(obj, type) else None
-
-
 def get_type_fqn(arg: Any) -> str | None:
 	_resolved_module = ""
 	try:

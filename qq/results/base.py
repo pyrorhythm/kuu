@@ -1,30 +1,42 @@
 from __future__ import annotations
 
-from typing import Annotated, Literal, Protocol, Self
+from typing import Any, Protocol
 
-import orjson
-from pydantic import BaseModel, ConfigDict, Field
-
-
-class Result(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    status: Literal["ok", "error"]
-    value: Annotated[bytes | None, Field(default=None)]
-    error: Annotated[str | None, Field(default=None)]
-
-    def marshal(self) -> bytes:
-        return orjson.dumps(self.model_dump(mode="json"))
-
-    @classmethod
-    def unmarshal(cls, data: bytes | str | bytearray) -> Self:
-        return cls.model_validate(orjson.loads(data))
+from qq._import import get_type_fqn, get_type_from_fqn
+from qq.result import Result
+from qq.serializers.base import Serializer
+from qq.serializers.json import JSONSerializer
 
 
 class ResultBackend(Protocol):
-    async def connect(self) -> None: ...
-    async def close(self) -> None: ...
+	serializer: Serializer
+	marshal_types: bool
 
-    async def get(self, key: str) -> Result | None: ...
-    async def set(self, key: str, result: Result, ttl: float | None = None) -> None: ...
-    async def setnx(self, key: str, result: Result, ttl: float | None = None) -> bool: ...
+	def __init__(
+		self,
+		*,
+		serializer: Serializer,
+		marshal_types: bool = True,
+	) -> None:
+		self.serializer = serializer
+		self.marshal_types = marshal_types
+
+	def encode(self, value: Any) -> tuple[bytes, str | None]:
+		payload = self.serializer.marshal(value) if value is not None else b""
+		type_fqn = get_type_fqn(value) if (self.marshal_types and value is not None) else None
+		return payload, type_fqn
+
+	def decode(self, result: Result) -> Any:
+		if not result.value:
+			return None
+		into = get_type_from_fqn(result.type) if self.marshal_types else None
+		return self.serializer.unmarshal(result.value, into)
+
+	async def connect(self) -> None: ...
+	async def close(self) -> None: ...
+	async def get(self, key: str) -> Result | None: ...
+	async def set(self, key: str, result: Result, ttl: float | None = None) -> None: ...
+	async def setnx(self, key: str, result: Result, ttl: float | None = None) -> bool: ...
+
+
+__all__ = ["Result", "ResultBackend", "Serializer", "JSONSerializer"]

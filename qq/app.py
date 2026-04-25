@@ -1,23 +1,24 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any, overload
 
-from pydantic import BaseModel
+from pydantic_core import ArgsKwargs
 
-from ._import import object_fqn, type_fqn
-from ._types import _Fn, _FnC, _Wrap
-from .abc.serializer import QSerializerProtocol
+from ._import import object_fqn
+from ._types import _Fn, _FnAsync, _Wrap
 from .brokers.base import Broker
 from .context import Context
 from .events import Events
+from .handle import TaskHandle
 from .message import Message
 from .middleware.base import Middleware, run_chain
+from .registry import Registry
 from .results.base import ResultBackend
-from .serializers.json import OrjsonSerializer
-from .task import Registry, Task, TaskHandle, infer_args_model, infer_result_model
+from .serializers.base import Serializer
+from .serializers.json import JSONSerializer
+from .task import Task
 
 
 class Q:
@@ -27,11 +28,11 @@ class Q:
 		default_queue: str = "default",
 		middleware: list[Middleware] | None = None,
 		results: ResultBackend | None = None,
-		serializer: QSerializerProtocol | None = None,
+		serializer: Serializer = JSONSerializer(),
 	):
 		self.broker = broker
 		self.results = results
-		self.serializer: QSerializerProtocol = serializer or OrjsonSerializer()
+		self.serializer = serializer
 		self.default_queue = default_queue
 		self.middleware: list[Middleware] = list(middleware or [])
 		self.registry = Registry()
@@ -57,21 +58,21 @@ class Q:
 		queue: str | None = None,
 		max_attempts: int = 5,
 		timeout: float | None = None,
+		**labels: Any,
 	) -> _Wrap[P, R] | Task[P, R]:
 
 		def _get_wrap(
 			_name: str | None = None,
 		):
-			def _wrap(fn: Callable[P, R]) -> Task[P, R]:
+			def _wrap(func: _Fn[P, R]) -> Task[P, R]:
 				t: Task[P, R] = Task(
-					name=_name or object_fqn(fn),
-					queue=queue or self.default_queue,
-					fn=fn,
-					args_model=infer_args_model(fn),
-					result_model=infer_result_model(fn),
+					manager=self,
+					original_func=func,
+					task_name=_name or object_fqn(func),
+					task_queue=queue or self.default_queue,
+					task_labels=labels,
 					max_attempts=max_attempts,
 					timeout=timeout,
-					_bound_app=self,
 				)
 				self.registry.add(t)
 				return t
@@ -88,27 +89,17 @@ class Q:
 	def _build_message(
 		self,
 		task_name: str,
-		task: Task[Any, Any] | None,
-		args: BaseModel | dict[str, Any] | None,
-		*,
+		task: Task | None,
+		args: ArgsKwargs,
 		queue: str | None,
 		not_before: datetime | None,
 		headers: dict[str, str] | None,
 		max_attempts: int | None,
 	) -> Message:
-		args_type: str | None = None
-		result_type: str | None = None
-		if task is not None:
-			if task.args_model is not None:
-				args_type = type_fqn(task.args_model)
-			if task.result_model is not None:
-				result_type = type_fqn(task.result_model)
 		return Message(
 			task=task_name,
-			queue=queue or (task.queue if task else self.default_queue),
-			payload=self.serializer.serialize(args) if args is not None else b"",
-			args_type=args_type,
-			result_type=result_type,
+			queue=queue or (task.task_queue if task else self.default_queue),
+			payload=args,
 			headers=headers or {},
 			max_attempts=(
 				max_attempts if max_attempts is not None else (task.max_attempts if task else 5)
@@ -141,15 +132,9 @@ class Q:
 		not_before: datetime | None = None,
 		headers: dict[str, str] | None = None,
 		max_attempts: int | None = None,
-	) -> _FnC[P, TaskHandle[Res]]:
+	) -> _FnAsync[P, TaskHandle[Res]]:
 		async def _(*args: P.args, **kwargs: P.kwargs) -> TaskHandle[Res]:
-			payload: BaseModel | dict[str, Any] | None
-			if args:
-				payload = args[0]  # type: ignore[assignment]
-			elif kwargs and task.args_model is not None:
-				payload = task.args_model(**kwargs)
-			else:
-				payload = dict(kwargs) if kwargs else None
+			payload = ArgsKwargs(args, kwargs)
 			msg = self._build_message(
 				task.name,
 				task,
@@ -160,15 +145,14 @@ class Q:
 				max_attempts=max_attempts,
 			)
 			await self._dispatch(msg, task, payload, not_before)
-			return TaskHandle[Res](message=msg, app=self, result_model=task.result_model)
+			return TaskHandle[Res](message=msg, app=self)
 
 		return _
 
-	async def enqueue(
+	async def enqueue_by_name(
 		self,
 		task: str,
-		args: BaseModel | dict[str, Any] | None = None,
-		*,
+		args: ArgsKwargs = ArgsKwargs(()),
 		queue: str | None = None,
 		not_before: datetime | None = None,
 		headers: dict[str, str] | None = None,
@@ -185,4 +169,4 @@ class Q:
 			max_attempts=max_attempts,
 		)
 		await self._dispatch(msg, t, args, not_before)
-		return TaskHandle[Any](message=msg, app=self, result_model=t.result_model if t else None)
+		return TaskHandle[Any](message=msg, app=self)
