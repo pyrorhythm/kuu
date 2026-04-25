@@ -3,9 +3,7 @@ search-path = ["."]
 project-includes = ["kuu"]
 project-excludes = ["**/.[!/.]*", "**/tests"]
 site-package-path = [
-  ".venv/lib/python3.14t/site-packages",
   ".venv/lib/python3.14/site-packages",
-  ".venv/lib/python3.13t/site-packages",
   ".venv/lib/python3.13/site-packages",
 ]
 python-interpreter-path = ".venv/bin/python"
