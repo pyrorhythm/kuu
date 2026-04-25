@@ -29,15 +29,10 @@ async def test_success_path_increments_counters_and_settles_in_flight():
 	assert _val(m.started, task="t", queue="q") == 1
 	assert _val(m.succeeded, task="t", queue="q") == 1
 	assert _val(m.in_flight, task="t", queue="q") == 0
-	# duration histogram has at least one observation
 	assert m.duration.labels("t", "q")._sum.get() > 0
 
 
 async def test_fail_then_dead_decrements_in_flight_only_once():
-	"""Worker emits both task_failed and task_dead on terminal Fail.
-
-	Metrics must increment failed_total and dead_total each, but
-	in_flight must drop by exactly 1 (not 2)."""
 	app = Kuu(broker=MemoryBroker())
 	m = PrometheusMetrics(app, registry=CollectorRegistry())
 
@@ -53,7 +48,6 @@ async def test_fail_then_dead_decrements_in_flight_only_once():
 
 
 async def test_reject_path_dead_alone_still_settles_in_flight():
-	"""RejectErr path emits only task_dead (no task_failed beforehand)."""
 	app = Kuu(broker=MemoryBroker())
 	m = PrometheusMetrics(app, registry=CollectorRegistry())
 

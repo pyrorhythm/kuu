@@ -21,10 +21,6 @@ async def _consume_until(
 	count: int,
 	timeout: float = 2.0,
 ) -> list:
-	"""Consume up to `count` deliveries, calling `on_delivery(idx, delivery, broker)` for each.
-
-	Returns the list of deliveries received. Stops the consumer cleanly via task-group cancel.
-	"""
 	results: list = []
 
 	async def _worker(scope: anyio.CancelScope):
@@ -72,7 +68,6 @@ async def test_scheduled_message_is_held_until_due():
 		await b.ack(d)
 
 	await _consume_until(broker, "q", record, count=1, timeout=2.0)
-	# delivered no earlier than scheduled time (allow scheduler-pump jitter)
 	assert delivered_at[0] >= when - timedelta(milliseconds=50)
 
 

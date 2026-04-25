@@ -1,6 +1,5 @@
 from .base import Middleware, run_chain
 from .logging import LoggingMiddleware
-from .results import ResultsMiddleware
 from .retry import RetryMiddleware
 from .timeout import TimeoutMiddleware
 
@@ -10,5 +9,4 @@ __all__ = [
 	"RetryMiddleware",
 	"TimeoutMiddleware",
 	"LoggingMiddleware",
-	"ResultsMiddleware",
 ]

@@ -42,12 +42,12 @@ class JSONSerializer(Serializer):
 			return None
 
 		target = into if into is not None else self._primary_type
+		if isinstance(target, type) and issubclass(target, BaseModel):
+			return target.model_validate_json(data)
 		if msgspec_json is None:
-			raw = orjson.dumps(data)
-			if target is None:
-				return raw
-			if isinstance(target, type) and issubclass(target, BaseModel):
-				return target.model_validate(raw)
-			return raw
-
-		return msgspec_json.decode(data, type=target)
+			return orjson.loads(data) if target is None else orjson.loads(data)
+		return (
+			msgspec_json.decode(data, type=target)
+			if target is not None
+			else msgspec_json.decode(data)
+		)

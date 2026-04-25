@@ -14,7 +14,6 @@ from kuu.worker import Worker
 
 
 async def _run_worker_until(app: Kuu, predicate, *, timeout: float = 3.0) -> None:
-	"""Run a worker in a task group until `predicate()` is true, then cancel."""
 	worker = Worker(app, queues=["default"], concurrency=4)
 
 	async def _supervise(scope: anyio.CancelScope):

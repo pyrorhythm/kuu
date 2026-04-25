@@ -4,12 +4,11 @@ from datetime import datetime, timedelta, timezone
 
 from kuu.app import Kuu
 from kuu.brokers.memory import MemoryBroker
-from kuu.scheduler import Scheduler, IntervalJob
+from kuu.scheduler import IntervalJob, Scheduler
 from kuu.scheduler.scheduler import _build_expr
 
 
 def test_structured_kwargs_apply_smaller_field_zero_default():
-	# hour=10 should fire at 10:00:00 once a day, not every minute of hour 10
 	expr = _build_expr(
 		second=None,
 		minute=None,
@@ -90,10 +89,7 @@ def test_interval_job_skips_missed_runs_after_long_pause():
 		every=timedelta(seconds=10),
 		next_run=t0,
 	)
-	# pretend we resumed 95 seconds late
 	now = t0 + timedelta(seconds=95)
 	job.schedule_next(now)
-	# next_run should be the first interval strictly after `now`, not `t0+10s`
 	assert job.next_run > now
-	# and should snap to a 10s grid relative to t0
 	assert (job.next_run - t0).total_seconds() == 100
