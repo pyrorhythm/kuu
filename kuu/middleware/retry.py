@@ -9,28 +9,28 @@ from .base import Next
 
 
 class RetryMiddleware:
-    def __init__(self, base: float = 0.5, cap: float = 60.0, jitter: float = 0.2):
-        self.base = base
-        self.cap = cap
-        self.jitter = jitter
+	def __init__(self, base: float = 0.5, cap: float = 60.0, jitter: float = 0.2):
+		self.base = base
+		self.cap = cap
+		self.jitter = jitter
 
-    def _backoff(self, attempt: int) -> float:
-        d = min(self.cap, self.base * (2**attempt))
-        return d * (1.0 + random.uniform(-self.jitter, self.jitter))
+	def _backoff(self, attempt: int) -> float:
+		d = min(self.cap, self.base * (2**attempt))
+		return d * (1.0 + random.uniform(-self.jitter, self.jitter))
 
-    async def __call__(self, ctx: Context, call_next: Next) -> Any:
-        if ctx.phase != "process":
-            return await call_next()
-        try:
-            return await call_next()
-        except RejectErr:
-            raise
-        except RetryErr as r:
-            delay = r.delay if r.delay is not None else self._backoff(ctx.message.attempt)
-            ctx.state["retry_delay"] = delay
-            raise
-        except Exception:
-            if ctx.message.attempt + 1 >= ctx.message.max_attempts:
-                raise
-            ctx.state["retry_delay"] = self._backoff(ctx.message.attempt)
-            raise RetryErr(delay=ctx.state["retry_delay"], reason="exception")
+	async def __call__(self, ctx: Context, call_next: Next) -> Any:
+		if ctx.phase != "process":
+			return await call_next()
+		try:
+			return await call_next()
+		except RejectErr:
+			raise
+		except RetryErr as r:
+			delay = r.delay if r.delay is not None else self._backoff(ctx.message.attempt)
+			ctx.state["retry_delay"] = delay
+			raise
+		except Exception:
+			if ctx.message.attempt + 1 >= ctx.message.max_attempts:
+				raise
+			ctx.state["retry_delay"] = self._backoff(ctx.message.attempt)
+			raise RetryErr(delay=ctx.state["retry_delay"], reason="exception")
