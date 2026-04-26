@@ -5,7 +5,7 @@ from prometheus_client import CollectorRegistry
 from kuu.app import Kuu
 from kuu.brokers.memory import MemoryBroker
 from kuu.message import Message, Payload
-from kuu.prometheus import PrometheusMetrics
+from kuu.prometheus import WorkerMetrics
 
 
 def _msg() -> Message:
@@ -18,7 +18,7 @@ def _val(metric, **labels) -> float:
 
 async def test_success_path_increments_counters_and_settles_in_flight():
 	app = Kuu(broker=MemoryBroker())
-	m = PrometheusMetrics(app, registry=CollectorRegistry())
+	m = WorkerMetrics(app, registry=CollectorRegistry())
 
 	msg = _msg()
 	await app.events.task_received.send(msg)
@@ -34,7 +34,7 @@ async def test_success_path_increments_counters_and_settles_in_flight():
 
 async def test_fail_then_dead_decrements_in_flight_only_once():
 	app = Kuu(broker=MemoryBroker())
-	m = PrometheusMetrics(app, registry=CollectorRegistry())
+	m = WorkerMetrics(app, registry=CollectorRegistry())
 
 	msg = _msg()
 	await app.events.task_started.send(msg)
@@ -49,7 +49,7 @@ async def test_fail_then_dead_decrements_in_flight_only_once():
 
 async def test_reject_path_dead_alone_still_settles_in_flight():
 	app = Kuu(broker=MemoryBroker())
-	m = PrometheusMetrics(app, registry=CollectorRegistry())
+	m = WorkerMetrics(app, registry=CollectorRegistry())
 
 	msg = _msg()
 	await app.events.task_started.send(msg)
@@ -61,7 +61,7 @@ async def test_reject_path_dead_alone_still_settles_in_flight():
 
 async def test_retry_records_delay_histogram():
 	app = Kuu(broker=MemoryBroker())
-	m = PrometheusMetrics(app, registry=CollectorRegistry())
+	m = WorkerMetrics(app, registry=CollectorRegistry())
 
 	msg = _msg()
 	await app.events.task_started.send(msg)
