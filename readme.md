@@ -22,9 +22,6 @@ from kuu.brokers.redis import RedisBroker
 from kuu.middleware import RetryMiddleware, LoggingMiddleware, TimeoutMiddleware
 from kuu.prometheus import ClientMetrics
 from kuu.results.redis import RedisResults
-from sotkalib.log import configure_logging
-
-configure_logging()
 
 app = Kuu(
 	broker=RedisBroker(uri=...),
