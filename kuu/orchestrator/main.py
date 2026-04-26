@@ -12,6 +12,7 @@ import anyio.to_thread
 
 from kuu.config import Kuunfig
 from kuu.orchestrator._dashboard import DashboardRunner
+from kuu.orchestrator._scheduler import SchedulerRunner
 from kuu.orchestrator._watcher import Watcher
 from kuu.orchestrator._worker import WorkerPool
 
@@ -28,6 +29,7 @@ class Orchestrator:
 	_wp: WorkerPool
 	_dash: DashboardRunner
 	_watcher: Watcher
+	_sched: SchedulerRunner
 
 	_stop_event = anyio.Event()
 	_metrics_dir: str | None = None
@@ -41,6 +43,7 @@ class Orchestrator:
 		self._wp = WorkerPool(config)
 		self._dash = DashboardRunner(self, config)
 		self._watcher = Watcher(config, self._wp.on_change_callback)
+		self._sched = SchedulerRunner(config)
 
 	async def _signal_listener(self) -> None:
 		if threading.current_thread() is not threading.main_thread():
@@ -59,11 +62,12 @@ class Orchestrator:
 		"""
 
 		log.info(
-			"starting orchestrator processes=%d watcher=%s dashboard=%s metrics=%s",
+			"starting orchestrator processes=%d watcher=%s dashboard=%s metrics=%s scheduler=%s",
 			self.config.processes,
 			self.config.watch.enable,
 			self.config.dashboard.enable,
 			self.config.metrics.enable,
+			self.config.scheduler.enable,
 		)
 		try:
 			await self._start_metrics_server()
@@ -72,6 +76,7 @@ class Orchestrator:
 				tg.start_soon(self._dash.run, self._stop_event)
 				tg.start_soon(self._wp.run, self._stop_event)
 				tg.start_soon(self._watcher.run, self._stop_event)
+				tg.start_soon(self._sched.run, self._stop_event)
 				await self._stop_event.wait()
 				tg.cancel_scope.cancel()
 		except Exception:

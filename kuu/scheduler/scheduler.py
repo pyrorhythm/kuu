@@ -125,10 +125,8 @@ class Scheduler:
 		queue: str | None = None,
 		headers: dict[str, str] | None = None,
 		max_attempts: int | None = None,
-		immediate_start: bool = False,
 	) -> IntervalJob:
 		now = datetime.now(timezone.utc)
-		first = now if immediate_start else now + interval
 		job = IntervalJob(
 			id=id or f"interval:{self._resolve(task)}:{len(self.jobs)}",
 			task_name=self._resolve(task),
@@ -137,7 +135,7 @@ class Scheduler:
 			headers=headers,
 			max_attempts=max_attempts,
 			every=interval,
-			next_run=first,
+			next_run=now + interval,
 		)
 		self.jobs.append(job)
 		return job
@@ -157,7 +155,6 @@ class Scheduler:
 		day: CronField = None,
 		month: CronField = None,
 		day_of_week: CronField = None,
-		immediate_start: bool = False,
 		id: str | None = None,
 		queue: str | None = None,
 		headers: dict[str, str] | None = None,
@@ -195,7 +192,7 @@ class Scheduler:
 
 		now = datetime.now(timezone.utc)
 		# validates by parsing; croniter raises on bad expr
-		first = now if immediate_start else _next_after(expr, now)
+		first = _next_after(expr, now)
 		job = CronJob(
 			id=id or f"cron:{self._resolve(task)}:{len(self.jobs)}",
 			task_name=self._resolve(task),
@@ -209,15 +206,25 @@ class Scheduler:
 		self.jobs.append(job)
 		return job
 
-	async def run(self) -> None:
+	async def run(self, *, install_signals: bool = True) -> None:
+		"""
+		run the scheduler loop until cancelled or signalled.
+
+		`install_signals=False` is for embedding inside another runtime (e.g.
+		the orchestrator) that already owns SIGINT/SIGTERM handling and will
+		cancel us via its own task-group scope.
+		"""
 		await self.app.broker.connect()
 		try:
-			scope = anyio.CancelScope()
-			async with anyio.create_task_group() as tg:
-				tg.start_soon(self._signals, scope)
-				with scope:
-					await self._loop()
-				tg.cancel_scope.cancel()
+			if install_signals:
+				scope = anyio.CancelScope()
+				async with anyio.create_task_group() as tg:
+					tg.start_soon(self._signals, scope)
+					with scope:
+						await self._loop()
+					tg.cancel_scope.cancel()
+			else:
+				await self._loop()
 		finally:
 			await self.app.broker.close()
 

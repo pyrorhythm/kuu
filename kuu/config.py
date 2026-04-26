@@ -17,6 +17,16 @@ from pydantic import (
 )
 
 
+class SchedulerSettings(BaseModel):
+	enable: bool = Field(
+		False,
+		description=(
+			"run the scheduler loop inside the orchestrator. jobs are declared "
+			"in code via `app.schedule.cron(...)` / `.every(...)`."
+		),
+	)
+
+
 class MetricsSettings(BaseModel):
 	enable: bool = Field(False)
 	host: str = Field("0.0.0.0")
@@ -127,6 +137,7 @@ class Kuunfig(BaseModel):
 	metrics: MetricsSettings = Field(MetricsSettings())
 	dashboard: WebSettings = Field(WebSettings())
 	watch: WatchSettings = Field(WatchSettings())
+	scheduler: SchedulerSettings = Field(SchedulerSettings())
 
 	@classmethod
 	def load(cls, config: str | pathlib.Path | None = None) -> Self:

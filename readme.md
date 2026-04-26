@@ -3,10 +3,9 @@
 [![PyPI](https://img.shields.io/pypi/v/kuu?color=blue)](https://pypi.org/project/kuu/)
 [![Python](https://img.shields.io/pypi/pyversions/kuu)](https://pypi.org/project/kuu/)
 [![License](https://img.shields.io/pypi/l/kuu)](https://github.com/pyrorhythm/kuu/blob/master/LICENSE)
-[![CI](https://github.com/pyrorhythm/kuu/actions/workflows/ci.yml/badge.svg)](https://github.com/pyrorhythm/kuu/actions)
 [![Downloads](https://img.shields.io/pypi/dm/kuu)](https://pypi.org/project/kuu/)
 
-a native distributed task queue - simple and easy to drop into production.
+a native distributed task queue - simple and easy to drop into production
 
 ```shell
 uv add kuu
@@ -40,6 +39,10 @@ async def charge(user_id: int, amount_cents: int) -> ChargeResult:
 	return {"ok": True, "charged": amount_cents}
 
 
+@app.schedule.cron(expr="* * */4 * * *")
+async def refresh_balance() -> None: ...
+
+
 # myapp/main.py
 from .tasks import charge
 
@@ -64,7 +67,8 @@ uv run kuu start -c ./path/to/kuunfig.toml -o concurrency=128 -o dashboard.enabl
 
 ## config
 
-put the block below into `kuunfig.toml`, or under `[tool.kuu]` in your `pyproject.toml`. every field except `app` and `task_modules` has a default and can be omitted.
+put the block below into `kuunfig.toml`, or under `[tool.kuu]` in your `pyproject.toml`
+every field except `app` and `task_modules` has a default and can be omitted
 
 ```toml
 app = "myapp.module:instance"            # dotted path to the Kuu instance
@@ -87,6 +91,9 @@ host = "0.0.0.0"
 port = 8181
 path = "/dashboard"
 
+[scheduler]
+enable = false                           # run scheduler loop in-process; jobs declared via app.schedule
+
 [watch]
 enable = false                           # reload workers on filesystem changes
 root = "."                               # path to watch
@@ -96,7 +103,8 @@ reload_delay = 0.25
 reload_debounce = 0.5
 ```
 
-any setting can be overridden from the CLI with `-o dotted.path=value`. values are parsed as JSON when possible (`true`, `42`, `["a","b"]`), otherwise kept as strings.
+any setting can be overridden from the CLI with `-o dotted.path=value`
+values are parsed as JSON when possible (`true`, `42`, `["a","b"]`), otherwise kept as strings
 
 ## contribution
 

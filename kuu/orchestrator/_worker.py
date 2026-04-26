@@ -42,10 +42,12 @@ class WorkerPool:
 		await self._start_workers()
 
 	async def _start_workers(self) -> None:
-		if self._config.processes > 40:
-			anyio.to_thread.current_default_thread_limiter().total_tokens = (
-				self._config.processes * 1.25
-			)
+		current_limiter = anyio.to_thread.current_default_thread_limiter()
+
+		if self._config.concurrency > current_limiter.available_tokens:
+			current_limiter.total_tokens += (
+				self._config.concurrency - current_limiter.available_tokens
+			) * 1.2
 
 		for i in range(self._config.processes):
 			if self._stop_event.is_set():

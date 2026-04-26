@@ -14,6 +14,7 @@ from kuu.message import Message, Payload
 from kuu.middleware.base import Middleware, run_chain
 from kuu.registry import Registry
 from kuu.results.base import ResultBackend
+from kuu.scheduler.scheduler import Scheduler
 from kuu.task import Task
 
 
@@ -42,6 +43,7 @@ class Kuu:
 		self.middleware: list[Middleware] = list(middleware or [])
 		self.registry = Registry()
 		self.events = Events()
+		self.schedule = Scheduler(self)
 
 	@overload
 	def task[**P, R](
