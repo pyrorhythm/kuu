@@ -1,125 +1,105 @@
 # kuu
 
-```shell
-uv install kuu --prerelease=allow
+[![PyPI](https://img.shields.io/pypi/v/kuu?color=blue)](https://pypi.org/project/kuu/)
+[![Python](https://img.shields.io/pypi/pyversions/kuu)](https://pypi.org/project/kuu/)
+[![License](https://img.shields.io/pypi/l/kuu)](https://github.com/pyrorhythm/kuu/blob/master/LICENSE)
+[![CI](https://github.com/pyrorhythm/kuu/actions/workflows/ci.yml/badge.svg)](https://github.com/pyrorhythm/kuu/actions)
+[![Downloads](https://img.shields.io/pypi/dm/kuu)](https://pypi.org/project/kuu/)
 
-# extras availible: msgspec, nats, prometheus, redis
+a native distributed task queue - simple and easy to drop into production.
+
+```shell
+uv add kuu
+# extras: msgspec, nats, prometheus, redis, dashboard
 ```
 
-a native distributed queue that is rather simple and easy-to-integrate in production
-has task queue, redis xstream, nats jetstream support, result backend, middlewares and event/signals
-also has a built-in scheduler yk
-
 nothing serious in this project, just got tired of taskiq's undefined behaviour and `logging.getLogger("root")`
-maybe will build a webui for it idk
 
 ## quick start
 
-> myapp/app.py
 ```python
+# myapp/app.py
 from kuu import Kuu
 from kuu.brokers.redis import RedisBroker
-from kuu.middleware import RetryMiddleware, LoggingMiddleware, TimeoutMiddleware
-from kuu.prometheus import ClientMetrics
 from kuu.results.redis import RedisResults
 
-app = Kuu(
-	broker=RedisBroker(uri=...),
-	default_queue="some-obscure-name-for-queue",
-	results=RedisResults(uri=...),
-	middleware=[
-		LoggingMiddleware(...),
-		RetryMiddleware(...),
-		TimeoutMiddleware(...),
-	],
-)
-```
+app = Kuu(broker=RedisBroker(url=...), results=RedisResults(url=...))
 
-> myapp/task.py
-```python
+
+# myapp/tasks.py
 from .app import app
 
 
-class ChargeResult(BaseModel):
+class ChargeResult(TypedDict):
 	ok: bool
 	charged: int
 
 
 @app.task
 async def charge(user_id: int, amount_cents: int) -> ChargeResult:
-	return ChargeResult(ok=True, charged=amount_cents)
-```
+	return {"ok": True, "charged": amount_cents}
 
-> myapp/main.py
-```py
-from .task import charge
 
-async def some_func(...) -> ...:
-	handle: TaskHandle[ChargeResult] = await charge.q(user_id=..., amount_cents=...)
-	result: ChargeResult = await handle.result(timeout=30) # raises if could not get result in that time
+# myapp/main.py
+from .tasks import charge
+
+
+async def run() -> None:
+	# type checker will automatically infer here
+	# that handle is type of TaskHandle[ChargeResult]
+	# args/kwargs of the task also remain typed
+	handle = await charge.q(user_id=1, amount_cents=500)
+
+	# type checker will infer ChargeResult
+	result = await handle.result(timeout=30)
 ```
 
 ```sh
-# spin up worker
-uv run kuu worker myapp.app:app myapp.task --concurrency=... -w
+# reads ./kuunfig.toml or [tool.kuu] in ./pyproject.toml
+uv run kuu start 
+
+# reads ./path/to/kuunfig.toml and overriding specified settings
+uv run kuu start -c ./path/to/kuunfig.toml -o concurrency=128 -o dashboard.enable=true
 ```
 
-and now, when you will execute `charge.q`, it would offload to broker -> redis -> worker -> result backend
+## config
 
-## prometheus
+put the block below into `kuunfig.toml`, or under `[tool.kuu]` in your `pyproject.toml`. every field except `app` and `task_modules` has a default and can be omitted.
 
-**kuu** has native integration for Prometheus metrics for both client and worker. 
+```toml
+app = "myapp.module:instance"            # dotted path to the Kuu instance
+task_modules = ["myapp.tasks"]           # modules that register tasks
 
-### client-side
-```py
-app = Kuu(
-	broker=RedisBroker(uri=...),
-	default_queue="some-obscure-name-for-queue",
-	results=RedisResults(uri=...),
-	middleware=[
-		LoggingMiddleware(...),
-		RetryMiddleware(...),
-		TimeoutMiddleware(...),
-		ClientMetrics(
-			...
-		),  # By specifying this middleware, metrics were bound to kuu`s event system.
-	],
-)
+queues = []                              # consume from; empty = auto-discover from registry
+processes = 1                            # worker subprocesses to spawn
+concurrency = 64                         # max concurrent tasks per worker
+prefetch = 16                            # batch size; defaults to max(1, concurrency // 4)
+shutdown_timeout = 30.0                  # seconds to wait for in-flight tasks on stop
 
-"""To obtain these metrics, you could:"""
+[metrics]
+enable = false
+host = "0.0.0.0"
+port = 9191
 
-# 1) If you don't have/want to integrate with existing HTTP server (e.g.) FastAPI
+[dashboard]
+enable = false
+host = "0.0.0.0"
+port = 8181
+path = "/dashboard"
 
-from kuu.prometheus import serve
-
-wsgi, thread = serve(port=...)
-
-# This is nonblocking because server is launched in thread
-
-# 2) ASGI integration
-from kuu.prometheus import asgi_app
-
-api_app = FastAPI()
-
-# ...
-
-api_app.mount("/metrics", asgi_app())
+[watch]
+enable = false                           # reload workers on filesystem changes
+root = "."                               # path to watch
+respect_gitignore = true                 # skip files matched by .gitignore
+exclude = [".git/**"]                    # extra globs to exclude
+reload_delay = 0.25
+reload_debounce = 0.5
 ```
 
-### server-side
-
-```sh
-# when launching workers, specify --metrics-port to serve prometheus metrics on it
-
-uv run kuu worker {{...}} --metrics-port=9090
-
-# now they`re availible at ::1:9090/metrics !
-```
-
-see [this file](./kuu/prometheus.py) for implementation.
+any setting can be overridden from the CLI with `-o dotted.path=value`. values are parsed as JSON when possible (`true`, `42`, `["a","b"]`), otherwise kept as strings.
 
 ## contribution
 
-well if you insist
-just use issues/pull requests and we will go from here
+well if you insist... (issues / PRs welcome)
+
 #clankersgoaway
