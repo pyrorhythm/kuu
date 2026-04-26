@@ -1,0 +1,22 @@
+<table>
+	<thead>
+		<tr>
+			<th>PID</th>
+			<th>Status</th>
+		</tr>
+	</thead>
+	<tbody>
+		{% for p in processes %}
+		<tr>
+			<td>{{ p.pid }}</td>
+			<td>
+				{% if p.is_alive() %}
+				<span style="color:var(--pico-color-green-500)">●</span> alive
+				{% else %}
+				<span style="color:var(--pico-color-red-500)">●</span> dead
+				{% endif %}
+			</td>
+		</tr>
+		{% endfor %}
+	</tbody>
+</table>

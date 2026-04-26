@@ -27,7 +27,6 @@ def add_cwd_in_path() -> Generator[None]:
 	if str(cwd) in sys.path:
 		yield
 	else:
-		logger.debug(f"inserting {cwd} in sys.path")
 		sys.path.insert(0, str(cwd))
 		try:
 			yield
@@ -65,7 +64,6 @@ def import_from_modules(modules: list[str]) -> None:
 	"""
 	for module in modules:
 		try:
-			logger.info(f"importing tasks from module {module}")
 			with add_cwd_in_path():
 				import_module(module)
 		except ImportError as err:

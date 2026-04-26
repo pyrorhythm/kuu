@@ -3,6 +3,7 @@ __pycache__
 .idea
 **/.*
 !.github
+!.gitignore
 uv.lock
 example
 dist

@@ -7,13 +7,18 @@ import pytest
 from pydantic import BaseModel
 
 from kuu.app import Kuu
+from kuu.config import Kuunfig
 from kuu.exceptions import TaskError
 from kuu.results.redis import RedisResults
 from kuu.worker import Worker
 
 
+def _config(app: Kuu, concurrency: int = 4) -> Kuunfig:
+	return Kuunfig.model_construct(queues=[app.default_queue], concurrency=concurrency)
+
+
 async def _run_worker_until(app: Kuu, predicate, *, timeout: float = 10.0) -> None:
-	worker = Worker(app, queues=[app.default_queue], concurrency=4)
+	worker = Worker(_config(app), app=app)
 
 	async def _supervise(scope: anyio.CancelScope):
 		while not predicate():
@@ -85,7 +90,7 @@ async def test_replay_skips_re_execution_for_same_idempotency_key(make_app):
 		Payload(args=(2,)),
 		headers={"idempotency_key": "shared-key"},
 	)
-	worker = Worker(app, queues=[app.default_queue], concurrency=2)
+	worker = Worker(_config(app, concurrency=2), app=app)
 
 	async def _stop_after(scope: anyio.CancelScope, secs: float):
 		await anyio.sleep(secs)
@@ -225,7 +230,7 @@ async def test_marshal_types_round_trips_pydantic_model(make_app, redis_flushed:
 					return
 				await anyio.sleep(0.05)
 
-		worker = Worker(app, queues=[app.default_queue], concurrency=2)
+		worker = Worker(_config(app, concurrency=2), app=app)
 
 		async def _supervise(scope: anyio.CancelScope):
 			await done.wait()
@@ -344,7 +349,7 @@ async def test_unknown_task_failure_stores_error_on_final_attempt(make_app, redi
 			await anyio.sleep(0.05)
 
 	try:
-		worker = Worker(app, queues=[app.default_queue], concurrency=2)
+		worker = Worker(_config(app, concurrency=2), app=app)
 
 		async def _supervise(scope: anyio.CancelScope):
 			while "r" not in saw_error:

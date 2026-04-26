@@ -10,6 +10,7 @@ import anyio
 import anyio.to_thread
 from anyio.abc import CancelScope, TaskGroup
 
+from kuu._import import import_object
 from kuu.context import Context
 from kuu.exceptions import RejectErr, RetryErr, UnknownTask
 from kuu.middleware.base import run_chain
@@ -20,31 +21,36 @@ from kuu.results.base import result_key
 if TYPE_CHECKING:
 	from kuu.app import Kuu
 	from kuu.brokers.base import Delivery
+	from kuu.config import Kuunfig
 
 log = logging.getLogger("kuu.worker")
 
 
 class Worker:
-	def __init__(
-		self,
-		app: Kuu,
-		queues: list[str] | None = None,
-		concurrency: int = 64,
-		prefetch: int | None = None,
-		shutdown_timeout: float = 30.0,
-	):
-		self.app = app
-		self.queues = queues or sorted(app.registry.queues() or {app.default_queue})
-		self.concurrency = concurrency
-		self.prefetch = prefetch or max(1, concurrency // 4)
-		self.shutdown_timeout = shutdown_timeout
-		self._sem = anyio.Semaphore(concurrency)
+	def __init__(self, config: Kuunfig, *, app: Kuu | None = None) -> None:
+		"""
+		initialize worker instance
+
+		Args:
+				config: carries every tunable aspect
+				app: `Kuu` instance if you have one to skip reimport by spec from config
+		"""
+
+		self.app = app if app is not None else import_object(config.app)
+		self.queues = config.queues or sorted(
+			self.app.registry.queues() or {self.app.default_queue}
+		)
+		self.concurrency = config.concurrency
+		self.prefetch = config.prefetch or max(1, self.concurrency // 4)
+		self.shutdown_timeout = config.shutdown_timeout
+		self._sem = anyio.Semaphore(self.concurrency)
 		self._inflight = 0
 		self._idle = anyio.Event()
 		self._idle.set()
 		self._inflight_lock = anyio.Lock()
 
 	async def run(self) -> None:
+		"""starts worker loop, initializing broker and results"""
 		await self.app.broker.connect()
 		if self.app.results is not None:
 			await self.app.results.connect()
@@ -102,7 +108,7 @@ class Worker:
 		results = self.app.results
 		key = result_key(msg)
 
-		if results is not None and self.app.result_replay:
+		if results is not None and results.replay:
 			cached = await results.get(key)
 			if cached is not None and cached.status == "ok":
 				with anyio.CancelScope(shield=True):
@@ -141,7 +147,7 @@ class Worker:
 				await results.set(
 					key,
 					Result(status="ok", value=payload, type=type_fqn),
-					ttl=self.app.result_ttl,
+					ttl=results.ttl,
 				)
 			outcome = Ok(time.perf_counter() - started)
 		except RetryErr as r:
@@ -157,7 +163,7 @@ class Worker:
 			cancelled = isinstance(e, anyio.get_cancelled_exc_class())
 			if (
 				results is not None
-				and self.app.result_store_errors
+				and results.store_errors
 				and msg.attempt + 1 >= msg.max_attempts
 				and not cancelled
 			):
@@ -165,7 +171,7 @@ class Worker:
 					await results.set(
 						key,
 						Result(status="error", error=f"{type(e).__name__}: {e}"),
-						ttl=self.app.result_ttl,
+						ttl=results.ttl,
 					)
 
 		with anyio.CancelScope(shield=True):

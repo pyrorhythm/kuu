@@ -17,8 +17,17 @@ class RedisResults(ResultBackend):
 		*,
 		serializer: Serializer = JSONSerializer(),
 		marshal_types: bool = True,
+		ttl: float | None = 86400,
+		replay: bool = True,
+		store_errors: bool = True,
 	):
-		super().__init__(serializer=serializer, marshal_types=marshal_types)
+		super().__init__(
+			serializer=serializer,
+			marshal_types=marshal_types,
+			ttl=ttl,
+			replay=replay,
+			store_errors=store_errors,
+		)
 		self.url = url
 		self.prefix = prefix
 		self._r: Redis | None = None

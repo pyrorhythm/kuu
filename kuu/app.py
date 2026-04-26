@@ -14,8 +14,6 @@ from kuu.message import Message, Payload
 from kuu.middleware.base import Middleware, run_chain
 from kuu.registry import Registry
 from kuu.results.base import ResultBackend
-from kuu.serializers.base import Serializer
-from kuu.serializers.json import JSONSerializer
 from kuu.task import Task
 
 
@@ -26,33 +24,25 @@ class Kuu:
 		default_queue: str = "default",
 		middleware: list[Middleware] | None = None,
 		results: ResultBackend | None = None,
-		serializer: Serializer = JSONSerializer(),
-		result_ttl: float = 86400,
-		result_replay: bool = True,
-		result_store_errors: bool = True,
-	):
-		"""Initialize task manager
+	) -> None:
+		"""initialize `Kuu` instance
 
 		Args:
-				broker (Broker): broker implementation to handle tasks
-				default_queue (str, optional): default queue to communicate through. Defaults to "default".
-				middleware (list[Middleware] | None, optional): middlewares. Defaults to None.
-				results (ResultBackend | None, optional): result backend implementation. Defaults to None.
-				serializer (Serializer, optional): serializer implementation. Defaults to JSONSerializer().
-				result_ttl (float, optional): ttl for storing results. Defaults to 86400.
-				result_replay (bool, optional): Defaults to True.
-				result_store_errors (bool, optional): Defaults to True.
+		    broker: broker instance to operate on.
+		    default_queue: default queue to fall back on when `.task(queue=...)`
+		        is unspecified. Defaults to "default".
+		    middleware: middlewares to use. Defaults to None.
+		    results: result backend instance to operate on. Result-persistence
+		        policy (`ttl`, `replay`, `store_errors`) lives on the backend
+		        itself, not here. Defaults to None.
 		"""
+
 		self.broker = broker
 		self.results = results
-		self.serializer = serializer
 		self.default_queue = default_queue
 		self.middleware: list[Middleware] = list(middleware or [])
 		self.registry = Registry()
 		self.events = Events()
-		self.result_ttl = result_ttl
-		self.result_replay = result_replay
-		self.result_store_errors = result_store_errors
 
 	@overload
 	def task[**P, R](

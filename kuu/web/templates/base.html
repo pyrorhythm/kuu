@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html data-theme="dark">
+
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>{% block title %}kuu - dashboars{% endblock %}</title>
+	<link rel="stylesheet" href="/static/pico.min.css">
+	<script src="/static/echarts.min.js" />
+	<script src="/static/htmx.min.js" />
+	<style>
+		:root {
+			--pico-font-size: 90%;
+		}
+
+		body {
+			padding: 1rem;
+		}
+
+		.stat-card {
+			text-align: center;
+			padding: 1rem;
+		}
+
+		.stat-value {
+			font-size: 2rem;
+			font-weight: 700;
+		}
+
+		.stat-label {
+			font-size: 0.75rem;
+			opacity: 0.7;
+			text-transform: uppercase;
+			letter-spacing: 0.05em;
+		}
+
+		.grid {
+			align-items: start;
+		}
+
+		table {
+			font-size: 0.85rem;
+		}
+
+		kbd {
+			font-size: 0.75rem;
+		}
+	</style>
+</head>
+
+<body>
+	<nav class="container-fluid">
+		<ul>
+			<li><strong>{{ title }}</strong></li>
+		</ul>
+		<ul>
+			<li><a href="/" class="secondary">refresh</a></li>
+		</ul>
+	</nav>
+	<main class="container-fluid">
+		{% block content %}{% endblock %}
+	</main>
+</body>
+
+</html>

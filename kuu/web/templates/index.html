@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div hx-get="/fragments/stats" hx-trigger="load, every 2s" hx-swap="innerHTML">
+	<p aria-busy="true">Loading stats…</p>
+</div>
+
+<article style="margin-top:1rem;">
+	<header>Activity</header>
+	<div id="activity-chart" style="height:260px; width:100%;"></div>
+</article>
+
+<div class="grid" style="margin-top:1rem;">
+	<article>
+		<header>Tasks</header>
+		<div hx-get="/fragments/tasks" hx-trigger="load, every 5s" hx-swap="innerHTML">
+			<p aria-busy="true">loading tasks…</p>
+		</div>
+	</article>
+	<article>
+		<header>Scheduler</header>
+		<div hx-get="/fragments/scheduler" hx-trigger="load, every 5s" hx-swap="innerHTML">
+			<p aria-busy="true">loading jobs…</p>
+		</div>
+	</article>
+</div>
+
+{% if orchestrator %}
+<article style="margin-top:1rem;">
+	<header>workers</header>
+	<div hx-get="/fragments/workers" hx-trigger="load, every 3s" hx-swap="innerHTML">
+		<p aria-busy="true">loading workers…</p>
+	</div>
+</article>
+{% endif %}
+
+<script>
+	const chart = echarts.init(document.getElementById('activity-chart'));
+	async function updateChart() {
+		const resp = await fetch('/api/activity');
+		const data = await resp.json();
+		chart.setOption({
+			tooltip: { trigger: 'axis' },
+			legend: { data: ['enqueued', 'succeeded', 'failed', 'retried', 'dead'], textStyle: { fontSize: 11 } },
+			grid: { left: 40, right: 20, top: 30, bottom: 20 },
+			xAxis: { type: 'category', data: data.times.map(t => new Date(t * 1000).toLocaleTimeString()), boundaryGap: false },
+			yAxis: { type: 'value', minInterval: 1 },
+			series: [
+				{ name: 'enqueued', type: 'line', data: data.enqueued, smooth: true, showSymbol: false },
+				{ name: 'succeeded', type: 'line', data: data.succeeded, smooth: true, showSymbol: false },
+				{ name: 'failed', type: 'line', data: data.failed, smooth: true, showSymbol: false },
+				{ name: 'retried', type: 'line', data: data.retried, smooth: true, showSymbol: false },
+				{ name: 'dead', type: 'line', data: data.dead, smooth: true, showSymbol: false },
+			]
+		}, true);
+	}
+	updateChart();
+	setInterval(updateChart, 3000);
+</script>
+
+{% endblock %}

@@ -37,7 +37,9 @@ classifiers = [
 urls = { "homepage" = "https://github.com/pyrorhythm/kuu" }
 dependencies = [
   "anyio>=4.10,<5",
+  "click>=8.3.3",
   "croniter>=6.2",
+  "cyclopts>=4.11.0",
   "orjson>=3.10",
   "pydantic>=2.12,<3",
   "typer>=0.24.2",
@@ -46,9 +48,14 @@ dependencies = [
 ]
 
 [project.scripts]
-kuu = "kuu.cli:app"
+kuu = "kuu.cli.app:app"
 
 [project.optional-dependencies]
+dashboard = [
+  "jinja2>=3.1.6",
+  "starlette>=1.0.0",
+  "uvicorn>=0.46.0",
+]
 msgspec = ["msgspec>=0.21"]
 nats = ["nats-py>=2.7"]
 prometheus = ["prometheus-client>=0.20"]

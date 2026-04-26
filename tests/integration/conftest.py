@@ -49,6 +49,9 @@ async def make_app(redis_flushed: str):
 		consumer: str = "c1",
 		results_prefix: str = "qqit:r:",
 		with_results: bool = True,
+		result_ttl: float | None = 86400,
+		result_replay: bool = True,
+		result_store_errors: bool = True,
 		**kuu_kwargs,
 	) -> Kuu:
 		broker = RedisBroker(
@@ -59,7 +62,17 @@ async def make_app(redis_flushed: str):
 			zset_prefix=zset_prefix,
 			block_ms=200,
 		)
-		results = RedisResults(url=redis_flushed, prefix=results_prefix) if with_results else None
+		results = (
+			RedisResults(
+				url=redis_flushed,
+				prefix=results_prefix,
+				ttl=result_ttl,
+				replay=result_replay,
+				store_errors=result_store_errors,
+			)
+			if with_results
+			else None
+		)
 		app = Kuu(broker=broker, default_queue=queue, results=results, **kuu_kwargs)
 		await app.broker.connect()
 		await app.broker.declare(queue)
