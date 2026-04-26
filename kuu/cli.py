@@ -56,17 +56,16 @@ def _worker(
 	subprocesses: Annotated[
 		int,
 		Option(
-			"--subprocesses",
-			"-s",
-			help="number of worker subprocesses",
+			"--workers",
+			help="number of workers",
 		),
 	] = 1,
 	watch: Annotated[
 		bool,
 		Option(
-			"--subprocesses",
-			"-s",
-			help="number of worker subprocesses",
+			"--watch",
+			"-w",
+			help="if to watch fs events from cwd",
 		),
 	] = False,
 	prefetch: Annotated[
