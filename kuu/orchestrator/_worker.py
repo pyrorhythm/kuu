@@ -17,10 +17,16 @@ def run_worker(
 	concurrency: int,
 	prefetch: int,
 	shutdown_timeout: float,
+	metrics_enabled: bool = False,
 ) -> None:
 	log.info("worker process starting")
 	q = import_object(app_spec)
 	import_tasks(task_modules, "", False)
+
+	if metrics_enabled:
+		from kuu.prometheus import WorkerMetrics
+
+		WorkerMetrics(q)
 
 	anyio.run(
 		Worker(

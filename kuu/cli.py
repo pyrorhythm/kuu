@@ -78,6 +78,17 @@ def _worker(
 		float,
 		Option(),
 	] = 30.0,
+	metrics_port: Annotated[
+		int | None,
+		Option(
+			"--metrics-port",
+			help="if set, orchestrator serves aggregated /metrics on this port",
+		),
+	] = None,
+	metrics_host: Annotated[
+		str,
+		Option("--metrics-host", help="bind address for the metrics server"),
+	] = "0.0.0.0",
 ):
 	if prefetch is None:
 		prefetch = max(1, concurrency // 4)
@@ -95,6 +106,8 @@ def _worker(
 		shutdown_timeout=shutdown_timeout,
 		subprocesses=subprocesses,
 		watch_fs=watch,
+		metrics_port=metrics_port,
+		metrics_host=metrics_host,
 	)
 	anyio.run(orch.start)
 
