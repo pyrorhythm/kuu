@@ -17,6 +17,17 @@ async def run_chain(
 	chain: list[Middleware],
 	terminal: Callable[[Context], Awaitable[Any]],
 ) -> Any:
+	"""
+	Execute middleware chain and terminal handler.
+
+	Args:
+		ctx: task context
+		chain: ordered list of middleware to execute
+		terminal: final handler invoked after all middleware
+
+	Returns:
+		Result from terminal handler or middleware
+	"""
 	idx = -1
 
 	async def _next() -> Any:

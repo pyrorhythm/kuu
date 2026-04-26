@@ -21,6 +21,21 @@ class Payload(BaseModel):
 
 
 class Message(BaseModel):
+	"""
+	Task message sent through the broker
+
+	Attributes:
+		id: unique message identifier
+		task: registered name of the task to run
+		queue: queue the message belongs to
+		payload: task arguments
+		headers: custom string key-value pairs
+		attempt: current retry attempt; starting at 0
+		max_attempts: maximum allowed attempts before failure
+		not_before: earliest UTC datetime the task may execute
+		enqueued_at: UTC datetime when the message was enqueued
+	"""
+
 	model_config = ConfigDict(frozen=True)
 
 	id: Annotated[UUID, Field(default_factory=uuid4)]

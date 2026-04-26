@@ -18,6 +18,12 @@ def result_key(msg: Message) -> str:
 
 
 class ResultBackend(Protocol):
+	"""
+	Protocol for result backends
+
+	Defines serialization; type marshalling; TTL; replay; and error storage
+	"""
+
 	serializer: Serializer
 	marshal_types: bool
 	ttl: float | None
@@ -34,16 +40,14 @@ class ResultBackend(Protocol):
 		store_errors: bool = True,
 	) -> None:
 		"""
+		Configure backend options
+
 		Args:
-		    serializer: serializer to encode/decode result payloads.
-		    marshal_types: when true, persist the python type fqn alongside the
-		        payload so `decode` can reconstruct the original type.
-		    ttl: how long persisted entries live, in seconds; `None` means no
-		        expiry. Applied at write time by `set`/`setnx`.
-		    replay: when true, the worker checks the backend before running a
-		        task and short-circuits to the cached value on a hit.
-		    store_errors: when true, the worker persists terminal failures
-		        (final attempt) so callers can observe them via `TaskHandle`.
+			serializer: serializer to encode/decode result payloads
+			marshal_types: when true; persist python type FQN alongside payload so decode can reconstruct original type
+			ttl: how long persisted entries live in seconds; None means no expiry
+			replay: when true; worker checks backend before running task and short-circuits to cached value on hit
+			store_errors: when true; worker persists terminal failures so callers can observe them via TaskHandle
 		"""
 		self.serializer = serializer
 		self.marshal_types = marshal_types
@@ -52,21 +56,73 @@ class ResultBackend(Protocol):
 		self.store_errors = store_errors
 
 	def encode(self, value: Any) -> tuple[bytes, str | None]:
+		"""
+		Encode value into serialized payload and optional type FQN
+
+		Args:
+			value: object to encode
+
+		Returns:
+			Tuple of payload bytes and optional fully-qualified type name
+		"""
 		payload = self.serializer.marshal(value) if value is not None else b""
 		type_fqn = get_type_fqn(value) if (self.marshal_types and value is not None) else None
 		return payload, type_fqn
 
 	def decode(self, result: Result) -> Any:
+		"""
+		Decode result payload back into python object
+
+		Args:
+			result: result containing payload and optional type info
+
+		Returns:
+			Reconstructed python object; or None if value is empty
+		"""
 		if not result.value:
 			return None
 		into = get_type_from_fqn(result.type) if self.marshal_types else None
 		return self.serializer.unmarshal(result.value, into)
 
-	async def connect(self) -> None: ...
-	async def close(self) -> None: ...
-	async def get(self, key: str) -> Result | None: ...
-	async def set(self, key: str, result: Result, ttl: float | None = None) -> None: ...
-	async def setnx(self, key: str, result: Result, ttl: float | None = None) -> bool: ...
+	async def connect(self) -> None:
+		"""Initialize connection to results backend"""
+
+	async def close(self) -> None:
+		"""Close connection to results backend"""
+
+	async def get(self, key: str) -> Result | None:
+		"""
+		Fetch result by key
+
+		Args:
+			key: result cache key
+
+		Returns:
+			Deserialized result; or None if key absent
+		"""
+
+	async def set(self, key: str, result: Result, ttl: float | None = None) -> None:
+		"""
+		Store serialized result with optional expiry
+
+		Args:
+			key: result cache key
+			result: result object to serialize and store
+			ttl: expiry in seconds
+		"""
+
+	async def setnx(self, key: str, result: Result, ttl: float | None = None) -> bool:
+		"""
+		Store serialized result only if key is absent
+
+		Args:
+			key: result cache key
+			result: result object to serialize and store
+			ttl: expiry in seconds
+
+		Returns:
+			True if key was set; False otherwise
+		"""
 
 
 __all__ = [

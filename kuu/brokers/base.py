@@ -16,17 +16,71 @@ class Delivery[Receipt]:
 
 
 class Broker(Protocol):
-	async def connect(self) -> None: ...
-	async def close(self) -> None: ...
+	async def connect(self) -> None:
+		"""Initialize connection to broker"""
 
-	async def declare(self, queue: str) -> None: ...
+	async def close(self) -> None:
+		"""Close connection to broker"""
 
-	async def enqueue(self, msg: Message) -> None: ...
-	async def schedule(self, msg: Message, not_before: datetime) -> None: ...
+	async def declare(self, queue: str) -> None:
+		"""
+		Declare a queue to broker
 
-	def consume(self, queues: list[str], prefetch: int) -> AsyncIterator[Delivery]: ...
+		Args:
+				queue: queue to declare
+		"""
 
-	async def ack(self, delivery: Delivery) -> None: ...
+	async def enqueue(self, msg: Message) -> None:
+		"""
+		Enqueue message
+
+		Args:
+				msg: message to enqueue
+		"""
+
+	async def schedule(self, msg: Message, not_before: datetime) -> None:
+		"""
+		Schedule a message to execute at or after specified datetime
+
+		Args:
+				msg: message to schedule
+				not_before: datetime by which message will be scheduled
+		"""
+
+	def consume(self, queues: list[str], prefetch: int) -> AsyncIterator[Delivery]:
+		"""
+		Consume messages from specified queues, prefetching them in batch of N
+
+		Args:
+				queues: queues from which deliveries would be consumed
+				prefetch: size of a fetch batch
+
+		Returns:
+				AsyncIterator[Delivery], where Delivery.receipt is typed after Broker
+		"""
+
+	async def ack(self, delivery: Delivery) -> None:
+		"""
+		Acknowledge delivery
+
+		Args:
+				delivery;
+
+		Raises:
+				InvalidReceiptType: if Delivery from Redis got fed into NATS; when deliveries came from different brokers
+		"""
+
 	async def nack(
 		self, delivery: Delivery, requeue: bool = True, delay: float | None = None
-	) -> None: ...
+	) -> None:
+		"""
+		Negatively acknowledge delivery
+
+		Args:
+				delivery;
+				requeue: If to requeue delivery in case of soft-failure. Defaults to True.
+				delay: How delayed requeued message would be sent. `None` - instant.  Defaults to None.
+
+		Raises:
+				InvalidReceiptType: if Delivery from Redis got fed into NATS; when deliveries came from different brokers
+		"""

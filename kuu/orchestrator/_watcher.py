@@ -60,10 +60,9 @@ def _build_filter(cfg: WatchSettings) -> _ConfiguredFilter:
 
 class _ConfiguredFilter(DefaultFilter):
 	"""
-	extends watchfiles' default filter (which already drops `.git`,
-	`__pycache__`, editor swap files, etc.) with user-provided globs and
-	gitignore entries. patterns are matched against both absolute and
-	root-relative paths so anchored and unanchored globs both work.
+	Extends watchfiles' default filter with user-provided globs and gitignore entries
+
+	This class extends watchfiles' default filter (which already drops `.git`; `__pycache__`; editor swap files; etc;) with user-provided globs and gitignore entries; patterns are matched against both absolute and root-relative paths so anchored and unanchored globs both work
 	"""
 
 	def __init__(self, root: Path, exclude: list[re.Pattern[str]]) -> None:
@@ -82,13 +81,6 @@ class _ConfiguredFilter(DefaultFilter):
 
 
 def _normalize_glob(pattern: str) -> str:
-	"""
-	bring assorted glob/gitignore conventions to a form fnmatch.translate can
-	handle:
-	  - leading `/` is stripped (anchored at root, which we match relative)
-	  - bare names (no `/`) get a `**/` prefix so they match at any depth
-	  - trailing `/` becomes `/**` so a directory pattern catches its contents
-	"""
 	pattern = pattern.strip()
 	if not pattern:
 		return ""

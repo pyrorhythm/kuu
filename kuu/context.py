@@ -14,6 +14,19 @@ type Phase = Literal["enqueue", "process"]
 
 @dataclass
 class Context:
+	"""
+	Execution context for a task.
+
+	Holds the app instance, message, phase, and mutable state.
+
+	Attributes:
+	    app: the kuu application
+	    message: the current message
+	    phase: current lifecycle phase, either "enqueue" or "process"
+	    task: the task instance, if known
+	    state: mutable dict for middleware and handlers to share data
+	"""
+
 	app: Kuu
 	message: Message
 	phase: Phase

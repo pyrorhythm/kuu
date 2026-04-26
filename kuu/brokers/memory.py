@@ -25,6 +25,16 @@ class _Q(NamedTuple):
 
 class MemoryBroker(Broker):
 	def __init__(self, buffer: int = 1024, pump_interval: float = 0.05):
+		"""
+		In-memory broker
+
+		Uses anyio memory streams and a heap for scheduled messages
+
+		Args:
+			buffer: max buffered deliveries per queue
+			pump_interval: seconds between scheduled pump checks
+		"""
+
 		self.buffer = buffer
 		self.pump_interval = pump_interval
 		self._queues: dict[str, _Q] = {}
@@ -36,7 +46,7 @@ class MemoryBroker(Broker):
 		self._pending: dict[tuple[str, int], Message] = {}
 
 	async def connect(self) -> None:
-		return None
+		return None  # noop
 
 	async def close(self) -> None:
 		for q in self._queues.values():
@@ -90,7 +100,17 @@ class MemoryBroker(Broker):
 	async def consume(
 		self, queues: list[str], prefetch: int
 	) -> AsyncIterator[Delivery[MemoryReceipt]]:
-		del prefetch  # in-memory has its own buffer
+		"""
+		Consume deliveries from queues
+
+		Args:
+			queues: queue names to consume
+			prefetch: ignored; buffer size controls prefetch
+
+		Yields:
+			Delivery with memory receipt
+		"""
+		del prefetch
 		for q in queues:
 			await self.declare(q)
 

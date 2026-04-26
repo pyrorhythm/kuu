@@ -1,5 +1,4 @@
-class TaskError(Exception):
-	pass
+class TaskError(Exception): ...
 
 
 class RetryErr(TaskError):

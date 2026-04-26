@@ -9,6 +9,13 @@ from .base import Next
 
 
 class LoggingMiddleware:
+	"""
+	Log task start; success; and failure
+
+	Args:
+		logger: logger instance; defaults to "kuu.task" logger
+	"""
+
 	def __init__(self, logger: logging.Logger | None = None):
 		self.log = logger or logging.getLogger("kuu.task")
 

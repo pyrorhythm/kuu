@@ -15,6 +15,12 @@ if TYPE_CHECKING:
 
 
 class TaskHandle[Res]:
+	"""
+	Handle to an enqueued task; used to poll for the result
+
+	Returned by `task.q(...)`; type-checkers infer `Res` from the task return annotation
+	"""
+
 	__slots__ = ("message", "app")
 
 	def __init__(self, message: Message, app: Kuu) -> None:
@@ -40,6 +46,22 @@ class TaskHandle[Res]:
 		return True, typing.cast("Res", self.app.results.decode(r))
 
 	async def result(self, timeout: float | None = None, poll: float = 0.2) -> Res:
+		"""
+		Block until the task result is available
+
+		Args:
+			timeout: max seconds to wait; `None` means wait forever
+			poll: seconds between backend polls; defaults to 0.2
+
+		Returns:
+			The decoded result value
+
+		Raises:
+			NotConnected: if no result backend is configured
+			TaskError: if the task finished with an error status
+			TimeoutError: if `timeout` elapses before the result arrives
+		"""
+
 		async def _loop() -> Res:
 			while True:
 				done, value = await self._poll_once()

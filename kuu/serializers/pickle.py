@@ -8,8 +8,7 @@ from typing import Any
 from .base import Serializer
 
 
-class SecurityWarning(Warning):
-	pass
+class SecurityWarning(Warning): ...
 
 
 pickle_allowed = os.getenv("QQ_ALLOW_PICKLE", "").strip().lower() == "yes"
@@ -24,6 +23,12 @@ _WARN_MSG = (
 
 
 class PickleSerializer(Serializer):
+	"""
+	Pickle serializer for trusted environments only
+
+	Raises SecurityWarning unless QQ_ALLOW_PICKLE=yes is set
+	"""
+
 	@staticmethod
 	def marshal(data: Any) -> bytes:
 		if not pickle_allowed:

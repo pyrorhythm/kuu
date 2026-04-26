@@ -11,9 +11,8 @@ from nats.js import JetStreamContext
 from nats.js.api import ConsumerConfig, RetentionPolicy, StreamConfig
 
 from ..exceptions import InvalidReceiptType
-from ..serializers import JSONSerializer, Serializer
-
 from ..message import Message
+from ..serializers import JSONSerializer, Serializer
 from .base import Broker, Delivery
 
 NatsReceipt = Msg
@@ -42,6 +41,17 @@ class NatsBroker(Broker):
 		fetch_timeout: float = 5.0,
 		serializer: Serializer = JSONSerializer(),
 	) -> None:
+		"""
+		NATS JetStream broker
+
+		Args:
+			servers: NATS server URL or list
+			stream: JetStream stream name
+			subject_prefix: prefix for subject names
+			durable_prefix: prefix for durable consumer names
+			fetch_timeout: timeout for pull fetch
+			serializer: message serializer
+		"""
 		self.servers = servers
 		self.stream = stream
 		self.sp = subject_prefix

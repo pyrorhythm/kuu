@@ -25,16 +25,15 @@ class Kuu:
 		middleware: list[Middleware] | None = None,
 		results: ResultBackend | None = None,
 	) -> None:
-		"""initialize `Kuu` instance
+		"""
+		Initialize `Kuu` instance
 
 		Args:
-		    broker: broker instance to operate on.
+		    broker: broker instance to operate on
 		    default_queue: default queue to fall back on when `.task(queue=...)`
-		        is unspecified. Defaults to "default".
-		    middleware: middlewares to use. Defaults to None.
-		    results: result backend instance to operate on. Result-persistence
-		        policy (`ttl`, `replay`, `store_errors`) lives on the backend
-		        itself, not here. Defaults to None.
+		        is unspecified; Defaults to "default"
+		    middleware: middlewares to use; Defaults to None
+		    results: result backend instance to operate on; Defaults to None.
 		"""
 
 		self.broker = broker
@@ -69,6 +68,35 @@ class Kuu:
 		blocking: bool = False,
 		**labels: Any,
 	) -> _Wrap[P, R] | Task[P, R]:
+		"""
+		Register a function as a task
+
+		Supports direct registration and decorator usage
+			both **with** call parens () and **without**
+
+		>>> @app.task
+		... async def ....
+
+		or
+
+		>>> @app.task(queue='any-q', ...)
+		... async def ....
+
+
+		Args:
+		    queue: override the default queue for this task; defaults
+		        to None
+		    max_attempts: maximum retry attempts; defaults to 5
+		    timeout: maximum execution time in seconds; None means no
+		        limit
+		    blocking: whether the task runs in blocking mode;
+		        defaults to False
+		    **labels: extra metadata attached to the task
+
+		Returns:
+		    Task instance when called with a function, or a decorator
+		    wrapper
+		"""
 
 		def _get_wrap(
 			_name: str | None = None,
@@ -167,6 +195,23 @@ class Kuu:
 		headers: dict[str, str] | None = None,
 		max_attempts: int | None = None,
 	) -> TaskHandle[Any]:
+		"""
+		Enqueue a task by its registered name
+
+		Args:
+		    task: registered task name
+		    args: positional and keyword arguments for the task. types should be correct,
+					or else typeerror on worker would be raised
+		    queue: override the queue. Defaults to None
+		    not_before: earliest time the task may run. Defaults to
+		        None
+		    headers: custom message headers. Defaults to None
+		    max_attempts: override max attempts. Defaults to None
+
+		Returns:
+		    Handle for the enqueued task
+		"""
+
 		t = self.registry.get(task)
 		msg = self._build_message(
 			task,

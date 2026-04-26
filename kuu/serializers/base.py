@@ -4,10 +4,25 @@ from typing import Any, Literal, Protocol, overload
 
 
 class Serializer(Protocol):
+	"""
+	Protocol for data serializers
+
+	Converts between python objects and bytes
+	"""
+
 	_primary_type: type | None = None
 
 	@classmethod
 	def with_type(cls, t: type) -> Serializer:
+		"""
+		Create serializer instance bound to primary type
+
+		Args:
+			t: target type for deserialization
+
+		Returns:
+			Configured serializer instance
+		"""
 		inst = cls()
 		inst._primary_type = t
 		return inst

@@ -9,6 +9,13 @@ from .base import Next
 
 
 class TimeoutMiddleware:
+	"""
+	Enforce maximum execution time per task
+
+	Args:
+		seconds: default timeout duration
+	"""
+
 	def __init__(self, seconds: float):
 		self.seconds = seconds
 

@@ -16,6 +16,19 @@ async def if_async[T](arg: T | Awaitable[T]) -> T:
 
 
 class Task[**P, Res]:
+	"""
+	A callable task bound to a Kuu app
+
+	Created by `@app.task` and exposes both direct execution (`await task()`) and queueing (`await task.q()`);
+
+	Attributes:
+		task_name: dotted FQN used to route the task
+		task_queue: queue this task publishes to by default
+		max_attempts: retry budget before the task is declared dead
+		timeout: per-run wall-clock limit in seconds; `None` means no limit
+		blocking: when `True` - the worker runs the task in a thread; only valid for sync functions
+	"""
+
 	name: str
 	task_queue: str
 	original_func: _Fn[P, Res]
@@ -35,6 +48,22 @@ class Task[**P, Res]:
 		timeout: float | None = None,
 		blocking: bool = False,
 	) -> None:
+		"""
+		Initialize a Task
+
+		Args:
+			manager: the Kuu app that owns this task
+			original_func: the wrapped callable
+			task_name: unique dotted name for routing
+			task_queue: queue to publish to
+			task_labels: arbitrary key-value metadata
+			max_attempts: retry budget; defaults to 5
+			timeout: per-run timeout in seconds; defaults to None
+			blocking: offload sync functions to a thread; defaults to False
+
+		Raises:
+			TypeError: if `blocking=True` is set on a coroutine function
+		"""
 		self._bound_app = manager
 
 		self.original_func = original_func
@@ -66,6 +95,12 @@ class Task[**P, Res]:
 		return await if_async(self.original_func(*args, **kwargs))
 
 	async def q(self, *args: P.args, **kwargs: P.kwargs) -> TaskHandle[Res]:
+		"""
+		Enqueue the task and return a handle to poll for the result
+
+		Raises:
+			RuntimeError: if the task has not been bound to an app
+		"""
 		if self._bound_app is None:
 			raise RuntimeError(f"task {self.name!r} not bound to an app")
 		return await self._bound_app._enqueue_task(self)(*args, **kwargs)

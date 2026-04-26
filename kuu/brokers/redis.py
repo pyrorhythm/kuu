@@ -39,6 +39,22 @@ class RedisReceipt(NamedTuple):
 
 
 class RedisBroker(Broker):
+	"""
+	Redis streams broker
+
+	Uses redis streams and sorted sets for scheduled messages; consumer groups manage competing consumers
+
+	Args:
+		url: Redis connection URL
+		group: consumer group name
+		consumer: consumer name
+		stream_prefix: Redis key prefix for streams
+		zset_prefix: Redis key prefix for scheduled sorted sets
+		block_ms: block time for xreadgroup
+		claim_min_idle_ms: min idle time for stale claim
+		serializer: message serializer
+	"""
+
 	def __init__(
 		self,
 		url: str = "redis://localhost:6379/0",
@@ -133,6 +149,18 @@ class RedisBroker(Broker):
 	async def consume(
 		self, queues: list[str], prefetch: int
 	) -> AsyncIterator[Delivery[RedisReceipt]]:
+		"""
+		Consume deliveries from queues
+
+		Pumps scheduled messages and claims stale deliveries before reading new ones
+
+		Args:
+			queues: queue names to consume
+			prefetch: max entries per read
+
+		Yields:
+			Delivery with Redis receipt
+		"""
 		for q in queues:
 			await self.declare(q)
 
@@ -185,6 +213,16 @@ class RedisBroker(Broker):
 		requeue: bool = True,
 		delay: float | None = None,
 	) -> None:
+		"""
+		Negative acknowledge delivery
+
+		Optionally requeue with delay via sorted set or stream
+
+		Args:
+			delivery: delivery to nack
+			requeue: requeue message; defaults to True
+			delay: delay seconds before requeue; defaults to None
+		"""
 		match delivery.receipt:
 			case RedisReceipt():
 				pass

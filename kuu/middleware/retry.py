@@ -9,6 +9,17 @@ from .base import Next
 
 
 class RetryMiddleware:
+	"""
+	Compute retry delays for failed tasks
+
+	Catches RetryErr and unexpected exceptions; then calculates exponential backoff with jitter for the next attempt
+
+	Args:
+		base: initial backoff duration in seconds
+		cap: maximum backoff duration in seconds
+		jitter: randomization factor applied to backoff
+	"""
+
 	def __init__(self, base: float = 0.5, cap: float = 60.0, jitter: float = 0.2):
 		self.base = base
 		self.cap = cap
