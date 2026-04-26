@@ -4,13 +4,11 @@ import logging
 import re
 from typing import Annotated
 
-import anyio
 import typer
 from typer import Argument, Option
 
 from kuu._import import import_object, import_tasks
 from kuu.app import Kuu
-from kuu.worker import Worker
 
 log = logging.getLogger("kuu.cli")
 
@@ -53,11 +51,24 @@ def _worker(
 	] = None,
 	concurrency: Annotated[
 		int,
-		Option(
-			"--concurrency",
-			"-c",
-		),
+		Option("--concurrency", "-c", help="task concurrency in bounds of one worker"),
 	] = 64,
+	subprocesses: Annotated[
+		int,
+		Option(
+			"--subprocesses",
+			"-s",
+			help="number of worker subprocesses",
+		),
+	] = 1,
+	watch: Annotated[
+		bool,
+		Option(
+			"--subprocesses",
+			"-s",
+			help="number of worker subprocesses",
+		),
+	] = False,
 	prefetch: Annotated[
 		int | None,
 		Option(
@@ -72,18 +83,21 @@ def _worker(
 	if prefetch is None:
 		prefetch = max(1, concurrency // 4)
 
-	q = _load_app(app_spec)
-	import_tasks(task_modules, "", False)
+	import anyio
 
-	anyio.run(
-		Worker(
-			app=q,
-			queues=queues,
-			concurrency=concurrency,
-			prefetch=prefetch,
-			shutdown_timeout=shutdown_timeout,
-		).run
+	from kuu.orchestrator.main import Orchestrator
+
+	orch = Orchestrator(
+		app_spec=app_spec,
+		task_modules=task_modules,
+		queues=queues,
+		concurrency=concurrency,
+		prefetch=prefetch,
+		shutdown_timeout=shutdown_timeout,
+		subprocesses=subprocesses,
+		watch_fs=watch,
 	)
+	anyio.run(orch.start)
 
 
 @app.command("info")

@@ -31,6 +31,18 @@ class Kuu:
 		result_replay: bool = True,
 		result_store_errors: bool = True,
 	):
+		"""Initialize task manager
+
+		Args:
+				broker (Broker): broker implementation to handle tasks
+				default_queue (str, optional): default queue to communicate through. Defaults to "default".
+				middleware (list[Middleware] | None, optional): middlewares. Defaults to None.
+				results (ResultBackend | None, optional): result backend implementation. Defaults to None.
+				serializer (Serializer, optional): serializer implementation. Defaults to JSONSerializer().
+				result_ttl (float, optional): ttl for storing results. Defaults to 86400.
+				result_replay (bool, optional): Defaults to True.
+				result_store_errors (bool, optional): Defaults to True.
+		"""
 		self.broker = broker
 		self.results = results
 		self.serializer = serializer
