@@ -1,61 +1,93 @@
 name: publish
 
 on:
-  pull_request:
-    types: [ closed ]
-    branches:
-      - master
+    pull_request:
+        types: [ closed ]
+        branches:
+            - master
+    push:
+        tags:
+            - 'v*'
 
 jobs:
-  publish:
-    if: github.event.pull_request.merged == true &&
-      github.event.pull_request.head.ref == 'dev'
-    runs-on: ubuntu-latest
-    environment:
-      name: pypi
-    permissions:
-      contents: read
-      id-token: write
+    tag:
+        if: github.event_name == 'pull_request' &&
+            github.event.pull_request.merged == true &&
+            github.event.pull_request.head.ref == 'dev'
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+        steps:
+            - name: -> checkout
+              uses: actions/checkout@v4
+              with:
+                  ref: master
+                  fetch-depth: 0
 
-    steps:
-      - name: -> checkout
-        uses: actions/checkout@v4
-        with:
-          ref: master
+            - name: -> tag if version bumped
+              run: |
+                  version=$(grep -m1 '^version' pyproject.toml | sed -E 's/version = "([^"]+)"/\1/')
+                  tag="v$version"
+                  if git rev-parse "refs/tags/$tag" >/dev/null 2>&1; then
+                      echo "tag $tag already exists, skipping publish"
+                      exit 0
+                  fi
+                  git tag "$tag"
+                  git push origin "$tag"
 
-      - name: -> setup py
-        uses: actions/setup-python@v6
-        with:
-          python-version-file: "pyproject.toml"
+    publish:
+        if: github.event_name == 'push'
+        runs-on: ubuntu-latest
+        environment:
+            name: pypi
+        permissions:
+            contents: write
+            id-token: write
 
-      - name: -> setup uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
+        steps:
+            - name: -> checkout
+              uses: actions/checkout@v4
 
-      - name: -> setup just
-        uses: extractions/setup-just@v3
-        with:
-          just-version: "*"
+            - name: -> setup py
+              uses: actions/setup-python@v6
+              with:
+                  python-version-file: "pyproject.toml"
 
-      - name: -> sync
-        run: just sync
+            - name: -> setup uv
+              uses: astral-sh/setup-uv@v7
+              with:
+                  enable-cache: true
 
-      - name: -> ruff
-        run: |
-          uv run ruff check --fix-only .
+            - name: -> setup just
+              uses: extractions/setup-just@v3
+              with:
+                  just-version: "*"
 
-      - name: -> pyrefly
-        run: uv run pyrefly check
+            - name: -> sync
+              run: just sync
 
-      - name: build pkg
-        uses: ./.github/actions/build
+            - name: -> ruff
+              run: |
+                  uv run ruff check --fix-only .
 
-      - name: dl build
-        uses: actions/download-artifact@v5
-        with:
-          name: build-dist
-          path: dist/
+            - name: -> pyrefly
+              run: uv run pyrefly check
 
-      - name: -> publish
-        run: just publish
+            - name: build pkg
+              uses: ./.github/actions/build
+
+            - name: dl build
+              uses: actions/download-artifact@v5
+              with:
+                  name: build-dist
+                  path: dist/
+
+            - name: -> publish
+              run: just publish
+
+            - name: -> release
+              uses: softprops/action-gh-release@v2
+              with:
+                  tag_name: ${{ github.ref_name }}
+                  generate_release_notes: true
+                  files: dist/*
