@@ -8,6 +8,12 @@ on:
     push:
         tags:
             - 'v*'
+    workflow_dispatch:
+        inputs:
+            tag:
+                description: existing tag to (re)publish (e.g. v0.0.1)
+                required: true
+                type: string
 
 jobs:
     tag:
@@ -17,6 +23,8 @@ jobs:
         runs-on: ubuntu-latest
         permissions:
             contents: write
+        outputs:
+            tag: ${{ steps.tag.outputs.tag }}
         steps:
             - name: -> checkout
               uses: actions/checkout@v4
@@ -25,6 +33,7 @@ jobs:
                   fetch-depth: 0
 
             - name: -> tag if version bumped
+              id: tag
               run: |
                   version=$(grep -m1 '^version' pyproject.toml | sed -E 's/version = "([^"]+)"/\1/')
                   tag="v$version"
@@ -34,9 +43,16 @@ jobs:
                   fi
                   git tag "$tag"
                   git push origin "$tag"
+                  echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
     publish:
-        if: github.event_name == 'push'
+        needs: tag
+        if: |
+            always() && (
+                github.event_name == 'push' ||
+                github.event_name == 'workflow_dispatch' ||
+                (needs.tag.result == 'success' && needs.tag.outputs.tag != '')
+            )
         runs-on: ubuntu-latest
         environment:
             name: pypi
@@ -47,6 +63,8 @@ jobs:
         steps:
             - name: -> checkout
               uses: actions/checkout@v4
+              with:
+                  ref: ${{ inputs.tag || needs.tag.outputs.tag || github.ref }}
 
             - name: -> setup py
               uses: actions/setup-python@v6
@@ -88,6 +106,6 @@ jobs:
             - name: -> release
               uses: softprops/action-gh-release@v2
               with:
-                  tag_name: ${{ github.ref_name }}
+                  tag_name: ${{ inputs.tag || needs.tag.outputs.tag || github.ref_name }}
                   generate_release_notes: true
                   files: dist/*
