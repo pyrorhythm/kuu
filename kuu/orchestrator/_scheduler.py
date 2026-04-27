@@ -11,25 +11,25 @@ log = getLogger("kuu.orchestrator.scheduler-runner")
 
 
 class SchedulerRunner:
-    _config: Kuunfig
+	_config: Kuunfig
 
-    def __init__(self, config: Kuunfig) -> None:
-        self._config = config
+	def __init__(self, config: Kuunfig) -> None:
+		self._config = config
 
-    async def run(self, stop_event: anyio.Event) -> None:
-        if not self._config.scheduler.enable:
-            return
+	async def run(self, stop_event: anyio.Event) -> None:
+		if not self._config.scheduler.enable:
+			return
 
-        app = import_object(self._config.app)
-        import_tasks(self._config.task_modules, "", False)
+		app = import_object(self._config.app)
+		import_tasks(self._config.task_modules, "", False)
 
-        scheduler = app.schedule
-        log.info("scheduler running with %d job(s)", len(scheduler.jobs))
+		scheduler = app.schedule
+		log.info("scheduler running with %d job(s)", len(scheduler.jobs))
 
-        async def _run() -> None:
-            await scheduler.run(install_signals=False)
+		async def _run() -> None:
+			await scheduler.run(install_signals=False)
 
-        async with anyio.create_task_group() as tg:
-            tg.start_soon(_run)
-            await stop_event.wait()
-            tg.cancel_scope.cancel()
+		async with anyio.create_task_group() as tg:
+			tg.start_soon(_run)
+			await stop_event.wait()
+			tg.cancel_scope.cancel()
