@@ -45,9 +45,9 @@ class WorkerPool:
         current_limiter = anyio.to_thread.current_default_thread_limiter()
 
         if self._config.concurrency > current_limiter.available_tokens:
-            current_limiter.total_tokens += (
-                self._config.concurrency - current_limiter.available_tokens
-            ) * 1.2
+            current_limiter.total_tokens += int(
+                (self._config.concurrency - current_limiter.available_tokens) * 1.2
+            )
 
         for i in range(self._config.processes):
             if self._stop_event.is_set():
