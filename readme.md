@@ -1,13 +1,17 @@
-[kuu](kuu-logo-slogan.svg)
+<p align="center">
+  <img src=".github/logo/svg/kuu-logo-slogan-white.svg" alt="kuu" width="50%"/>
+  <br/><br/>
+  <a href="https://pypi.org/project/kuu/"><img src="https://img.shields.io/pypi/v/kuu?color=blue" alt="PyPI"/></a>
+  <a href="https://pypi.org/project/kuu/"><img src="https://img.shields.io/pypi/pyversions/kuu" alt="Python"/></a>
+  <a href="https://github.com/pyrorhythm/kuu/blob/master/LICENSE"><img src="https://img.shields.io/pypi/l/kuu" alt="License"/></a>
+  <a href="https://pypi.org/project/kuu/"><img src="https://img.shields.io/pypi/dm/kuu" alt="Downloads"/></a>
+</p>
 
-# kuu
+<h1 align="center">kuu</h1>
 
-[![PyPI](https://img.shields.io/pypi/v/kuu?color=blue)](https://pypi.org/project/kuu/)
-[![Python](https://img.shields.io/pypi/pyversions/kuu)](https://pypi.org/project/kuu/)
-[![License](https://img.shields.io/pypi/l/kuu)](https://github.com/pyrorhythm/kuu/blob/master/LICENSE)
-[![Downloads](https://img.shields.io/pypi/dm/kuu)](https://pypi.org/project/kuu/)
+---
 
-a native distributed task queue - simple and easy to drop into production
+> ### a *native* distributed task queue for python
 
 ```shell
 uv add kuu
