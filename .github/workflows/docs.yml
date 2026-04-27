@@ -1,0 +1,66 @@
+name: docs
+
+on:
+    push:
+        branches:
+            - master
+        paths:
+            - "docs/**"
+            - "kuu/**"
+            - "pyproject.toml"
+            - "justfile"
+            - ".github/workflows/docs.yml"
+    workflow_dispatch:
+
+permissions:
+    contents: read
+    pages: write
+    id-token: write
+
+concurrency:
+    group: pages
+    cancel-in-progress: false
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+        steps:
+            - name: -> checkout
+              uses: actions/checkout@v4
+
+            - name: -> setup py
+              uses: actions/setup-python@v6
+              with:
+                  python-version-file: "pyproject.toml"
+
+            - name: -> setup uv
+              uses: astral-sh/setup-uv@v7
+              with:
+                  enable-cache: true
+
+            - name: -> setup just
+              uses: extractions/setup-just@v3
+              with:
+                  just-version: "*"
+
+            - name: -> sync (docs group)
+              run: uv sync --group docs
+
+            - name: -> build site
+              run: just docs
+
+            - name: -> upload artifact
+              uses: actions/upload-pages-artifact@v3
+              with:
+                  path: docs/_build/html
+
+    deploy:
+        needs: build
+        runs-on: ubuntu-latest
+        environment:
+            name: github-pages
+            url: ${{ steps.deployment.outputs.page_url }}
+        steps:
+            - name: -> deploy
+              id: deployment
+              uses: actions/deploy-pages@v4

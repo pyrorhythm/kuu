@@ -41,3 +41,12 @@ release SEMVER: sync lint typecheck (test '-q' 'no') (bump SEMVER) (release-git 
 [arg('tb', long='tb')]
 test q='' tb='short' DIR="tests/" *FLAGS:
     uv run pytest {{ FLAGS }} "{{ DIR }}" {{ q }} --tb={{ tb }}
+
+docs:
+    uv run --group dev sphinx-build -b html -W --keep-going docs docs/_build/html
+
+docs-serve PORT="8000":
+    uv run --group dev sphinx-autobuild --port {{ PORT }} docs docs/_build/html
+
+docs-clean:
+    rm -rf docs/_build docs/apidocs

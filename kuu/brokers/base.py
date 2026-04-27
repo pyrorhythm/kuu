@@ -10,77 +10,59 @@ from ..message import Message
 
 @dataclass
 class Delivery[Receipt]:
-	message: Message
-	receipt: Receipt
-	queue: str
+    """
+    A message handed to a worker by a broker.
+
+    `receipt` is opaque per-broker state used to ack or nack later.
+    """
+
+    message: Message
+    receipt: Receipt
+    queue: str
 
 
 class Broker(Protocol):
-	async def connect(self) -> None:
-		"""Initialize connection to broker"""
+    """Transport for enqueuing and consuming task messages."""
 
-	async def close(self) -> None:
-		"""Close connection to broker"""
+    async def connect(self) -> None:
+        """Open the broker connection."""
 
-	async def declare(self, queue: str) -> None:
-		"""
-		Declare a queue to broker
+    async def close(self) -> None:
+        """Close the broker connection."""
 
-		Args:
-				queue: queue to declare
-		"""
+    async def declare(self, queue: str) -> None:
+        """Declare `queue` so it can be consumed from."""
 
-	async def enqueue(self, msg: Message) -> None:
-		"""
-		Enqueue message
+    async def enqueue(self, msg: Message) -> None:
+        """Publish `msg` to its queue for immediate dispatch."""
 
-		Args:
-				msg: message to enqueue
-		"""
+    async def schedule(self, msg: Message, not_before: datetime) -> None:
+        """Schedule `msg` to become deliverable at or after `not_before`."""
 
-	async def schedule(self, msg: Message, not_before: datetime) -> None:
-		"""
-		Schedule a message to execute at or after specified datetime
+    def consume(self, queues: list[str], prefetch: int) -> AsyncIterator[Delivery]:
+        """
+        Stream deliveries from `queues`, prefetching up to `prefetch` per pull.
 
-		Args:
-				msg: message to schedule
-				not_before: datetime by which message will be scheduled
-		"""
+        The returned async iterator yields `Delivery` objects whose `receipt`
+        is typed against the concrete broker.
+        """
 
-	def consume(self, queues: list[str], prefetch: int) -> AsyncIterator[Delivery]:
-		"""
-		Consume messages from specified queues, prefetching them in batch of N
+    async def ack(self, delivery: Delivery) -> None:
+        """
+        Acknowledge `delivery` as successfully processed.
 
-		Args:
-				queues: queues from which deliveries would be consumed
-				prefetch: size of a fetch batch
+        Raises `InvalidReceiptType` when a `Delivery` from one broker is
+        passed to a different broker (e.g. Redis receipt fed into NATS).
+        """
 
-		Returns:
-				AsyncIterator[Delivery], where Delivery.receipt is typed after Broker
-		"""
+    async def nack(
+        self, delivery: Delivery, requeue: bool = True, delay: float | None = None
+    ) -> None:
+        """
+        Negatively acknowledge `delivery`.
 
-	async def ack(self, delivery: Delivery) -> None:
-		"""
-		Acknowledge delivery
+        - `requeue`: when true, the message is put back for another attempt.
+        - `delay`: seconds to wait before re-delivery. `None` requeues immediately.
 
-		Args:
-				delivery;
-
-		Raises:
-				InvalidReceiptType: if Delivery from Redis got fed into NATS; when deliveries came from different brokers
-		"""
-
-	async def nack(
-		self, delivery: Delivery, requeue: bool = True, delay: float | None = None
-	) -> None:
-		"""
-		Negatively acknowledge delivery
-
-		Args:
-				delivery;
-				requeue: If to requeue delivery in case of soft-failure. Defaults to True.
-				delay: How delayed requeued message would be sent. `None` - instant.  Defaults to None.
-
-		Raises:
-				InvalidReceiptType: if Delivery from Redis got fed into NATS; when deliveries came from different brokers
-		"""
+        Raises `InvalidReceiptType` when receipts cross brokers.
+        """

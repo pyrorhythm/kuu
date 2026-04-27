@@ -1,0 +1,202 @@
+
+@import url("https://cdn.jsdelivr.net/npm/geist@1/dist/fonts/geist-sans/style.css");
+@import url("https://cdn.jsdelivr.net/npm/geist@1/dist/fonts/geist-mono/style.css");
+
+:root {
+  --sans: "Geist", system-ui, -apple-system, sans-serif;
+  --mono: "Geist Mono", ui-monospace, monospace;
+
+  --ink:    #0A0A0A;
+  --ink-2:  rgba(10,10,10,.62);
+  --ink-3:  rgba(10,10,10,.40);
+  --paper:  #FAFAF7;
+  --hair:   rgba(10,10,10,.10);
+  --hair-2: rgba(10,10,10,.05);
+  --good:   #1F5E3A;
+  --bad:    #B5371A;
+
+  --s-1: 4px;  --s-2: 8px;   --s-3: 12px; --s-4: 16px;
+  --s-5: 24px; --s-6: 32px;  --s-7: 48px; --s-8: 64px;
+  --s-9: 96px; --s-10: 128px;
+}
+
+body {
+  --font-stack:            var(--sans);
+  --font-stack--monospace: var(--mono);
+
+  --color-foreground-primary:            var(--ink);
+  --color-foreground-secondary:          var(--ink-2);
+  --color-foreground-muted:              var(--ink-3);
+  --color-foreground-border:             var(--hair);
+
+  --color-background-primary:            var(--paper);
+  --color-background-secondary:          #F5F5F2;
+  --color-background-hover:              var(--hair-2);
+  --color-background-hover--transparent: rgba(10,10,10,0);
+  --color-background-border:             var(--hair);
+
+  --color-brand-primary: var(--ink);
+  --color-brand-content: var(--ink);
+
+  --color-link:                  var(--ink);
+  --color-link--visited:         var(--ink-2);
+  --color-link-underline:        var(--hair);
+  --color-link-underline--hover: var(--ink-3);
+
+  --color-sidebar-background:               var(--paper);
+  --color-sidebar-background-border:        var(--hair);
+  --color-sidebar-brand-text:               var(--ink);
+  --color-sidebar-caption-text:             var(--ink-3);
+  --color-sidebar-link-text:                var(--ink-2);
+  --color-sidebar-link-text--top-level:     var(--ink);
+  --color-sidebar-item-background--current: var(--hair-2);
+  --color-sidebar-item-background--hover:   var(--hair-2);
+  --color-sidebar-search-text:              var(--ink);
+  --color-sidebar-search-background:        var(--paper);
+  --color-sidebar-search-background--focus: var(--paper);
+  --color-sidebar-search-border:            var(--hair);
+  --color-sidebar-search-foreground:        var(--ink);
+  --color-sidebar-search-icon:              var(--ink-3);
+
+  --color-toc-item-text:         var(--ink-2);
+  --color-toc-item-text--hover:  var(--ink);
+  --color-toc-item-text--active: var(--ink);
+
+  --color-table-header-background: var(--hair-2);
+  --color-table-border:            var(--hair);
+
+  --color-highlight-on-target:    var(--hair-2);
+  --color-inline-code-background: var(--hair-2);
+}
+
+body[data-theme="dark"] {
+  --ink:    #FAFAF7;
+  --ink-2:  rgba(250,250,247,.62);
+  --ink-3:  rgba(250,250,247,.40);
+  --paper:  #0A0A0A;
+  --hair:   rgba(250,250,247,.10);
+  --hair-2: rgba(250,250,247,.05);
+}
+
+@media (prefers-color-scheme: dark) {
+  body:not([data-theme="light"]) {
+    --ink:    #FAFAF7;
+    --ink-2:  rgba(250,250,247,.62);
+    --ink-3:  rgba(250,250,247,.40);
+    --paper:  #0A0A0A;
+    --hair:   rgba(250,250,247,.10);
+    --hair-2: rgba(250,250,247,.05);
+  }
+}
+
+body {
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  letter-spacing: -0.005em;
+}
+
+article > .section > h1:first-child,
+article > h1:first-child {
+  font-size: 38px;
+  line-height: 1.08;
+  letter-spacing: -0.022em;
+  font-weight: 300;
+}
+
+h1 { font-size: 28px; line-height: 1.18; letter-spacing: -0.018em; font-weight: 400; }
+h2 { font-size: 20px; line-height: 1.25; letter-spacing: -0.012em; font-weight: 400; }
+h3 { font-size: 16px; line-height: 1.40; letter-spacing: -0.008em; font-weight: 400; }
+h4, h5, h6 { font-size: 14px; line-height: 1.50; letter-spacing: -0.005em; font-weight: 500; }
+
+.highlight,
+.highlight pre {
+  background: #0A0A0A !important;
+  border-radius: 0 !important;
+}
+
+.highlight pre {
+  color: #FAFAF7;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+  padding: var(--s-5);
+}
+
+body[data-theme="dark"] .highlight,
+body[data-theme="dark"] .highlight pre {
+  background: #111 !important;
+}
+
+@media (prefers-color-scheme: dark) {
+  body:not([data-theme="light"]) .highlight,
+  body:not([data-theme="light"]) .highlight pre {
+    background: #111 !important;
+  }
+}
+
+code, kbd, samp, tt {
+  font-family: var(--mono);
+  font-size: 12px;
+  border-radius: 0 !important;
+}
+
+input, button, select, textarea, .admonition {
+  border-radius: 0 !important;
+}
+
+.admonition {
+  border-left: 1px solid var(--hair);
+  background: var(--hair-2);
+}
+
+.sidebar-brand {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 0;
+}
+
+.sidebar-logo-container {
+  display: flex;
+  /*flex-grow: 1;*/
+}
+
+.sidebar-logo {
+  width: auto;
+  height: 2.5rem;
+  margin: 1rem 0;
+  flex-shrink: 0;
+}
+
+.header-slogan {
+  width: 400px;
+  margin-top: 5rem
+}
+
+.sidebar-brand-text {
+  font-size: 1.25rem;
+  font-weight: 600;
+    text-align: center;
+  flex-grow: 1;
+  margin: 0.5rem;
+  padding: 0;
+}
+
+/* ── Tables ─────────────────────────────────────────────────────────── */
+table.docutils {
+  border: 1px solid var(--hair);
+  font-size: 14px;
+}
+
+table.docutils th {
+  background: var(--hair-2);
+  font-weight: 500;
+}
+
+table.docutils th,
+table.docutils td {
+  border: 1px solid var(--hair);
+  padding: var(--s-2) var(--s-3);
+}

@@ -1,3 +1,5 @@
+[kuu](kuu-logo-slogan.svg)
+
 # kuu
 
 [![PyPI](https://img.shields.io/pypi/v/kuu?color=blue)](https://pypi.org/project/kuu/)
@@ -30,13 +32,13 @@ from .app import app
 
 
 class ChargeResult(TypedDict):
-	ok: bool
-	charged: int
+    ok: bool
+    charged: int
 
 
 @app.task
 async def charge(user_id: int, amount_cents: int) -> ChargeResult:
-	return {"ok": True, "charged": amount_cents}
+    return {"ok": True, "charged": amount_cents}
 
 
 @app.schedule.cron(expr="* * */4 * * *")
@@ -48,13 +50,13 @@ from .tasks import charge
 
 
 async def run() -> None:
-	# type checker will automatically infer here
-	# that handle is type of TaskHandle[ChargeResult]
-	# args/kwargs of the task also remain typed
-	handle = await charge.q(user_id=1, amount_cents=500)
+    # type checker will automatically infer here
+    # that handle is type of TaskHandle[ChargeResult]
+    # args/kwargs of the task also remain typed
+    handle = await charge.q(user_id=1, amount_cents=500)
 
-	# type checker will infer ChargeResult
-	result = await handle.result(timeout=30)
+    # type checker will infer ChargeResult
+    result = await handle.result(timeout=30)
 ```
 
 ```sh

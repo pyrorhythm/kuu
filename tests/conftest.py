@@ -8,4 +8,4 @@ from kuu.brokers.memory import MemoryBroker
 
 @pytest.fixture
 def app() -> Kuu:
-	return Kuu(broker=MemoryBroker())
+    return Kuu(broker=MemoryBroker())
