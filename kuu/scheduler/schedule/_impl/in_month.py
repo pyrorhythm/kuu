@@ -7,7 +7,7 @@ from ..exc import ScheduleError
 
 
 class in_month(Schedule):
-	"""Constrains firing to specific months (1 = January … 12 = December).
+	"""Constrains firing to specific months (1 = January ... 12 = December).
 
 	Example::
 

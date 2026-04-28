@@ -227,7 +227,9 @@ def serve(
 	port: Annotated[int, Doc("Port to bind the /metrics HTTP server to.")] = 9100,
 	multiprocess_dir: Annotated[
 		str | None,
-		Doc("Directory for prometheus_client multiprocess shared state. When set, aggregates metrics across all worker subprocesses that wrote to this directory."),
+		Doc(
+			"Directory for prometheus_client multiprocess shared state. When set, aggregates metrics across all worker subprocesses that wrote to this directory."
+		),
 	] = None,
 ) -> tuple[WSGIServer, Thread]:
 	"""

@@ -2,7 +2,6 @@
 
 A tour of Kuu's surface area, ordered roughly the way you'd reach for things.
 
-
 ## Defining the App
 
 ```python
@@ -250,8 +249,8 @@ results = RedisResults(
 )
 ```
 
-`replay=True` is the trick that makes idempotency_key-based deduplication
-work end-to-end: the worker checks the backend before running, and if a
+`replay=True` is what makes idempotency_key-based deduplication
+work across client and worker: the worker checks the backend before running, and if a
 result is already present, it ack's the message and skips execution.
 
 ## Middleware
@@ -275,11 +274,11 @@ app = Kuu(
 - `RetryMiddleware`: catches `RetryErr` and schedules the next attempt with
   exponential backoff plus jitter. Pass `retry_on` to also auto-retry on
   specific exception types without requiring explicit `raise RetryErr(...)`:
-  ```python
-  RetryMiddleware(base=0.5, cap=60.0, jitter=0.2, retry_on=(httpx.HTTPError,))
-  ```
-  Backoff: `min(cap, base * 2 ** attempt)` with jitter applied as a
-  fractional multiplier in `[-jitter, +jitter]`.
+    ```python
+    RetryMiddleware(base=0.5, cap=60.0, jitter=0.2, retry_on=(httpx.HTTPError,))
+    ```
+    Backoff: `min(cap, base * 2 ** attempt)` with jitter applied as a
+    fractional multiplier in `[-jitter, +jitter]`.
 - `TimeoutMiddleware`: per-task `Task.timeout` wins; this `seconds` is the
   default.
 
@@ -298,30 +297,70 @@ worker path. Most middleware filters on phase.
 
 ## Scheduler
 
-Jobs are declared in code via `app.schedule`. The scheduler loop runs in
-the orchestrator process when `[scheduler] enable = true`.
+Jobs are declared in code via `app.every()` or `app.sched()` decorators,
+or programmatically via `app.schedule.add_every()` and `app.schedule.add_schedule()`.
+The scheduler loop runs in the orchestrator process when `[scheduler] enable = true`.
+
+### Interval jobs
 
 ```python
 from datetime import timedelta
 
-
 @app.task
 async def refresh_balance() -> None: ...
 
+# Decorator style
+@app.every(timedelta(minutes=5))
+async def refresh() -> None: ...
 
-# fixed-rate every 5 minutes
-app.schedule.every(timedelta(minutes=5), task=refresh_balance)
-
-# cron-style: every 4 hours, on the hour
-app.schedule.cron(task=refresh_balance, expr="0 0 */4 * * *")
-
-# structured cron without writing the expression
-app.schedule.cron(task=refresh_balance, hour=[3, 15], minute=0)
+# Programmatic style
+app.schedule.add_every(timedelta(minutes=5), "myapp.tasks:refresh")
 ```
 
-The structured form rejects passing both `expr` and a field; it also fills
-in zeros for unspecified smaller fields so `cron(hour=10)` means
-`"0 0 10 * * *"`, not "every minute of every 10am".
+Optional kwargs: `id`, `queue`, `headers`, `max_attempts`.
+
+### Schedule-based jobs (cron-like)
+
+Schedule jobs use composable schedule objects instead of cron expressions:
+
+```python
+from kuu.scheduler.schedule import at, every, on, on_day, in_month, between, Mon, Wed, Fri
+
+# Every weekday at 09:00
+@app.sched(on(Mon, Tue, Wed, Thu, Fri) & at(time(9, 0)))
+async def morning_report() -> None: ...
+
+# Every 4 hours, anchored from midnight
+@app.sched(every(hours=4, starting=time(0, 0)))
+async def periodic_sync() -> None: ...
+
+# 1st and 15th of each month at 03:00
+@app.sched(on_day(1, 15) & at(time(3, 0)))
+async def billing() -> None: ...
+
+# Between 09:00 and 17:00, every 30 minutes
+@app.sched(every(minutes=30) & between(time(9), time(17)))
+async def office_hours_job() -> None: ...
+```
+
+Schedule objects compose with `&` (AND - all must match) and `|` (OR - any matches):
+
+| Schedule                                      | Purpose                                 |
+| --------------------------------------------- | --------------------------------------- |
+| `at(t)`                                       | Daily at wall-clock time `t`            |
+| `every(*, hours, minutes, seconds, starting)` | Fixed interval within each day          |
+| `on(*weekdays)`                               | Restrict to specific weekdays (Mon–Sun) |
+| `on_day(*days)`                               | Restrict to days of month (1–31)        |
+| `in_month(*months)`                           | Restrict to specific months (Jan–Dec)   |
+| `between(start, end)`                         | Restrict to time window within each day |
+
+Programmatic registration:
+
+```python
+from kuu.scheduler.schedule import at, on, Mon, Wed, Fri
+
+app.schedule.add_schedule(at(time(9, 0)) & on(Mon, Wed, Fri), "myapp.tasks:report")
+```
 
 ## Serializers
 
@@ -453,16 +492,16 @@ handler never brings down the worker.
 
 Available signals and their handler signatures:
 
-| Signal | Handler arguments |
-|---|---|
-| `task_enqueued` | `(msg: Message)` |
-| `task_received` | `(msg: Message)` |
-| `task_started` | `(msg: Message)` |
-| `task_succeeded` | `(msg: Message, elapsed: float)` |
-| `task_failed` | `(msg: Message, exc: BaseException)` |
-| `task_retried` | `(msg: Message, delay: float)` |
-| `task_dead` | `(msg: Message)` |
-| `worker_heartbeat` | `(msg: Message)` |
+| Signal             | Handler arguments                    |
+| ------------------ | ------------------------------------ |
+| `task_enqueued`    | `(msg: Message)`                     |
+| `task_received`    | `(msg: Message)`                     |
+| `task_started`     | `(msg: Message)`                     |
+| `task_succeeded`   | `(msg: Message, elapsed: float)`     |
+| `task_failed`      | `(msg: Message, exc: BaseException)` |
+| `task_retried`     | `(msg: Message, delay: float)`       |
+| `task_dead`        | `(msg: Message)`                     |
+| `worker_heartbeat` | `(msg: Message)`                     |
 
 Disconnect a handler with `app.events.<signal>.disconnect(handler)`.
 
@@ -492,10 +531,10 @@ re-anchor to the next match and are unaffected.
 Two commands matter day-to-day:
 
 ```sh
-uv run kuu start                                            # default config
-uv run kuu start -c ./path/to/kuunfig.toml                  # explicit
-uv run kuu start -o concurrency=128 -o dashboard.enable=true  # ad-hoc overrides
-uv run kuu info                                             # show resolved config
+uv run kuu start
+uv run kuu start -c ./path/to/kuunfig.toml
+uv run kuu start -o concurrency=128 -o dashboard.enable=true
+uv run kuu info
 ```
 
 `-o dotted.path=value` is repeatable. Values parse as JSON when valid

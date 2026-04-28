@@ -58,7 +58,7 @@ class Kuu:
 	) -> _Wrap[P, R]: ...
 
 	@overload
-	def task[**P, R](self, func: _Fn[P, R] = ..., /) -> Task[P, R]: ...
+	def task[**P, R](self, func: _Fn[P, R], /) -> Task[P, R]: ...
 
 	def task[**P, R](
 		self,
@@ -70,8 +70,7 @@ class Kuu:
 		blocking: bool = False,
 		**labels: Any,
 	) -> _Wrap[P, R] | Task[P, R]:
-		"""
-		Register a function as a task.
+		"""Register function as a task.
 
 		Accepts the bare function (`@app.task`) or a parametrized decorator
 		(`@app.task(queue=..., max_attempts=...)`).
@@ -105,9 +104,10 @@ class Kuu:
 		if inspect.isfunction(name_or_func):
 			func = name_or_func
 			return _get_wrap()(func)
+		elif name_or_func is None or isinstance(name_or_func, str):
+			return _get_wrap(name_or_func)
 
-		name = name_or_func
-		return _get_wrap(name)
+		raise TypeError(type(name_or_func))
 
 	def every[**P, R](
 		self,
@@ -119,6 +119,14 @@ class Kuu:
 		headers: dict[str, str] | None = None,
 		max_attempts: int | None = None,
 	) -> _Wrap[P, R]:
+		"""Register function as a scheduled task with specified interval `timedelta`.
+
+		- `id`: optional, specific id for scheduler
+		- `queue`: destination queue; defaults to `Kuu.default_queue`.
+		- `headers`: arbitrary metadata attached to the scheduled task.
+		- `max_attempts`: retry budget before the task is declared dead.
+		"""
+
 		def wrap(fn: _Fn[P, R]) -> Task[P, R]:
 			if not isinstance(fn, Task):
 				fn = self.task(fn)
@@ -145,6 +153,16 @@ class Kuu:
 		headers: dict[str, str] | None = None,
 		max_attempts: int | None = None,
 	) -> _Wrap[P, R]:
+		"""Register function as a scheduled task with `Schedule`.
+
+		Runs according to the provided `sched`.
+
+		- `id`: optional, specific id for scheduler
+		- `queue`: destination queue; defaults to `Kuu.default_queue`.
+		- `headers`: arbitrary metadata attached to the scheduled task.
+		- `max_attempts`: retry budget before the task is declared dead.
+		"""
+
 		def wrap(fn: _Fn[P, R]) -> Task[P, R]:
 			if not isinstance(fn, Task):
 				fn = self.task(fn)
