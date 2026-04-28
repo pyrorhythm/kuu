@@ -22,6 +22,8 @@ class ResultBackend(Protocol):
 	Protocol for result backends.
 
 	Defines serialization, type marshalling, TTL, replay and error storage.
+	Subclasses should accept `serializer`, `marshal_types`, `ttl`, `replay`,
+	and `store_errors` keyword arguments.
 	"""
 
 	serializer: Serializer
@@ -32,26 +34,12 @@ class ResultBackend(Protocol):
 
 	def __init__(
 		self,
-		*,
 		serializer: Serializer,
-		marshal_types: bool = True,
-		ttl: float | None = 86400,
-		replay: bool = True,
-		store_errors: bool = True,
+		marshal_types: bool,
+		ttl: float | None,
+		replay: bool,
+		store_errors: bool,
 	) -> None:
-		"""
-		Configure backend options.
-
-		- `serializer`: encodes/decodes result payloads.
-		- `marshal_types`: when true, persist the python type FQN alongside
-		  the payload so `decode` can reconstruct the original type.
-		- `ttl`: how long persisted entries live, in seconds. `None` means
-		  no expiry. Applied at write time by `set`/`setnx`.
-		- `replay`: when true, the worker checks the backend before running
-		  a task and short-circuits to the cached value on a hit.
-		- `store_errors`: when true, the worker persists terminal failures
-		  (final attempt) so callers can observe them via `TaskHandle`.
-		"""
 		self.serializer = serializer
 		self.marshal_types = marshal_types
 		self.ttl = ttl

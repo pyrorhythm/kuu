@@ -1,54 +1,60 @@
-<div class="grid">
-	<article class="stat-card">
-		<div class="stat-value">{{ totals.enqueued or 0 }}</div>
-		<div class="stat-label">enqueued</div>
-	</article>
-	<article class="stat-card">
-		<div class="stat-value">{{ totals.succeeded or 0 }}</div>
-		<div class="stat-label">succeeded</div>
-	</article>
-	<article class="stat-card">
-		<div class="stat-value">{{ totals.failed or 0 }}</div>
-		<div class="stat-label">failed</div>
-	</article>
-	<article class="stat-card">
-		<div class="stat-value">{{ totals.retried or 0 }}</div>
-		<div class="stat-label">retried</div>
-	</article>
-	<article class="stat-card">
-		<div class="stat-value">{{ totals.dead or 0 }}</div>
-		<div class="stat-label">dead</div>
-	</article>
-	{% if broker_info.scheduled is defined %}
-	<article class="stat-card">
-		<div class="stat-value">{{ broker_info.scheduled }}</div>
-		<div class="stat-label">scheduled</div>
-	</article>
-	{% endif %}
-	{% if broker_info.pending is defined %}
-	<article class="stat-card">
-		<div class="stat-value">{{ broker_info.pending }}</div>
-		<div class="stat-label">pending</div>
-	</article>
-	{% endif %}
+<div class="stat-strip">
+  <div class="stat-cell">
+    <div class="stat-num">{{ totals['enqueued'] or 0 }}</div>
+    <div class="stat-key">enqueued</div>
+  </div>
+  <div class="stat-cell">
+    <div class="stat-num{% if totals['succeeded'] %} good{% endif %}">{{ totals['succeeded'] or 0 }}</div>
+    <div class="stat-key">succeeded</div>
+  </div>
+  <div class="stat-cell">
+    <div class="stat-num{% if totals['failed'] %} bad{% endif %}">{{ totals['failed'] or 0 }}</div>
+    <div class="stat-key">failed</div>
+  </div>
+  <div class="stat-cell">
+    <div class="stat-num dim">{{ totals['retried'] or 0 }}</div>
+    <div class="stat-key">retried</div>
+  </div>
+  <div class="stat-cell">
+    <div class="stat-num{% if totals['dead'] %} bad{% endif %}">{{ totals['dead'] or 0 }}</div>
+    <div class="stat-key">dead</div>
+  </div>
+  {% if broker_info.scheduled is defined %}
+  <div class="stat-cell">
+    <div class="stat-num dim">{{ broker_info.scheduled }}</div>
+    <div class="stat-key">scheduled</div>
+  </div>
+  {% endif %}
+  {% if broker_info.pending is defined %}
+  <div class="stat-cell">
+    <div class="stat-num dim">{{ broker_info.pending }}</div>
+    <div class="stat-key">pending</div>
+  </div>
+  {% endif %}
 </div>
+
 {% if broker_info.queues %}
-<table style="margin-top:0.5rem;">
-	<thead>
-		<tr>
-			<th>queue</th>
-			<th>stream</th>
-			<th>scheduled</th>
-		</tr>
-	</thead>
-	<tbody>
-		{% for q, info in broker_info.queues.items() %}
-		<tr>
-			<td><kbd>{{ q }}</kbd></td>
-			<td>{{ info.stream }}</td>
-			<td>{{ info.scheduled }}</td>
-		</tr>
-		{% endfor %}
-	</tbody>
-</table>
+<div class="surface queue-table-wrap" style="margin-top: var(--s-4);">
+  <div class="surface-head"><span class="surface-title">queues</span></div>
+  <div class="surface-body flush">
+    <table class="kuu-table">
+      <thead>
+        <tr>
+          <th>queue</th>
+          <th>stream</th>
+          <th>scheduled</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for q, info in broker_info.queues.items() %}
+        <tr>
+          <td class="mono-cell">{{ q }}</td>
+          <td>{{ info.stream }}</td>
+          <td class="dim">{{ info.scheduled }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
 {% endif %}

@@ -1,26 +1,28 @@
 {% if jobs %}
-<table>
-	<thead>
-		<tr>
-			<th>id</th>
-			<th>task</th>
-			<th>queue</th>
-			<th>next run</th>
-			<th>rule</th>
-		</tr>
-	</thead>
-	<tbody>
-		{% for j in jobs %}
-		<tr>
-			<td>{{ j.id }}</td>
-			<td>{{ j.task_name }}</td>
-			<td><kbd>{{ j.queue or "default" }}</kbd></td>
-			<td>{{ j.next_run.strftime("%Y-%m-%d %H:%M:%S") }}</td>
-			<td>{% if j.expr is defined %}{{ j.expr }}{% else %}{{ j.every.total_seconds() }}s{% endif %}</td>
-		</tr>
-		{% endfor %}
-	</tbody>
+<table class="kuu-table">
+  <thead>
+    <tr>
+      <th>task</th>
+      <th>next run</th>
+      <th>rule</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for j in jobs %}
+    <tr>
+      <td class="mono-cell">{{ j.task_name }}</td>
+      <td class="dim">{{ j.next_run.strftime("%H:%M:%S") }}</td>
+      <td class="mono-cell">
+        {%- if j.expr is defined -%}
+          {{ j.expr }}
+        {%- else -%}
+          every {{ j.every.total_seconds()|int }}s
+        {%- endif -%}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
 </table>
 {% else %}
-<p class="secondary">no scheduled jobs ;c</p>
+<p class="placeholder">no scheduled jobs</p>
 {% endif %}

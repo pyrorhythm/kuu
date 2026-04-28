@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-from redis.asyncio import Redis
-
-from kuu._types import _ensure_connected
-
-from ..exceptions import NotConnected
+from .._types import _ensure_connected
+from ..redis import RedisTransport, StandaloneConfig
 from ..serializers import JSONSerializer
 from ..serializers.base import Serializer
 from .base import Result, ResultBackend
@@ -16,6 +13,7 @@ class RedisResults(ResultBackend):
 		url: str = "redis://localhost:6379/0",
 		prefix: str = "qq:r:",
 		*,
+		transport: RedisTransport | None = None,
 		serializer: Serializer = JSONSerializer(),
 		marshal_types: bool = True,
 		ttl: float | None = 86400,
@@ -25,11 +23,13 @@ class RedisResults(ResultBackend):
 		"""
 		Redis-backed result store.
 
-		- `url`: Redis connection URL.
+		- `url`: Redis connection URL (convenience alias for ``StandaloneConfig``).
 		- `prefix`: key prefix for every stored result.
+		- `transport`: pre-configured :class:`~kuu.redis.RedisTransport`.
+		  When given, ``url`` is ignored.
 		- `serializer`: payload serializer.
 		- `marshal_types`: persist type info alongside the payload.
-		- `ttl`: default expiry in seconds; `None` means no expiry.
+		- `ttl`: default expiry in seconds; ``None`` means no expiry.
 		- `replay`: short-circuit task execution when a cached result is present.
 		- `store_errors`: persist terminal failures so callers can observe them.
 		"""
@@ -40,28 +40,24 @@ class RedisResults(ResultBackend):
 			replay=replay,
 			store_errors=store_errors,
 		)
-		self.url = url
 		self.prefix = prefix
-		self._r: Redis | None = None
+		self._redis = transport or RedisTransport(StandaloneConfig(url=url))
 
 	@property
-	def r(self) -> Redis:
-		if self._r is None:
-			raise NotConnected("result backend not connected")
-		return self._r
+	def r(self):
+		assert self._redis.r is not None
+		return self._redis.r
 
 	def _k(self, key: str) -> str:
-		return f"{self.prefix}{key}"
+		return self._redis.result_key(self.prefix, key)
 
 	async def connect(self) -> None:
-		if self._r is not None:
+		if self._redis.r is not None:
 			return
-		self._r = Redis.from_url(self.url)
+		await self._redis.connect()
 
 	async def close(self) -> None:
-		if self._r is not None:
-			await self._r.aclose()
-			self._r = None
+		await self._redis.close()
 
 	@_ensure_connected
 	async def get(self, key: str) -> Result | None:

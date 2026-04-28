@@ -11,14 +11,7 @@ class Serializer(Protocol):
 	`Message` and `Result` faithfully when no `into` type is given.
 	"""
 
-	_primary_type: type | None = None
-
-	@classmethod
-	def with_type(cls, t: type) -> Serializer:
-		"""Return a serializer instance pre-bound to deserialize into `t`."""
-		inst = cls()
-		inst._primary_type = t
-		return inst
+	_primary_type: type | None
 
 	def marshal(self, data: Any) -> bytes: ...
 

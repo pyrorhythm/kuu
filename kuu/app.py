@@ -70,33 +70,16 @@ class Kuu:
 		**labels: Any,
 	) -> _Wrap[P, R] | Task[P, R]:
 		"""
-		Register a function as a task
+		Register a function as a task.
 
-		Supports direct registration and decorator usage
-		        both **with** call parens () and **without**
+		Accepts the bare function (`@app.task`) or a parametrized decorator
+		(`@app.task(queue=..., max_attempts=...)`).
 
-		>>> @app.task
-		... async def ....
-
-		or
-
-		>>> @app.task(queue='any-q', ...)
-		... async def ....
-
-
-		Args:
-		    queue: override the default queue for this task; defaults
-		        to None
-		    max_attempts: maximum retry attempts; defaults to 5
-		    timeout: maximum execution time in seconds; None means no
-		        limit
-		    blocking: whether the task runs in blocking mode;
-		        defaults to False
-		    **labels: extra metadata attached to the task
-
-		Returns:
-		    Task instance when called with a function, or a decorator
-		    wrapper
+		- `queue`: destination queue; defaults to `Kuu.default_queue`.
+		- `max_attempts`: retry budget before the task is declared dead.
+		- `timeout`: per-run wall-clock limit in seconds; `None` means no limit.
+		- `blocking`: when `True`, offloads a sync function to a thread.
+		- `**labels`: arbitrary metadata attached to the task.
 		"""
 
 		def _get_wrap(
@@ -197,20 +180,14 @@ class Kuu:
 		max_attempts: int | None = None,
 	) -> TaskHandle[Any]:
 		"""
-		Enqueue a task by its registered name
+		Enqueue a task by its registered dotted name.
 
-		Args:
-		    task: registered task name
-		    args: positional and keyword arguments for the task. types should be correct,
-		                        or else typeerror on worker would be raised
-		    queue: override the queue. Defaults to None
-		    not_before: earliest time the task may run. Defaults to
-		        None
-		    headers: custom message headers. Defaults to None
-		    max_attempts: override max attempts. Defaults to None
-
-		Returns:
-		    Handle for the enqueued task
+		- `task`: registered task name (e.g. `"myapp.tasks:charge"`).
+		- `args`: positional and keyword arguments passed to the task.
+		- `queue`: destination queue override.
+		- `not_before`: earliest UTC time the task may run.
+		- `headers`: custom message headers.
+		- `max_attempts`: retry budget override.
 		"""
 
 		t = self.registry.get(task)

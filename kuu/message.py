@@ -9,7 +9,6 @@ from pydantic import (
 	BaseModel,
 	ConfigDict,
 	Field,
-	FutureDatetime,
 )
 
 
@@ -45,5 +44,5 @@ class Message(BaseModel):
 	headers: Annotated[dict[str, str], Field(default_factory=dict)]
 	attempt: Annotated[int, Field(default=0, ge=0)]
 	max_attempts: Annotated[int, Field(default=5, gt=0)]
-	not_before: Annotated[FutureDatetime | None, Field(default=None)]
+	not_before: Annotated[AwareDatetime | None, Field(default=None)]
 	enqueued_at: Annotated[AwareDatetime, Field(default_factory=lambda: datetime.now(timezone.utc))]

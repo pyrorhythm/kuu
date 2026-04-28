@@ -3,27 +3,22 @@ from __future__ import annotations
 import logging
 import signal
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 import anyio
-from croniter import croniter
+
+from kuu._types import _Fn, _Wrap
 
 from ..message import Payload
-from .job import BaseJob, CronJob, IntervalJob
 from ..task import Task
+from .job import BaseJob, CronJob, IntervalJob, _next_after
 
 if TYPE_CHECKING:
 	from ..app import Kuu
 
-log = logging.getLogger("qq.scheduler")
-
-
-def _next_after(expr: str, after: datetime) -> datetime:
-	if after.tzinfo is None:
-		after = after.replace(tzinfo=timezone.utc)
-	it = croniter(expr, after, second_at_beginning=True)
-	return it.get_next(datetime)
+log = logging.getLogger("kuu.scheduler")
 
 
 type CronField = int | str | Iterable[int] | None
@@ -39,72 +34,72 @@ def _fmt_field(val: CronField) -> str:
 	if isinstance(val, str):
 		return val.strip() or "*"
 	# iterable of ints
-	parts = [str(int(v)) for v in val]
+	parts = [str(v) for v in val]
 	if not parts:
 		return "*"
 	return ",".join(parts)
 
 
-def _build_expr(
-	*,
-	second: CronField,
-	minute: CronField,
-	hour: CronField,
-	day: CronField,
-	month: CronField,
-	day_of_week: CronField,
-	second_interval: int | None,
-	minute_interval: int | None,
-	hour_interval: int | None,
-) -> str:
-	def merge(val: CronField, interval: int | None, name: str) -> CronField:
-		if interval is None:
-			return val
-		if val is not None:
-			raise ValueError(f"specify either {name} or {name}_interval, not both")
-		return f"*/{int(interval)}"
+@dataclass(frozen=True, slots=True)
+class CronExpr:
+	second: CronField = None
+	minute: CronField = None
+	hour: CronField = None
+	day: CronField = None
+	month: CronField = None
+	day_of_week: CronField = None
+	second_interval: int | None = None
+	minute_interval: int | None = None
+	hour_interval: int | None = None
 
-	second = merge(second, second_interval, "second")
-	minute = merge(minute, minute_interval, "minute")
-	hour = merge(hour, hour_interval, "hour")
+	def _build(self) -> str:
+		def merge(val: CronField, interval: int | None, name: str) -> CronField:
+			if interval is None:
+				return val
+			if val is not None:
+				raise ValueError(f"specify either {name} or {name}_interval, not both")
+			return f"*/{interval}"
 
-	largest_set = (
-		"month"
-		if month is not None
-		else "day"
-		if day is not None or day_of_week is not None
-		else "hour"
-		if hour is not None
-		else "minute"
-		if minute is not None
-		else "second"
-		if second is not None
-		else None
-	)
-	order = ["second", "minute", "hour", "day", "month"]
-	specified: dict[str, CronField] = {
-		"second": second,
-		"minute": minute,
-		"hour": hour,
-		"day": day,
-		"month": month,
-		"day_of_week": day_of_week,
-	}
-	if largest_set is not None and largest_set in order:
-		idx = order.index(largest_set)
-		for name in order[:idx]:
-			if specified[name] is None:
-				specified[name] = 0
+		second = merge(self.second, self.second_interval, "second")
+		minute = merge(self.minute, self.minute_interval, "minute")
+		hour = merge(self.hour, self.hour_interval, "hour")
 
-	# croniter 6-field with second_at_beginning=True: sec min hour dom mon dow
-	return " ".join([
-		_fmt_field(specified["second"]),
-		_fmt_field(specified["minute"]),
-		_fmt_field(specified["hour"]),
-		_fmt_field(specified["day"]),
-		_fmt_field(specified["month"]),
-		_fmt_field(specified["day_of_week"]),
-	])
+		largest_set = (
+			"month"
+			if self.month is not None
+			else "day"
+			if self.day is not None or self.day_of_week is not None
+			else "hour"
+			if hour is not None
+			else "minute"
+			if minute is not None
+			else "second"
+			if second is not None
+			else None
+		)
+		order = ["second", "minute", "hour", "day", "month"]
+		specified: dict[str, CronField] = {
+			"second": second,
+			"minute": minute,
+			"hour": hour,
+			"day": self.day,
+			"month": self.month,
+			"day_of_week": self.day_of_week,
+		}
+		if largest_set is not None and largest_set in order:
+			idx = order.index(largest_set)
+			for name in order[:idx]:
+				if specified[name] is None:
+					specified[name] = 0
+
+		return " ".join([
+			_fmt_field(specified["second"]),
+			_fmt_field(specified["minute"]),
+			_fmt_field(specified["hour"]),
+			_fmt_field(specified["day"]),
+			_fmt_field(specified["month"]),
+			_fmt_field(specified["day_of_week"]),
+		])
 
 
 class Scheduler:
@@ -115,7 +110,7 @@ class Scheduler:
 	def _resolve(self, task: str | Task) -> str:
 		return task.task_name if isinstance(task, Task) else task
 
-	def every(
+	def add_every(
 		self,
 		interval: timedelta,
 		task: str | Task,
@@ -140,59 +135,49 @@ class Scheduler:
 		self.jobs.append(job)
 		return job
 
-	def cron(
+	def every[**P, R](
 		self,
-		task: str | Task,
+		interval: timedelta,
 		args: Payload = Payload(),
 		*,
-		expr: str | None = None,
-		second: CronField = None,
-		minute: CronField = None,
-		hour: CronField = None,
-		second_interval: int | None = None,
-		minute_interval: int | None = None,
-		hour_interval: int | None = None,
-		day: CronField = None,
-		month: CronField = None,
-		day_of_week: CronField = None,
+		id: str | None = None,
+		queue: str | None = None,
+		headers: dict[str, str] | None = None,
+		max_attempts: int | None = None,
+	) -> _Wrap[P, R]:
+		def wrap(fn: _Fn[P, R]) -> Task[P, R]:
+			if not isinstance(fn, Task):
+				fn = self.app.task(fn)
+
+			job = IntervalJob(
+				id=id or f"interval:{fn.name}:{len(self.jobs)}",
+				task_name=fn.name,
+				args=args,
+				queue=queue,
+				headers=headers,
+				max_attempts=max_attempts,
+				every=interval,
+				next_run=datetime.now(timezone.utc) + interval,
+			)
+			self.jobs.append(job)
+			return fn
+
+		return wrap
+
+	def add_cron(
+		self,
+		task: str | Task,
+		expr: str | CronExpr,
+		args: Payload = Payload(),
+		*,
 		id: str | None = None,
 		queue: str | None = None,
 		headers: dict[str, str] | None = None,
 		max_attempts: int | None = None,
 	) -> CronJob:
-		if expr is None:
-			expr = _build_expr(
-				second=second,
-				minute=minute,
-				hour=hour,
-				day=day,
-				month=month,
-				day_of_week=day_of_week,
-				second_interval=second_interval,
-				minute_interval=minute_interval,
-				hour_interval=hour_interval,
-			)
-		else:
-			any_kw = any(
-				v is not None
-				for v in (
-					second,
-					minute,
-					hour,
-					day,
-					month,
-					day_of_week,
-					second_interval,
-					minute_interval,
-					hour_interval,
-				)
-			)
-			if any_kw:
-				raise ValueError("pass either `expr` or structured fields, not both")
+		if isinstance(expr, CronExpr):
+			expr = expr._build()
 
-		now = datetime.now(timezone.utc)
-		# validates by parsing; croniter raises on bad expr
-		first = _next_after(expr, now)
 		job = CronJob(
 			id=id or f"cron:{self._resolve(task)}:{len(self.jobs)}",
 			task_name=self._resolve(task),
@@ -201,10 +186,43 @@ class Scheduler:
 			headers=headers,
 			max_attempts=max_attempts,
 			expr=expr,
-			next_run=first,
+			next_run=_next_after(expr, datetime.now(timezone.utc)),
 		)
 		self.jobs.append(job)
 		return job
+
+	def cron[**P, R](
+		self,
+		expr: str | CronExpr,
+		args: Payload = Payload(),
+		*,
+		id: str | None = None,
+		queue: str | None = None,
+		headers: dict[str, str] | None = None,
+		max_attempts: int | None = None,
+	) -> _Wrap[P, R]:
+		if isinstance(expr, CronExpr):
+			expr = expr._build()
+
+		def wrap(fn: _Fn[P, R]) -> Task[P, R]:
+			if not isinstance(fn, Task):
+				fn = self.app.task(fn)
+
+			job = CronJob(
+				id=id or f"cron:{fn.name}:{len(self.jobs)}",
+				task_name=fn.name,
+				args=args,
+				queue=queue,
+				headers=headers,
+				max_attempts=max_attempts,
+				expr=expr,
+				next_run=_next_after(expr, datetime.now(timezone.utc)),
+			)
+			self.jobs.append(job)
+
+			return fn
+
+		return wrap
 
 	async def run(self, *, install_signals: bool = True) -> None:
 		"""
@@ -247,9 +265,8 @@ class Scheduler:
 				continue
 			earliest = min(j.next_run for j in self.jobs)
 			delay = (earliest - now).total_seconds()
-			if delay > 0:
-				await anyio.sleep(min(delay, 60.0))
-				continue
+			if delay > 0.001:
+				await anyio.sleep(min(max(delay, 0), 60.0))
 			now = datetime.now(timezone.utc)
 			for job in self.jobs:
 				if job.next_run <= now:

@@ -5,11 +5,12 @@ from datetime import datetime, timezone
 from typing import Awaitable, Callable, NamedTuple, cast
 
 import anyio
-from redis.asyncio import Redis
+from redis.asyncio import Redis, RedisCluster
 
 from .._types import _ensure_connected
 from ..exceptions import InvalidReceiptType, NotConnected
 from ..message import Message
+from ..redis import RedisTransport, StandaloneConfig
 from ..serializers import JSONSerializer, Serializer
 from .base import Broker, Delivery
 
@@ -46,12 +47,14 @@ class RedisBroker(Broker):
 	Uses streams for the live queue and sorted sets for scheduled messages.
 	Consumer groups handle competing consumers across worker subprocesses.
 
-	- `url`: Redis connection URL.
+	- `url`: Redis connection URL (convenience alias for ``StandaloneConfig``).
+	- `transport`: pre-configured :class:`~kuu.redis.RedisTransport`.
+	  When given, ``url`` is ignored.
 	- `group`: consumer group name.
 	- `consumer`: consumer name within the group.
 	- `stream_prefix`: key prefix for live streams.
 	- `zset_prefix`: key prefix for scheduled sorted sets.
-	- `block_ms`: blocking interval for `XREADGROUP` (ms).
+	- `block_ms`: blocking interval for ``XREADGROUP`` (ms).
 	- `claim_min_idle_ms`: minimum idle time before claiming stale deliveries.
 	- `serializer`: message serializer.
 	"""
@@ -59,6 +62,8 @@ class RedisBroker(Broker):
 	def __init__(
 		self,
 		url: str = "redis://localhost:6379/0",
+		*,
+		transport: RedisTransport | None = None,
 		group: str = "qq",
 		consumer: str = "c1",
 		stream_prefix: str = "qq:s:",
@@ -67,7 +72,7 @@ class RedisBroker(Broker):
 		claim_min_idle_ms: int = 60000,
 		serializer: Serializer = JSONSerializer(),
 	):
-		self.url = url
+		self._redis = transport or RedisTransport(StandaloneConfig(url=url))
 		self.group = group
 		self.consumer = consumer
 		self.sp = stream_prefix
@@ -75,32 +80,29 @@ class RedisBroker(Broker):
 		self.block_ms = block_ms
 		self.claim_min_idle_ms = claim_min_idle_ms
 		self.serializer = serializer
-		self._r: Redis | None = None
 		self._move_sha: str | None = None
 		self._declared: set[str] = set()
 
 	@property
-	def r(self) -> Redis:
-		if self._r is None:
-			raise NotConnected("redis broker not connected")
-		return self._r
+	def r(self) -> Redis | RedisCluster:
+		assert self._redis.r is not None
+		return self._redis.r
 
 	def _stream(self, q: str) -> str:
-		return f"{self.sp}{q}"
+		return self._redis.stream_key(self.sp, q)
 
 	def _zset(self, q: str) -> str:
-		return f"{self.zp}{q}"
+		return self._redis.zset_key(self.zp, q)
 
 	async def connect(self) -> None:
-		if self._r is not None:
+		if self._redis.r is not None:
 			return
-		self._r = Redis.from_url(self.url)
-		self._move_sha = await self._r.script_load(_MOVE_LUA)
+		await self._redis.connect()
+		self._move_sha = await self.r.script_load(_MOVE_LUA)
 
 	async def close(self) -> None:
-		if self._r is not None:
-			await self._r.aclose()
-			self._r = None
+		await self._redis.close()
+		self._move_sha = None
 
 	@_ensure_connected
 	async def declare(self, queue: str) -> None:
@@ -130,7 +132,7 @@ class RedisBroker(Broker):
 
 	async def _pump_scheduled(self, queues: list[str]) -> None:
 		if self._move_sha is None:
-			raise NotConnected
+			raise NotConnected("redis broker not connected")
 
 		while True:
 			now = datetime.now(timezone.utc).timestamp()

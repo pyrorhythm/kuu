@@ -48,12 +48,12 @@ class WatchSettings(BaseModel):
 
 	root: Path = Field(
 		default_factory=Path.cwd,
-		description="...",
+		description="directory to watch for changes",
 	)
 
 	respect_gitignore: bool = Field(
 		True,
-		description="if set, watchfiles would respect .gitignore in addition to [watch.exclude]",
+		description="filter .gitignore paths in addition to [watch.exclude] globs",
 	)
 
 	exclude: list[Path] = Field(
@@ -110,27 +110,27 @@ class Kuunfig(BaseModel):
 
 	processes: PositiveInt = Field(
 		1,
-		description="count of workers to launch",
+		description="worker subprocesses to spawn",
 	)
 
 	concurrency: PositiveInt = Field(
 		64,
-		description="how much coroutines at the same time is allowed for single worker",
+		description="max concurrent coroutines per worker",
 	)
 
 	prefetch: PositiveInt = Field(
 		default_factory=lambda data: max(1, data["concurrency"] // 4),
-		description="amount to prefetch (batch) tasks from queue",
+		description="messages to prefetch per broker pull",
 	)
 
 	shutdown_timeout: NonNegativeFloat = Field(
 		30.0,
-		description="max amount of time to wait for graceful workers' shutdown",
+		description="seconds to wait for in-flight tasks before forcing shutdown",
 	)
 
 	watch_fs: bool = Field(
 		False,
-		description="watch filesystem changes and reload workers on them",
+		description="reload workers on filesystem changes",
 		deprecated=deprecated("use [watch] enable=true (or WatchKuunfig) instead"),
 	)
 

@@ -28,7 +28,7 @@ class LoggingMiddleware:
 		)
 		try:
 			result = await call_next()
-		except BaseException as e:
+		except Exception as e:
 			self.log.warning(
 				"task.fail name=%s id=%s duration=%.3fs exc=%s",
 				msg.task,

@@ -1,65 +1,36 @@
 <!DOCTYPE html>
-<html data-theme="dark">
+<html lang="en">
 
 <head>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<title>{% block title %}kuu - dashboars{% endblock %}</title>
-	<link rel="stylesheet" href="/static/pico.min.css">
-	<script src="https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js" />
-	<script src="https://cdn.jsdelivr.net/npm/htmx.org@4.0.0-beta2/dist/htmx.min.js"></script>
-	<style>
-		:root {
-			--pico-font-size: 90%;
-		}
-
-		body {
-			padding: 1rem;
-		}
-
-		.stat-card {
-			text-align: center;
-			padding: 1rem;
-		}
-
-		.stat-value {
-			font-size: 2rem;
-			font-weight: 700;
-		}
-
-		.stat-label {
-			font-size: 0.75rem;
-			opacity: 0.7;
-			text-transform: uppercase;
-			letter-spacing: 0.05em;
-		}
-
-		.grid {
-			align-items: start;
-		}
-
-		table {
-			font-size: 0.85rem;
-		}
-
-		kbd {
-			font-size: 0.75rem;
-		}
-	</style>
+	<title>{% block title %}kuu{% endblock %}</title>
+	<link rel="icon" href="/static/kuu-moon.svg" type="image/svg+xml">
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link
+		href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500&family=Geist+Mono:wght@400;500&display=swap"
+		rel="stylesheet">
+	<link rel="stylesheet" href="/static/kuu.css">
+	<script src="https://cdn.jsdelivr.net/npm/htmx.org@4.0.0-beta2/dist/htmx.min.js"></script>>
 </head>
 
 <body>
-	<nav class="container-fluid">
-		<ul>
-			<li><strong>{{ title }}</strong></li>
-		</ul>
-		<ul>
-			<li><a href="/" class="secondary">refresh</a></li>
-		</ul>
-	</nav>
-	<main class="container-fluid">
+
+	<header class="kuu-header">
+		<a class="kuu-brand" href="/" aria-label="kuu home">
+			<img src="/static/kuu-logo.svg" alt="kuu" height="22" style="display:block;">
+		</a>
+		<div class="kuu-header-right">
+			<span class="kuu-header-sep"></span>
+			<span class="kuu-header-label">dashboard</span>
+		</div>
+	</header>
+
+	<main class="kuu-main">
 		{% block content %}{% endblock %}
 	</main>
+
 </body>
 
 </html>

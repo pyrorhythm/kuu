@@ -23,17 +23,18 @@ NatsReceipt = Msg
 
 class NatsBroker(Broker):
 	servers: str | list[str]
-	stream: str = "QQ"
-	sp: str = "qq.q."
-	dp: str = "qq-"
-	fetch_timeout: float = 5.0
-	serializer: Serializer = JSONSerializer()
-	_nc: Any = None
-	_js: JetStreamContext | None = None
-	_declared: set[str] = set()
-	_scheduled: list[tuple[float, Message]] = []
-	_sched_lock = anyio.Lock()
-	_sched_event = anyio.Event()
+	stream: str
+	sp: str
+	dp: str
+	fetch_timeout: float
+	serializer: Serializer
+
+	_nc: Any
+	_js: JetStreamContext | None
+	_declared: set[str]
+	_scheduled: list[tuple[float, Message]]
+	_sched_lock: anyio.Lock
+	_sched_event: anyio.Event
 
 	def __init__(
 		self,
@@ -60,6 +61,16 @@ class NatsBroker(Broker):
 		self.dp = durable_prefix
 		self.fetch_timeout = fetch_timeout
 		self.serializer = serializer
+
+		self._init_private()
+
+	def _init_private(self) -> None:
+		self._nc = None
+		self._js = None
+		self._declared = set()
+		self._scheduled = []
+		self._sched_lock = anyio.Lock()
+		self._sched_event = anyio.Event()
 
 	def _subject(self, queue: str) -> str:
 		return f"{self.sp}{queue}"
@@ -177,7 +188,8 @@ class NatsBroker(Broker):
 		match delivery.receipt:
 			case NatsReceipt():
 				await delivery.receipt.ack()
-		raise InvalidReceiptType(type(delivery.receipt))
+			case _:
+				raise InvalidReceiptType(type(delivery.receipt))
 
 	async def nack(
 		self, delivery: Delivery, requeue: bool = True, delay: float | None = None
@@ -188,4 +200,5 @@ class NatsBroker(Broker):
 					await delivery.receipt.term()
 					return
 				await delivery.receipt.nak(delay=delay)
-		raise InvalidReceiptType(type(delivery.receipt))
+			case _:
+				raise InvalidReceiptType(type(delivery.receipt))

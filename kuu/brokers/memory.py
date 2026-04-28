@@ -9,6 +9,7 @@ from typing import NamedTuple
 import anyio
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
+from ..exceptions import InvalidReceiptType
 from ..message import Message
 from .base import Broker, Delivery
 
@@ -125,7 +126,7 @@ class MemoryBroker(Broker):
 			case MemoryReceipt():
 				pass
 			case _:
-				return
+				raise InvalidReceiptType(type(delivery.receipt))
 		self._pending.pop((delivery.receipt.queue, delivery.receipt.seq), None)
 
 	async def nack(
@@ -138,7 +139,7 @@ class MemoryBroker(Broker):
 			case MemoryReceipt():
 				pass
 			case _:
-				return
+				raise InvalidReceiptType(type(delivery.receipt))
 		key = (delivery.receipt.queue, delivery.receipt.seq)
 		self._pending.pop(key, None)
 		if not requeue:

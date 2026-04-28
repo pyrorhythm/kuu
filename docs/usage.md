@@ -68,6 +68,35 @@ result = await handle.result(timeout=30)
 `charge.q(...)` returns a `TaskHandle[ChargeResult]` typed off the function's
 return annotation, so `result` keeps the right type without casts.
 
+`handle.result()` polls the result backend every 0.2 s by default. Pass
+`poll=` to change the interval:
+
+```python
+result = await handle.result(timeout=30, poll=0.5)
+```
+
+### Delayed Enqueueing
+
+Pass `not_before` to `enqueue_by_name` to schedule a task for future delivery.
+The broker holds the message until that UTC datetime, then delivers it normally:
+
+```python
+from datetime import datetime, timedelta, timezone
+from kuu.message import Payload
+
+run_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+
+await app.enqueue_by_name(
+    "myapp.tasks:charge",
+    Payload(args=(1, 500)),
+    not_before=run_at,
+)
+```
+
+For Redis, delayed messages live in a sorted set and are pumped into the live
+stream when due. For NATS and Memory brokers, an in-process loop handles the
+same promotion.
+
 ### Idempotency
 
 Pass `idempotency_key` in headers to deduplicate against the result backend:
@@ -82,6 +111,44 @@ await app.enqueue_by_name(
 
 If a result already exists at that key, the worker short-circuits and ack's
 without running the task.
+
+## Error Control
+
+Tasks signal their own outcome by raising one of two sentinel exceptions.
+Any other uncaught exception is treated as a failure.
+
+### Retry
+
+Raise `RetryErr` to re-queue the message immediately (or after a fixed delay)
+without consuming an attempt through the normal middleware chain:
+
+```python
+from kuu import RetryErr
+
+@app.task
+async def sync_inventory(sku: str) -> None:
+    if not upstream_available():
+        raise RetryErr(delay=30.0)  # retry in 30 s
+```
+
+`delay` is in seconds. Omit it to let `RetryMiddleware` compute the backoff.
+The worker increments `message.attempt` on every retry; once `max_attempts` is
+reached the task is declared dead regardless of how `RetryErr` was raised.
+
+### Reject
+
+Raise `RejectErr` to discard the message without retrying. Pass `requeue=True`
+to put it back on the queue (useful after an assertion failure you want to
+reprocess later):
+
+```python
+from kuu import RejectErr
+
+@app.task
+async def process_webhook(body: dict) -> None:
+    if body.get("version") != 2:
+        raise RejectErr("unsupported webhook version")  # drop silently
+```
 
 ## Brokers
 
@@ -103,6 +170,46 @@ broker = RedisBroker(
 Live messages flow through Streams; scheduled (`not_before`) messages live
 in a sorted set and are pumped into the live stream when due. Stale pending
 entries from dead consumers are reclaimed automatically.
+
+#### Redis Cluster and Sentinel
+
+The convenience `url=` argument targets a single node. For cluster or
+sentinel deployments, build a `RedisTransport` directly and pass it via
+`transport=`:
+
+```python
+from kuu import ClusterConfig, SentinelConfig, RedisTransport
+from kuu.brokers.redis import RedisBroker
+from kuu.results.redis import RedisResults
+
+# Redis Cluster
+broker = RedisBroker(
+    transport=RedisTransport(ClusterConfig(
+        url="redis://node1:6379",
+        read_from_replicas=True,
+    ))
+)
+
+# Redis Sentinel
+broker = RedisBroker(
+    transport=RedisTransport(SentinelConfig(
+        hosts=(("sentinel1", 26379), ("sentinel2", 26379)),
+        service_name="mymaster",
+    ))
+)
+```
+
+`RedisResults` accepts the same `transport=` parameter, so a single
+`RedisTransport` can back both the broker and the result store.
+
+```python
+transport = RedisTransport(ClusterConfig(url="redis://node1:6379"))
+broker  = RedisBroker(transport=transport)
+results = RedisResults(transport=transport)
+```
+
+In cluster mode the broker hash-tags stream and sorted-set keys with `{queue}`
+so all keys for a given queue land on the same slot.
 
 ### NATS JetStream
 
@@ -165,9 +272,14 @@ app = Kuu(
 ```
 
 - `LoggingMiddleware`: one line on start, one on success/failure with duration.
-- `RetryMiddleware`: catches `RetryErr` (and uncaught exceptions, up to
-  `max_attempts`), schedules the next attempt with exponential backoff plus
-  jitter.
+- `RetryMiddleware`: catches `RetryErr` and schedules the next attempt with
+  exponential backoff plus jitter. Pass `retry_on` to also auto-retry on
+  specific exception types without requiring explicit `raise RetryErr(...)`:
+  ```python
+  RetryMiddleware(base=0.5, cap=60.0, jitter=0.2, retry_on=(httpx.HTTPError,))
+  ```
+  Backoff: `min(cap, base * 2 ** attempt)` with jitter applied as a
+  fractional multiplier in `[-jitter, +jitter]`.
 - `TimeoutMiddleware`: per-task `Task.timeout` wins; this `seconds` is the
   default.
 
@@ -210,6 +322,57 @@ app.schedule.cron(task=refresh_balance, hour=[3, 15], minute=0)
 The structured form rejects passing both `expr` and a field; it also fills
 in zeros for unspecified smaller fields so `cron(hour=10)` means
 `"0 0 10 * * *"`, not "every minute of every 10am".
+
+## Serializers
+
+Brokers and result backends use a `Serializer` to marshal messages to and from
+bytes. The default is `JSONSerializer`, which uses `orjson` (or `msgspec.json`
+when the `msgspec` extra is installed).
+
+### Msgpack
+
+Faster and more compact than JSON for binary payloads. Requires the `msgspec`
+extra:
+
+```sh
+uv add "kuu[msgspec]"
+```
+
+```python
+from kuu.serializers import MsgpackSerializer
+from kuu.brokers.redis import RedisBroker
+from kuu.results.redis import RedisResults
+
+broker  = RedisBroker(url=..., serializer=MsgpackSerializer())
+results = RedisResults(url=..., serializer=MsgpackSerializer())
+```
+
+### Pickle
+
+Supports arbitrary Python objects but **executes arbitrary code on
+deserialization**; only use it in fully trusted environments where the broker
+and result store are not reachable by untrusted parties.
+
+Set `KUU_ALLOW_PICKLE=yes` in the environment to suppress the per-call
+`SecurityWarning`:
+
+```python
+from kuu.serializers import PickleSerializer
+
+broker = RedisBroker(url=..., serializer=PickleSerializer())
+```
+
+### Custom Serializer
+
+Implement the `Serializer` protocol:
+
+```python
+from kuu import Serializer
+
+class MySerializer:
+    def marshal(self, data) -> bytes: ...
+    def unmarshal(self, data: bytes, into=None): ...
+```
 
 ## Prometheus Metrics
 
@@ -268,6 +431,40 @@ path = "/dashboard"
 
 The orchestrator imports the Kuu app via `config.app`, mounts the dashboard
 under `path` and serves it via uvicorn alongside the worker pool.
+
+## Events
+
+Every `Kuu` instance carries an `app.events` object with named signals. Connect
+a handler to observe lifecycle events without modifying middleware or worker
+code:
+
+```python
+@app.events.task_succeeded.connect
+async def on_success(msg, elapsed: float) -> None:
+    print(f"{msg.task} finished in {elapsed:.3f}s")
+
+@app.events.task_dead.connect
+def on_dead(msg) -> None:
+    sentry_sdk.capture_message(f"task {msg.task} exhausted retries")
+```
+
+Handlers can be sync or async; exceptions are logged and swallowed so a bad
+handler never brings down the worker.
+
+Available signals and their handler signatures:
+
+| Signal | Handler arguments |
+|---|---|
+| `task_enqueued` | `(msg: Message)` |
+| `task_received` | `(msg: Message)` |
+| `task_started` | `(msg: Message)` |
+| `task_succeeded` | `(msg: Message, elapsed: float)` |
+| `task_failed` | `(msg: Message, exc: BaseException)` |
+| `task_retried` | `(msg: Message, delay: float)` |
+| `task_dead` | `(msg: Message)` |
+| `worker_heartbeat` | `(msg: Message)` |
+
+Disconnect a handler with `app.events.<signal>.disconnect(handler)`.
 
 ## Watch / Hot Reload
 

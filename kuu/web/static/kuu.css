@@ -1,0 +1,268 @@
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500&family=Geist+Mono:wght@400;500&display=swap');
+
+/* ── Reset ────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* ── Tokens ───────────────────────────────────────────────────── */
+:root {
+  --ink:    #0A0A0A;
+  --ink-2:  rgba(10,10,10,.62);
+  --ink-3:  rgba(10,10,10,.40);
+  --paper:  #FAFAF7;
+  --hair:   rgba(10,10,10,.10);
+  --hair-2: rgba(10,10,10,.05);
+  --good:   #1F5E3A;
+  --bad:    #B5371A;
+
+  --s-1: 4px;  --s-2: 8px;  --s-3: 12px; --s-4: 16px;
+  --s-5: 24px; --s-6: 32px; --s-7: 48px; --s-8: 64px;
+}
+
+/* ── Base ─────────────────────────────────────────────────────── */
+html {
+  font-family: 'Geist', 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  letter-spacing: -0.005em;
+  color: var(--ink);
+  background: var(--paper);
+}
+
+body {
+  min-height: 100vh;
+  background: var(--paper);
+}
+
+/* ── Header ───────────────────────────────────────────────────── */
+.kuu-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--s-6);
+  height: 48px;
+  border-bottom: 1px solid var(--hair);
+  position: sticky;
+  top: 0;
+  background: var(--paper);
+  z-index: 10;
+}
+
+.kuu-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  text-decoration: none;
+  color: var(--ink);
+}
+
+.kuu-brand img {
+  display: block;
+  flex-shrink: 0;
+}
+
+.kuu-header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+}
+
+.kuu-header-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--hair);
+}
+
+.kuu-header-label {
+  font-family: 'Geist Mono', monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* ── Main layout ──────────────────────────────────────────────── */
+.kuu-main {
+  padding: var(--s-6);
+  max-width: 1440px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+}
+
+/* ── Stat strip ───────────────────────────────────────────────── */
+.stat-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  border: 1px solid var(--hair);
+}
+
+.stat-cell {
+  padding: var(--s-5) var(--s-5);
+  border-right: 1px solid var(--hair);
+}
+
+.stat-cell:last-child { border-right: none; }
+
+.stat-num {
+  font-family: 'Geist', sans-serif;
+  font-size: 28px;
+  line-height: 1.18;
+  letter-spacing: -0.018em;
+  font-weight: 400;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-num.bad  { color: var(--bad); }
+.stat-num.good { color: var(--good); }
+.stat-num.dim  { color: var(--ink-3); }
+
+.stat-key {
+  font-family: 'Geist Mono', monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-top: var(--s-1);
+}
+
+/* ── Surface ──────────────────────────────────────────────────── */
+.surface {
+  border: 1px solid var(--hair);
+}
+
+.surface-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 0 var(--s-4);
+  height: 36px;
+  border-bottom: 1px solid var(--hair);
+  background: var(--hair-2);
+}
+
+.surface-title {
+  font-family: 'Geist Mono', monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.surface-body {
+  padding: var(--s-4);
+}
+
+.surface-body.flush { padding: 0; }
+
+/* ── Two-column grid ──────────────────────────────────────────── */
+.col2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-4);
+}
+
+@media (max-width: 860px) {
+  .col2 { grid-template-columns: 1fr; }
+}
+
+/* ── Table ────────────────────────────────────────────────────── */
+.kuu-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.kuu-table thead {
+  border-bottom: 1px solid var(--hair);
+}
+
+.kuu-table th {
+  font-family: 'Geist Mono', monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  text-align: left;
+  padding: var(--s-2) var(--s-4);
+  white-space: nowrap;
+}
+
+.kuu-table td {
+  font-size: 12px;
+  line-height: 1.5;
+  letter-spacing: -0.005em;
+  color: var(--ink);
+  padding: var(--s-2) var(--s-4);
+  border-bottom: 1px solid var(--hair);
+  vertical-align: middle;
+}
+
+.kuu-table tbody tr:last-child td { border-bottom: none; }
+.kuu-table tbody tr:hover { background: var(--hair-2); }
+
+.kuu-table td.mono-cell {
+  font-family: 'Geist Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.01em;
+  color: var(--ink-2);
+}
+
+.kuu-table td.dim {
+  color: var(--ink-3);
+}
+
+/* ── Queue depth sub-table ────────────────────────────────────── */
+.queue-table-wrap {
+  border-top: 1px solid var(--hair);
+}
+
+/* ── Chip ─────────────────────────────────────────────────────── */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  font-family: 'Geist Mono', monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border: 1px solid var(--hair);
+  color: var(--ink-2);
+  white-space: nowrap;
+  line-height: 1.6;
+}
+
+.chip .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.chip.alive {
+  color: var(--good);
+  border-color: rgba(31,94,58,.22);
+  background: rgba(31,94,58,.05);
+}
+
+.chip.dead {
+  color: var(--bad);
+  border-color: rgba(181,55,26,.22);
+  background: rgba(181,55,26,.05);
+}
+
+/* ── Placeholder / empty ──────────────────────────────────────── */
+.placeholder {
+  font-family: 'Geist Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.01em;
+  color: var(--ink-3);
+  padding: var(--s-5) var(--s-4);
+}

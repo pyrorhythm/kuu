@@ -1,61 +1,172 @@
 {% extends "base.html" %}
+{% block title %}kuu dashboard{% endblock %}
 {% block content %}
 
+<!-- stats strip, polled every 2s -->
 <div hx-get="/fragments/stats" hx-trigger="load, every 2s" hx-swap="innerHTML">
-	<p aria-busy="true">Loading stats…</p>
+	<div class="stat-strip">
+		<div class="stat-cell">
+			<div class="stat-num dim">—</div>
+			<div class="stat-key">enqueued</div>
+		</div>
+		<div class="stat-cell">
+			<div class="stat-num dim">—</div>
+			<div class="stat-key">succeeded</div>
+		</div>
+		<div class="stat-cell">
+			<div class="stat-num dim">—</div>
+			<div class="stat-key">failed</div>
+		</div>
+		<div class="stat-cell">
+			<div class="stat-num dim">—</div>
+			<div class="stat-key">retried</div>
+		</div>
+		<div class="stat-cell">
+			<div class="stat-num dim">—</div>
+			<div class="stat-key">dead</div>
+		</div>
+	</div>
 </div>
 
-<article style="margin-top:1rem;">
-	<header>Activity</header>
-	<div id="activity-chart" style="height:260px; width:100%;"></div>
-</article>
+<!-- activity chart -->
+<div class="surface">
+	<div class="surface-head">
+		<span class="surface-title">activity</span>
+	</div>
+	<div class="surface-body">
+		<div id="activity-chart" style="height:200px; width:100%;"></div>
+	</div>
+</div>
 
-<div class="grid" style="margin-top:1rem;">
-	<article>
-		<header>Tasks</header>
-		<div hx-get="/fragments/tasks" hx-trigger="load, every 5s" hx-swap="innerHTML">
-			<p aria-busy="true">loading tasks…</p>
+<!-- tasks + scheduler -->
+<div class="col2">
+	<div class="surface">
+		<div class="surface-head"><span class="surface-title">tasks</span></div>
+		<div class="surface-body flush" hx-get="/fragments/tasks" hx-trigger="load, every 5s" hx-swap="innerHTML">
+			<p class="placeholder">loading…</p>
 		</div>
-	</article>
-	<article>
-		<header>Scheduler</header>
-		<div hx-get="/fragments/scheduler" hx-trigger="load, every 5s" hx-swap="innerHTML">
-			<p aria-busy="true">loading jobs…</p>
+	</div>
+
+	<div class="surface">
+		<div class="surface-head"><span class="surface-title">scheduler</span></div>
+		<div class="surface-body flush" hx-get="/fragments/scheduler" hx-trigger="load, every 5s" hx-swap="innerHTML">
+			<p class="placeholder">loading…</p>
 		</div>
-	</article>
+	</div>
 </div>
 
 {% if orchestrator %}
-<article style="margin-top:1rem;">
-	<header>workers</header>
-	<div hx-get="/fragments/workers" hx-trigger="load, every 3s" hx-swap="innerHTML">
-		<p aria-busy="true">loading workers…</p>
+<!-- workers -->
+<div class="surface">
+	<div class="surface-head"><span class="surface-title">workers</span></div>
+	<div class="surface-body flush" hx-get="/fragments/workers" hx-trigger="load, every 3s" hx-swap="innerHTML">
+		<p class="placeholder">loading…</p>
 	</div>
-</article>
+</div>
 {% endif %}
 
+<script src="https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js"></script>
 <script>
-	const chart = echarts.init(document.getElementById('activity-chart'));
-	async function updateChart() {
-		const resp = await fetch('/api/activity');
-		const data = await resp.json();
-		chart.setOption({
-			tooltip: { trigger: 'axis' },
-			legend: { data: ['enqueued', 'succeeded', 'failed', 'retried', 'dead'], textStyle: { fontSize: 11 } },
-			grid: { left: 40, right: 20, top: 30, bottom: 20 },
-			xAxis: { type: 'category', data: data.times.map(t => new Date(t * 1000).toLocaleTimeString()), boundaryGap: false },
-			yAxis: { type: 'value', minInterval: 1 },
+	(function () {
+		const el = document.getElementById('activity-chart');
+		const chart = echarts.init(el, null, { renderer: 'svg' });
+
+		const INK = '#0A0A0A';
+		const INK2 = 'rgba(10,10,10,.62)';
+		const INK3 = 'rgba(10,10,10,.40)';
+		const HAIR = 'rgba(10,10,10,.08)';
+		const PAPER = '#FAFAF7';
+		const GOOD = '#1F5E3A';
+		const BAD = '#B5371A';
+		const BAD_DARK = '#6B1F0E';
+
+		const BASE = {
+			backgroundColor: 'transparent',
+			animation: false,
+			tooltip: {
+				trigger: 'axis',
+				backgroundColor: PAPER,
+				borderColor: 'rgba(10,10,10,.12)',
+				borderWidth: 1,
+				textStyle: { color: INK, fontSize: 11, fontFamily: "'Geist Mono', monospace" },
+				axisPointer: { lineStyle: { color: HAIR } }
+			},
+			legend: {
+				data: ['enqueued', 'succeeded', 'failed', 'retried', 'dead'],
+				right: 0,
+				top: 0,
+				itemWidth: 12,
+				itemHeight: 2,
+				textStyle: { fontSize: 10, fontFamily: "'Geist Mono', monospace", color: INK3 }
+			},
+			grid: { left: 32, right: 8, top: 28, bottom: 20, containLabel: false },
+			xAxis: {
+				type: 'category',
+				boundaryGap: false,
+				axisLine: { lineStyle: { color: HAIR } },
+				axisTick: { show: false },
+				axisLabel: {
+					color: INK3, fontSize: 10,
+					fontFamily: "'Geist Mono', monospace",
+					interval: 11
+				},
+				splitLine: { show: false }
+			},
+			yAxis: {
+				type: 'value',
+				minInterval: 1,
+				axisLine: { show: false },
+				axisTick: { show: false },
+				axisLabel: { color: INK3, fontSize: 10, fontFamily: "'Geist Mono', monospace" },
+				splitLine: { lineStyle: { color: HAIR } }
+			},
 			series: [
-				{ name: 'enqueued', type: 'line', data: data.enqueued, smooth: true, showSymbol: false },
-				{ name: 'succeeded', type: 'line', data: data.succeeded, smooth: true, showSymbol: false },
-				{ name: 'failed', type: 'line', data: data.failed, smooth: true, showSymbol: false },
-				{ name: 'retried', type: 'line', data: data.retried, smooth: true, showSymbol: false },
-				{ name: 'dead', type: 'line', data: data.dead, smooth: true, showSymbol: false },
+				{
+					name: 'enqueued', type: 'line', smooth: false, showSymbol: false,
+					lineStyle: { color: INK, width: 1.5 }, itemStyle: { color: INK }
+				},
+				{
+					name: 'succeeded', type: 'line', smooth: false, showSymbol: false,
+					lineStyle: { color: GOOD, width: 1.5 }, itemStyle: { color: GOOD }
+				},
+				{
+					name: 'failed', type: 'line', smooth: false, showSymbol: false,
+					lineStyle: { color: BAD, width: 1.5 }, itemStyle: { color: BAD }
+				},
+				{
+					name: 'retried', type: 'line', smooth: false, showSymbol: false,
+					lineStyle: { color: INK3, width: 1.5 }, itemStyle: { color: INK3 }
+				},
+				{
+					name: 'dead', type: 'line', smooth: false, showSymbol: false,
+					lineStyle: { color: BAD_DARK, width: 1.5 }, itemStyle: { color: BAD_DARK }
+				},
 			]
-		}, true);
-	}
-	updateChart();
-	setInterval(updateChart, 3000);
+		};
+
+		chart.setOption(BASE);
+
+		async function refresh() {
+			try {
+				const r = await fetch('/api/activity');
+				const d = await r.json();
+				chart.setOption({
+					xAxis: { data: d.times.map(t => new Date(t * 1000).toLocaleTimeString()) },
+					series: [
+						{ name: 'enqueued', data: d.enqueued },
+						{ name: 'succeeded', data: d.succeeded },
+						{ name: 'failed', data: d.failed },
+						{ name: 'retried', data: d.retried },
+						{ name: 'dead', data: d.dead },
+					]
+				});
+			} catch (_) { }
+		}
+
+		refresh();
+		setInterval(refresh, 3000);
+		window.addEventListener('resize', () => chart.resize());
+	}());
 </script>
 
 {% endblock %}

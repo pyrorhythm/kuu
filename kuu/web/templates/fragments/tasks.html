@@ -1,26 +1,24 @@
-<table>
-	<thead>
-		<tr>
-			<th>task</th>
-			<th>queue</th>
-			<th>max attempts</th>
-			<th>timeout</th>
-			<th>labels</th>
-		</tr>
-	</thead>
-	<tbody>
-		{% for t in tasks %}
-		<tr>
-			<td>{{ t.task_name }}</td>
-			<td><kbd>{{ t.task_queue }}</kbd></td>
-			<td>{{ t.max_attempts }}</td>
-			<td>{{ "%.1fs"|format(t.timeout) if t.timeout else "-" }}</td>
-			<td>
-				{% for k,v in (t.task_labels or {}).items() %}
-				<kbd>{{ k }}={{ v }}</kbd>{% if not loop.last %} {% endif %}
-				{% else %}-{% endfor %}
-			</td>
-		</tr>
-		{% endfor %}
-	</tbody>
+{% if tasks %}
+<table class="kuu-table">
+  <thead>
+    <tr>
+      <th>task</th>
+      <th>queue</th>
+      <th>attempts</th>
+      <th>timeout</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for t in tasks %}
+    <tr>
+      <td class="mono-cell">{{ t.task_name }}</td>
+      <td class="mono-cell">{{ t.task_queue }}</td>
+      <td>{{ t.max_attempts }}</td>
+      <td class="dim">{{ "%.1fs"|format(t.timeout) if t.timeout else "—" }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
 </table>
+{% else %}
+<p class="placeholder">no tasks registered</p>
+{% endif %}

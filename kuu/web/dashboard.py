@@ -10,7 +10,7 @@ from starlette.responses import HTMLResponse, JSONResponse
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from kuu import NotConnected
+from kuu.brokers.redis import RedisBroker
 from kuu.web.stats import StatsCollector
 
 if TYPE_CHECKING:
@@ -25,7 +25,7 @@ class Dashboard:
 		app: Kuu,
 		scheduler: Scheduler | None = None,
 		orchestrator: Orchestrator | None = None,
-		title: str = "Kuu Dashboard",
+		title: str = "kuu dashboard",
 	) -> None:
 		self.app = app
 		self.scheduler = scheduler
@@ -83,30 +83,23 @@ class Dashboard:
 	async def _broker_stats(self) -> dict:
 		broker = self.app.broker
 		out: dict = {}
-		if hasattr(broker, "_scheduled"):
-			out["scheduled"] = len(getattr(broker, "_scheduled"))
-		if hasattr(broker, "_pending"):
-			out["pending"] = len(getattr(broker, "_pending"))
 
-		try:
-			hasattr(broker, "r")
-		except NotConnected:
-			await broker.connect()
-
-		if hasattr(broker, "r") and hasattr(broker, "sp"):
+		if isinstance(broker, RedisBroker):
 			try:
-				r = getattr(broker, "r")
-				sp = getattr(broker, "sp")
-				zp = getattr(broker, "zp")
+				await broker.connect()
 				queues = self.app.registry.queues() or {self.app.default_queue}
 				depths: dict = {}
 				for q in queues:
-					s = await r.xlen(f"{sp}{q}")
-					z = await r.zcard(f"{zp}{q}")
+					s = await broker.r.xlen(broker._stream(q))
+					z = await broker.r.zcard(broker._zset(q))
 					depths[q] = {"stream": s, "scheduled": z}
 				out["queues"] = depths
 			except Exception:
 				pass
+		elif hasattr(broker, "_scheduled"):
+			out["scheduled"] = len(broker._scheduled)
+		if hasattr(broker, "_pending"):
+			out["pending"] = len(broker._pending)
 		return out
 
 	def build_app(self) -> Starlette:
@@ -125,12 +118,12 @@ class Dashboard:
 		)
 
 	def serve(self, host: str = "0.0.0.0", port: int = 8000) -> None:
-		import uvicorn  # type: ignore[import-not-found]
+		import uvicorn
 
 		uvicorn.run(self.build_app(), host=host, port=port, log_level="warning")
 
 	async def start_server(self, host: str = "0.0.0.0", port: int = 8000) -> None:
-		import uvicorn  # type: ignore[import-not-found]
+		import uvicorn
 
 		cfg = uvicorn.Config(self.build_app(), host=host, port=port, log_level="warning")
 		await uvicorn.Server(cfg).serve()

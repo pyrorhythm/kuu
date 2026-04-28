@@ -48,6 +48,11 @@ class StatsCollector:
 	def _on_dead(self, msg: Message) -> None:
 		self._bump("dead", msg)
 
+	def ingest(self, event: str, task: str, ts: float) -> None:
+		"""Accept a pre-built event record (e.g. forwarded from a worker subprocess)."""
+		self.totals[event] += 1
+		self.events_log.append(EventRecord(ts, task, event))
+
 	def activity_series(self, buckets: int = 60, bucket_sec: int = 5) -> dict:
 		out: dict = {
 			"times": [],

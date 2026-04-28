@@ -63,7 +63,7 @@ class WorkerMetrics:
 	def __init__(
 		self,
 		app: Kuu,
-		namespace: str = "qq",
+		namespace: str = "kuu",
 		registry: CollectorRegistry = REGISTRY,
 		duration_buckets: tuple[float, ...] = _DEFAULT_DURATION_BUCKETS,
 		retry_delay_buckets: tuple[float, ...] = _DEFAULT_RETRY_DELAY_BUCKETS,
@@ -180,7 +180,7 @@ class ClientMetrics:
 
 	def __init__(
 		self,
-		namespace: str = "qq",
+		namespace: str = "kuu",
 		registry: CollectorRegistry = REGISTRY,
 		duration_buckets: tuple[float, ...] = _DEFAULT_ENQUEUE_BUCKETS,
 	):
@@ -223,11 +223,11 @@ class ClientMetrics:
 
 
 def serve(
-	host: Annotated[str, Doc("Host to serve Prometheus server on; '::1' by default")] = "0.0.0.0",
-	port: Annotated[int, Doc("Port to serve Prometheus server on; '9100' by default")] = 9100,
+	host: Annotated[str, Doc("Host to bind the /metrics HTTP server to.")] = "0.0.0.0",
+	port: Annotated[int, Doc("Port to bind the /metrics HTTP server to.")] = 9100,
 	multiprocess_dir: Annotated[
 		str | None,
-		Doc("If specified, setup multiproc environmentfor Prometheus on that specific directory."),
+		Doc("Directory for prometheus_client multiprocess shared state. When set, aggregates metrics across all worker subprocesses that wrote to this directory."),
 	] = None,
 ) -> tuple[WSGIServer, Thread]:
 	"""

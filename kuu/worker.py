@@ -48,11 +48,11 @@ class Worker:
 		self._sem = anyio.Semaphore(self.concurrency)
 		self._inflight = 0
 		self._idle = anyio.Event()
-		self._idle.set()
+		self._idle.set()  # idle until first task starts; only waited on during shutdown
 		self._inflight_lock = anyio.Lock()
 
 	async def run(self) -> None:
-		"""starts worker loop, initializing broker and results"""
+		"""Connect broker and results, then run the consumer loop."""
 		await self.app.broker.connect()
 		if self.app.results is not None:
 			await self.app.results.connect()
@@ -92,7 +92,7 @@ class Worker:
 
 			async with self._inflight_lock:
 				if self._inflight == 0:
-					self._idle = anyio.Event()
+					self._idle = anyio.Event()  # reset: no longer idle
 				self._inflight += 1
 
 			handlers.start_soon(self._handle, delivery)

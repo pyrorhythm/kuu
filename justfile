@@ -43,10 +43,10 @@ test q='' tb='short' DIR="tests/" *FLAGS:
     uv run pytest {{ FLAGS }} "{{ DIR }}" {{ q }} --tb={{ tb }}
 
 docs:
-    uv run --group dev sphinx-build -b html -W --keep-going docs docs/_build/html
+    uv run --group docs sphinx-build -b html -W --keep-going docs docs/_build/html
 
 docs-serve PORT="8000":
-    uv run --group dev sphinx-autobuild --port {{ PORT }} docs docs/_build/html
+    uv run --group docs sphinx-autobuild --port {{ PORT }} docs docs/_build/html
 
 docs-clean:
     rm -rf docs/_build docs/apidocs

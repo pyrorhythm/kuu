@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import multiprocessing as mp
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import anyio
 import anyio.to_thread
@@ -22,10 +22,12 @@ class WorkerPool:
 	_config: Kuunfig
 	_stop_event: anyio.Event
 	_processes: list[mp.Process]
+	events_queue: mp.Queue  # type: ignore[type-arg]
 
 	def __init__(self, config: Kuunfig) -> None:
 		self._config = config
 		self._processes = []
+		self.events_queue = mp.Queue()
 
 	async def run(self, stop_event: anyio.Event) -> None:
 		self._stop_event = stop_event
@@ -55,7 +57,7 @@ class WorkerPool:
 			log.info("starting worker process %d/%d", i + 1, self._config.processes)
 			p = mp.Process(
 				target=_run_worker,
-				args=(self._config,),
+				args=(self._config, self.events_queue),
 				daemon=False,
 			)
 			await anyio.to_thread.run_sync(p.start)
@@ -99,7 +101,7 @@ class WorkerPool:
 						log.exception("mark_worker_dead failed for pid=%s", p.pid)
 
 
-def _run_worker(config: Kuunfig) -> None:
+def _run_worker(config: Kuunfig, events_queue: mp.Queue | None = None) -> None:  # type: ignore[type-arg]
 	log.info("worker process starting")
 	app = import_object(config.app)
 	import_tasks(config.task_modules, "", False)
@@ -109,5 +111,27 @@ def _run_worker(config: Kuunfig) -> None:
 
 		WorkerMetrics(app)
 
+	if events_queue is not None:
+		_install_event_forwarder(app, events_queue)
+
 	anyio.run(Worker(config, app=app).run)
 	log.info("worker process exiting")
+
+
+def _install_event_forwarder(app: Any, q: mp.Queue) -> None:  # type: ignore[type-arg]
+	"""Push lightweight event records onto the inter-process queue so the dashboard can consume them."""
+	import os
+
+	pid = os.getpid()
+
+	def _put(event: str, task: str) -> None:
+		try:
+			q.put_nowait((event, task, time.time(), pid))
+		except Exception:
+			pass
+
+	ev = app.events
+	ev.task_succeeded.connect(lambda msg, elapsed: _put("succeeded", msg.task))
+	ev.task_failed.connect(lambda msg, exc: _put("failed", msg.task))
+	ev.task_retried.connect(lambda msg, delay: _put("retried", msg.task))
+	ev.task_dead.connect(lambda msg: _put("dead", msg.task))

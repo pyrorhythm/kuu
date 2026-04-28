@@ -80,7 +80,7 @@ class Task[**P, Res]:
 				"async functions should not be offloaded to a thread"
 			)
 
-		new_name = f"{self.original_func.__name__}_qq"
+		new_name = f"{self.original_func.__name__}_kuu"
 		self.original_func.__name__ = new_name
 		if hasattr(self.original_func, "__qualname__"):
 			original_qualname = self.original_func.__qualname__.rsplit(".")

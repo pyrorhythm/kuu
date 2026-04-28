@@ -1,22 +1,26 @@
-<table>
-	<thead>
-		<tr>
-			<th>PID</th>
-			<th>Status</th>
-		</tr>
-	</thead>
-	<tbody>
-		{% for p in processes %}
-		<tr>
-			<td>{{ p.pid }}</td>
-			<td>
-				{% if p.is_alive() %}
-				<span style="color:var(--pico-color-green-500)">●</span> alive
-				{% else %}
-				<span style="color:var(--pico-color-red-500)">●</span> dead
-				{% endif %}
-			</td>
-		</tr>
-		{% endfor %}
-	</tbody>
+{% if processes %}
+<table class="kuu-table">
+  <thead>
+    <tr>
+      <th>pid</th>
+      <th>status</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for p in processes %}
+    <tr>
+      <td class="mono-cell">{{ p.pid }}</td>
+      <td>
+        {% if p.is_alive() %}
+        <span class="chip alive"><span class="dot"></span>alive</span>
+        {% else %}
+        <span class="chip dead"><span class="dot"></span>dead</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
 </table>
+{% else %}
+<p class="placeholder">no worker processes</p>
+{% endif %}
