@@ -47,7 +47,7 @@ class TestWorkerPool:
 			assert call.kwargs["daemon"] is False
 			# args must be a tuple; the buggy `args=(cfg)` form passed a Kuunfig instead
 			args = call.kwargs["args"]
-			assert isinstance(args, tuple) and len(args) == 1
+			assert isinstance(args, tuple) and len(args) == 2
 			assert args[0] is pool._config
 
 	@patch("kuu.orchestrator._worker.mp.Process")
