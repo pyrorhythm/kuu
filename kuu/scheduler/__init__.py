@@ -1,8 +1,9 @@
-from .job import CronJob, IntervalJob
+# ruff: noqa
+from .job import IntervalJob, ScheduleJob
 from .scheduler import Scheduler
 
 __all__ = [
 	"IntervalJob",
-	"CronJob",
+	"ScheduleJob",
 	"Scheduler",
 ]

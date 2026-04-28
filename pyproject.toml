@@ -38,7 +38,6 @@ urls = { "homepage" = "https://github.com/pyrorhythm/kuu" }
 dependencies = [
   "anyio>=4.10,<5",
   "click>=8.3.3",
-  "croniter>=6.2",
   "cyclopts>=4.11.0",
   "orjson>=3.10",
   "pydantic>=2.12,<3",
@@ -70,7 +69,6 @@ dev = [
     "redis>=7.4.0",
     "ruff>=0.15,<0.17",
     "testcontainers>=4.14.2",
-    "types-croniter>=6.2,<7",
 ]
 docs = [
     "furo>=2024.8",

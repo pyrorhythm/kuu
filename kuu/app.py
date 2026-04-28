@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, overload
 
 from kuu._import import object_fqn
@@ -14,6 +14,7 @@ from kuu.message import Message, Payload
 from kuu.middleware.base import Middleware, run_chain
 from kuu.registry import Registry
 from kuu.results.base import ResultBackend
+from kuu.scheduler.schedule import Schedule
 from kuu.scheduler.scheduler import Scheduler
 from kuu.task import Task
 
@@ -107,6 +108,58 @@ class Kuu:
 
 		name = name_or_func
 		return _get_wrap(name)
+
+	def every[**P, R](
+		self,
+		interval: timedelta,
+		args: Payload = Payload(),
+		*,
+		id: str | None = None,
+		queue: str | None = None,
+		headers: dict[str, str] | None = None,
+		max_attempts: int | None = None,
+	) -> _Wrap[P, R]:
+		def wrap(fn: _Fn[P, R]) -> Task[P, R]:
+			if not isinstance(fn, Task):
+				fn = self.task(fn)
+			self.schedule.add_every(
+				interval,
+				fn,
+				args,
+				id=id,
+				queue=queue,
+				headers=headers,
+				max_attempts=max_attempts,
+			)
+			return fn
+
+		return wrap
+
+	def sched[**P, R](
+		self,
+		sched: Schedule,
+		args: Payload = Payload(),
+		*,
+		id: str | None = None,
+		queue: str | None = None,
+		headers: dict[str, str] | None = None,
+		max_attempts: int | None = None,
+	) -> _Wrap[P, R]:
+		def wrap(fn: _Fn[P, R]) -> Task[P, R]:
+			if not isinstance(fn, Task):
+				fn = self.task(fn)
+			self.schedule.add_schedule(
+				sched,
+				fn,
+				args,
+				id=id,
+				queue=queue,
+				headers=headers,
+				max_attempts=max_attempts,
+			)
+			return fn
+
+		return wrap
 
 	def _build_message(
 		self,

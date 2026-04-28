@@ -5,19 +5,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
-from croniter import croniter
-
 from ..message import Payload
+from .schedule import Schedule
 
 if TYPE_CHECKING:
 	pass
-
-
-def _next_after(expr: str, after: datetime) -> datetime:
-	if after.tzinfo is None:
-		after = after.replace(tzinfo=timezone.utc)
-	it = croniter(expr, after, second_at_beginning=True)
-	return it.get_next(datetime)
 
 
 @dataclass
@@ -47,8 +39,8 @@ class IntervalJob(BaseJob):
 
 
 @dataclass
-class CronJob(BaseJob):
-	expr: str = "0 * * * * *"
+class ScheduleJob(BaseJob):
+	schedule: Schedule = field(kw_only=True)
 
 	def schedule_next(self, now: datetime) -> None:
-		self.next_run = _next_after(self.expr, now)
+		self.next_run = self.schedule.next_after(now)
