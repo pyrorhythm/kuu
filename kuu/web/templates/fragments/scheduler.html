@@ -5,6 +5,7 @@
       <th>task</th>
       <th>next run</th>
       <th>rule</th>
+      <th></th>
     </tr>
   </thead>
   <tbody>
@@ -13,11 +14,17 @@
       <td class="mono-cell">{{ j.task_name }}</td>
       <td class="dim">{{ j.next_run.strftime("%H:%M:%S") }}</td>
       <td class="mono-cell">
-        {%- if j.expr is defined -%}
-          {{ j.expr }}
-        {%- else -%}
+        {%- if j.every is defined and j.every is not none -%}
           every {{ j.every.total_seconds()|int }}s
+        {%- elif j.schedule is defined and j.schedule is not none -%}
+          {{ j.schedule.__class__.__name__ }}
+        {%- else -%}
+          —
         {%- endif -%}
+      </td>
+      <td class="action-cell">
+        <button class="btn" onclick="kuuTriggerJob({{ j.id|tojson }})">trigger</button>
+        <button class="btn btn-danger" onclick="kuuRemoveJob({{ j.id|tojson }})">remove</button>
       </td>
     </tr>
     {% endfor %}

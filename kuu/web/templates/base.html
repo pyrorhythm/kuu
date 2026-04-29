@@ -31,6 +31,182 @@
 		{% block content %}{% endblock %}
 	</main>
 
+	<!-- run-task dialog -->
+	<dialog id="run-task-dialog" class="kuu-dialog">
+		<div class="dialog-head">
+			<span class="dialog-title">run task</span>
+			<button class="btn" id="dialog-close">close</button>
+		</div>
+		<div class="dialog-body">
+			<div class="dialog-task-name" id="dialog-task-name"></div>
+			<div id="dialog-form-area"><p class="placeholder">loading…</p></div>
+		</div>
+		<div class="dialog-foot">
+			<button class="btn" id="dialog-cancel">cancel</button>
+			<button class="btn btn-primary" id="dialog-submit">enqueue</button>
+		</div>
+	</dialog>
+
+	<div id="kuu-toast" class="kuu-toast" aria-live="polite"></div>
+
+	<script>
+	(function () {
+		const dialog = document.getElementById('run-task-dialog');
+		const taskNameEl = document.getElementById('dialog-task-name');
+		const formArea = document.getElementById('dialog-form-area');
+		const toast = document.getElementById('kuu-toast');
+		let _toastTimer;
+
+		function showToast(msg, ok) {
+			toast.textContent = msg;
+			toast.className = 'kuu-toast show ' + (ok ? 'ok' : 'err');
+			clearTimeout(_toastTimer);
+			_toastTimer = setTimeout(() => { toast.className = 'kuu-toast'; }, 3000);
+		}
+
+		function closeDialog() { dialog.close(); }
+		document.getElementById('dialog-close').addEventListener('click', closeDialog);
+		document.getElementById('dialog-cancel').addEventListener('click', closeDialog);
+
+		function escAttr(s) {
+			return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+		}
+
+		function buildRaw() {
+			dialog.dataset.mode = 'raw';
+			formArea.innerHTML =
+				'<label class="dialog-label" for="dialog-args">args (json array)</label>' +
+				'<textarea class="dialog-input" id="dialog-args" rows="2">[]</textarea>' +
+				'<label class="dialog-label" for="dialog-kwargs" style="margin-top:var(--s-3)">kwargs (json object)</label>' +
+				'<textarea class="dialog-input" id="dialog-kwargs" rows="3">{}</textarea>';
+		}
+
+		function buildForm(params) {
+			dialog.dataset.mode = 'form';
+			const html = params.map(p => {
+				const id = 'param-' + p.name;
+				const typeHint = p.annotation ? ' <span class="param-type">' + escAttr(p.annotation) + '</span>' : '';
+				const placeholder = p.required
+					? (p.annotation || 'required')
+					: (p.default !== null && p.default !== undefined ? JSON.stringify(p.default) : 'optional');
+				const defVal = (!p.required && p.default !== null && p.default !== undefined)
+					? (p.annotation === 'str' ? String(p.default) : JSON.stringify(p.default))
+					: '';
+				return '<div class="param-row">' +
+					'<label class="dialog-label" for="' + escAttr(id) + '">' + escAttr(p.name) + typeHint + '</label>' +
+					'<input class="dialog-input" id="' + escAttr(id) + '"' +
+					' data-name="' + escAttr(p.name) + '"' +
+					' data-ann="' + escAttr(p.annotation || '') + '"' +
+					' placeholder="' + escAttr(placeholder) + '"' +
+					' value="' + escAttr(defVal) + '">' +
+					'</div>';
+			}).join('');
+			formArea.innerHTML = html || '<p class="placeholder">no parameters</p>';
+		}
+
+		window.kuuRunTask = async function (taskName) {
+			taskNameEl.textContent = taskName;
+			formArea.innerHTML = '<p class="placeholder">loading…</p>';
+			dialog.dataset.task = taskName;
+			dialog.dataset.mode = 'raw';
+			dialog.showModal();
+			try {
+				const r = await fetch('/api/task-params?task=' + encodeURIComponent(taskName));
+				const d = await r.json();
+				if (r.ok) {
+					if (d.raw || d.params.length === 0) buildRaw();
+					else buildForm(d.params);
+				} else {
+					buildRaw();
+				}
+			} catch (_) {
+				buildRaw();
+			}
+			const first = formArea.querySelector('input, textarea');
+			if (first) first.focus();
+		};
+
+		document.getElementById('dialog-submit').addEventListener('click', async () => {
+			const task = dialog.dataset.task;
+			const mode = dialog.dataset.mode;
+			let args = [], kwargs = {};
+
+			if (mode === 'form') {
+				const inputs = formArea.querySelectorAll('[data-name]');
+				for (const input of inputs) {
+					const name = input.dataset.name;
+					const ann = input.dataset.ann;
+					const raw = input.value;
+					if (raw === '') continue;
+					let value;
+					if (ann === 'str') {
+						value = raw;
+					} else {
+						try { value = JSON.parse(raw); } catch (_) {
+							showToast(name + ': invalid value', false); return;
+						}
+					}
+					kwargs[name] = value;
+				}
+			} else {
+				const argsEl = document.getElementById('dialog-args');
+				const kwargsEl = document.getElementById('dialog-kwargs');
+				try { args = JSON.parse(argsEl ? argsEl.value || '[]' : '[]'); } catch (_) {
+					showToast('args: invalid json', false); return;
+				}
+				try { kwargs = JSON.parse(kwargsEl ? kwargsEl.value || '{}' : '{}'); } catch (_) {
+					showToast('kwargs: invalid json', false); return;
+				}
+				if (!Array.isArray(args)) { showToast('args must be a json array', false); return; }
+				if (typeof kwargs !== 'object' || Array.isArray(kwargs)) {
+					showToast('kwargs must be a json object', false); return;
+				}
+			}
+
+			try {
+				const r = await fetch('/api/run-task', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ task, args, kwargs }),
+				});
+				const d = await r.json().catch(() => ({}));
+				if (r.ok) { closeDialog(); showToast('enqueued', true); }
+				else { showToast(d.error || 'error', false); }
+			} catch (_) { showToast('request failed', false); }
+		});
+
+		window.kuuTriggerJob = async function (jobId) {
+			try {
+				const r = await fetch('/api/trigger-job', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ job_id: jobId }),
+				});
+				const d = await r.json().catch(() => ({}));
+				if (r.ok) {
+					showToast('triggered', true);
+					htmx.ajax('GET', '/fragments/scheduler', '#scheduler-frag');
+				} else { showToast(d.error || 'error', false); }
+			} catch (_) { showToast('request failed', false); }
+		};
+
+		window.kuuRemoveJob = async function (jobId) {
+			try {
+				const r = await fetch('/api/remove-job', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ job_id: jobId }),
+				});
+				const d = await r.json().catch(() => ({}));
+				if (r.ok) {
+					showToast('removed', true);
+					htmx.ajax('GET', '/fragments/scheduler', '#scheduler-frag');
+				} else { showToast(d.error || 'error', false); }
+			} catch (_) { showToast('request failed', false); }
+		};
+	}());
+	</script>
+
 </body>
 
 </html>

@@ -6,6 +6,7 @@
       <th>queue</th>
       <th>attempts</th>
       <th>timeout</th>
+      <th></th>
     </tr>
   </thead>
   <tbody>
@@ -15,6 +16,9 @@
       <td class="mono-cell">{{ t.task_queue }}</td>
       <td>{{ t.max_attempts }}</td>
       <td class="dim">{{ "%.1fs"|format(t.timeout) if t.timeout else "—" }}</td>
+      <td class="action-cell">
+        <button class="btn" onclick="kuuRunTask({{ t.task_name|tojson }})">run</button>
+      </td>
     </tr>
     {% endfor %}
   </tbody>
