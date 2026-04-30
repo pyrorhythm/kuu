@@ -20,6 +20,14 @@ def worker(
 			help="path to config file (TOML). defaults to ./kuunfig.toml or [tool.kuu] in ./pyproject.toml",
 		),
 	] = None,
+	preset: Annotated[
+		str | None,
+		Option(
+			"--preset",
+			"-p",
+			help="config preset, `default` if unspecified",
+		),
+	] = None,
 	override: Annotated[
 		list[str] | None,
 		Option(
@@ -34,7 +42,9 @@ def worker(
 	from kuu.config import Kuunfig
 	from kuu.orchestrator.main import Orchestrator
 
-	cfg = Kuunfig.load(config)
+	kuucfg = Kuunfig.load(config)
+	cfg = kuucfg.resolve(preset)
+
 	if override:
 		cfg = cfg.with_overrides(override)
 

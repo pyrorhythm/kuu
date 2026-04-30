@@ -21,13 +21,13 @@ from kuu.results.base import result_key
 if TYPE_CHECKING:
 	from kuu.app import Kuu
 	from kuu.brokers.base import Delivery
-	from kuu.config import Kuunfig
+	from kuu.config import Settings
 
 log = logging.getLogger("kuu.worker")
 
 
 class Worker:
-	def __init__(self, config: Kuunfig, *, app: Kuu | None = None) -> None:
+	def __init__(self, config: Settings, *, app: Kuu | None = None) -> None:
 		"""
 		Worker process.
 
@@ -49,7 +49,6 @@ class Worker:
 		self._inflight = 0
 		self._idle = anyio.Event()
 		self._idle.set()  # idle until first task starts; only waited on during shutdown
-		self._inflight_lock = anyio.Lock()
 
 	async def run(self) -> None:
 		"""Connect broker and results, then run the consumer loop."""
@@ -89,12 +88,9 @@ class Worker:
 	async def _consume(self, handlers: TaskGroup) -> None:
 		async for delivery in self.app.broker.consume(self.queues, self.prefetch):
 			await self._sem.acquire()
-
-			async with self._inflight_lock:
-				if self._inflight == 0:
-					self._idle = anyio.Event()  # reset: no longer idle
-				self._inflight += 1
-
+			if self._inflight == 0:
+				self._idle = anyio.Event()  # reset: no longer idle
+			self._inflight += 1
 			handlers.start_soon(self._handle, delivery)
 
 	async def _handle(self, delivery: Delivery) -> None:
@@ -115,10 +111,9 @@ class Worker:
 			if cached is not None and cached.status == "ok":
 				with anyio.CancelScope(shield=True):
 					await self._finalize(delivery, msg, Ok(0.0))
-				async with self._inflight_lock:
-					self._inflight -= 1
-					if self._inflight == 0:
-						self._idle.set()
+				self._inflight -= 1
+				if self._inflight == 0:
+					self._idle.set()
 				self._sem.release()
 				return
 
@@ -179,10 +174,9 @@ class Worker:
 		with anyio.CancelScope(shield=True):
 			await self._finalize(delivery, msg, outcome)
 
-		async with self._inflight_lock:
-			self._inflight -= 1
-			if self._inflight == 0:
-				self._idle.set()
+		self._inflight -= 1
+		if self._inflight == 0:
+			self._idle.set()
 
 		self._sem.release()
 

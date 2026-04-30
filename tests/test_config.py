@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from kuu.config import Kuunfig
+from kuu.config import Kuunfig, Settings
 
 
 def _write(p: Path, body: str) -> None:
@@ -23,7 +23,8 @@ class TestLoad:
 			concurrency = 32
 			""",
 		)
-		cfg = Kuunfig.load(f)
+		raw = Kuunfig.load(f)
+		cfg = raw.default
 		assert cfg.app == "myapp.module:instance"
 		assert cfg.task_modules == ["myapp.tasks"]
 		assert cfg.concurrency == 32
@@ -45,10 +46,39 @@ class TestLoad:
 			port = 9999
 			""",
 		)
-		cfg = Kuunfig.load(f)
+		raw = Kuunfig.load(f)
+		cfg = raw.default
 		assert cfg.app == "x.mod:k"
 		assert cfg.metrics.enable is True
 		assert cfg.metrics.port == 9999
+
+	def test_loads_structured_with_default_section(self, tmp_path: Path) -> None:
+		f = tmp_path / "kuunfig.toml"
+		_write(
+			f,
+			"""
+			[default]
+			app = "myapp:kuu"
+			task_modules = ["myapp.tasks"]
+			concurrency = 32
+
+			[presets.prod]
+			concurrency = 128
+			processes = 8
+
+			[presets.dev]
+			concurrency = 16
+			""",
+		)
+		raw = Kuunfig.load(f)
+		assert raw.default.app == "myapp:kuu"
+		assert raw.default.concurrency == 32
+		assert raw.default.processes == 1
+		assert raw.presets["prod"].concurrency == 128
+		assert raw.presets["prod"].processes == 8
+		assert raw.presets["prod"].app is None
+		assert raw.presets["dev"].concurrency == 16
+		assert raw.presets["dev"].processes is None
 
 	def test_autodiscover_prefers_kuunfig_over_pyproject(
 		self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -69,8 +99,8 @@ class TestLoad:
 			task_modules = ["b"]
 			""",
 		)
-		cfg = Kuunfig.load()
-		assert cfg.app == "from.kuunfig:k"
+		raw = Kuunfig.load()
+		assert raw.default.app == "from.kuunfig:k"
 
 	def test_autodiscover_falls_back_to_pyproject(
 		self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -84,8 +114,8 @@ class TestLoad:
 			task_modules = ["b"]
 			""",
 		)
-		cfg = Kuunfig.load()
-		assert cfg.app == "from.pyproject:k"
+		raw = Kuunfig.load()
+		assert raw.default.app == "from.pyproject:k"
 
 	def test_autodiscover_skips_pyproject_without_tool_kuu(
 		self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -106,8 +136,8 @@ class TestLoad:
 			Kuunfig.load(tmp_path / "nope.toml")
 
 
-def _base() -> Kuunfig:
-	return Kuunfig.model_validate({"app": "mod:obj", "task_modules": ["mod.tasks"]})
+def _base() -> Settings:
+	return Settings.model_validate({"app": "mod:obj", "task_modules": ["mod.tasks"]})
 
 
 class TestOverrides:
@@ -174,5 +204,127 @@ class TestInvariants:
 			Kuunfig.model_validate({"app": "no_colon", "task_modules": ["m"]})
 
 	def test_prefetch_default_derived_from_concurrency(self) -> None:
-		cfg = Kuunfig.model_validate({"app": "m:o", "task_modules": ["m"], "concurrency": 100})
+		cfg = Settings.model_validate({"app": "m:o", "task_modules": ["m"], "concurrency": 100})
 		assert cfg.prefetch == 25
+
+
+class TestPresets:
+	def test_resolve_none_returns_default(self) -> None:
+		raw = Kuunfig.model_validate({
+			"default": {"app": "a:b", "task_modules": ["t"], "concurrency": 64},
+		})
+		cfg = raw.resolve(None)
+		assert cfg is raw.default
+		assert cfg.concurrency == 64
+
+	def test_resolve_merges_preset_over_default(self) -> None:
+		raw = Kuunfig.model_validate({
+			"default": {"app": "a:b", "task_modules": ["t"], "concurrency": 64, "processes": 4},
+			"presets": {
+				"prod": {"processes": 8},
+			},
+		})
+		cfg = raw.resolve("prod")
+		assert cfg.concurrency == 64  # from default
+		assert cfg.processes == 8  # from preset
+
+	def test_resolve_preset_overrides_all_levels(self) -> None:
+		raw = Kuunfig.model_validate({
+			"default": {
+				"app": "a:b",
+				"task_modules": ["t"],
+				"concurrency": 64,
+				"processes": 4,
+				"metrics": {"enable": True, "host": "0.0.0.0", "port": 9191},
+			},
+			"presets": {
+				"staging": {
+					"concurrency": 32,
+					"metrics": {"enable": False, "host": "0.0.0.0", "port": 9090},
+				},
+			},
+		})
+		cfg = raw.resolve("staging")
+		assert cfg.concurrency == 32
+		assert cfg.processes == 4  # from default
+		assert cfg.metrics.enable is False
+		assert cfg.metrics.port == 9090
+
+	def test_resolve_unknown_preset_raises(self) -> None:
+		raw = Kuunfig.model_validate({
+			"default": {"app": "a:b", "task_modules": ["t"]},
+		})
+		with pytest.raises(KeyError, match="preset 'nope' not found"):
+			raw.resolve("nope")
+
+	def test_empty_preset_equals_default(self) -> None:
+		raw = Kuunfig.model_validate({
+			"default": {"app": "a:b", "task_modules": ["t"], "concurrency": 64},
+			"presets": {"empty": {}},
+		})
+		cfg = raw.resolve("empty")
+		assert cfg.app == raw.default.app
+		assert cfg.concurrency == raw.default.concurrency
+
+	def test_preset_does_not_mutate_default(self) -> None:
+		raw = Kuunfig.model_validate({
+			"default": {"app": "a:b", "task_modules": ["t"], "concurrency": 64},
+			"presets": {"fast": {"concurrency": 128}},
+		})
+		resolved = raw.resolve("fast")
+		assert resolved.concurrency == 128
+		assert raw.default.concurrency == 64
+
+	def test_preset_key_error_message_lists_available(self) -> None:
+		raw = Kuunfig.model_validate({
+			"default": {"app": "a:b", "task_modules": ["t"]},
+			"presets": {"prod": {}, "dev": {}},
+		})
+		with pytest.raises(KeyError, match=r"\['dev', 'prod'\]"):
+			raw.resolve("nope")
+
+	def test_preset_submodel_partial_merge(self) -> None:
+		"""Overriding one submodel field must not wipe other submodel fields."""
+		raw = Kuunfig.model_validate({
+			"default": {
+				"app": "a:b",
+				"task_modules": ["t"],
+				"dashboard": {"enable": True, "host": "0.0.0.0", "port": 8181, "path": "/dash"},
+			},
+			"presets": {
+				"alt": {
+					"dashboard": {"enable": False, "host": "0.0.0.0", "port": 9090, "path": "/alt"},
+				},
+			},
+		})
+		cfg = raw.resolve("alt")
+		assert cfg.dashboard.enable is False
+		assert cfg.dashboard.port == 9090
+		assert cfg.dashboard.path == "/alt"
+		# host kept from preset since full submodel overrides
+		assert cfg.dashboard.host == "0.0.0.0"
+
+	def test_preset_validate_result(self) -> None:
+		"""Resolved settings must pass validation (e.g., app pattern)."""
+		raw = Kuunfig.model_validate({
+			"default": {"app": "a:b", "task_modules": ["t"]},
+			"presets": {"good": {"app": "other.mod:instance"}},
+		})
+		cfg = raw.resolve("good")
+		assert cfg.app == "other.mod:instance"
+
+	def test_flat_backward_compat_model_validate(self) -> None:
+		"""model_validate with flat dict auto-wraps."""
+		raw = Kuunfig.model_validate({"app": "x:y", "task_modules": ["t"], "concurrency": 32})
+		assert raw.default.app == "x:y"
+		assert raw.default.concurrency == 32
+		assert raw.presets == {}
+
+	def test_flat_backward_compat_does_not_wrap_double(self) -> None:
+		"""A dict with 'default' key passes through unchanged."""
+		raw = Kuunfig.model_validate({
+			"default": {"app": "x:y", "task_modules": ["t"]},
+			"presets": {"p": {"concurrency": 10}},
+		})
+		assert raw.default.app == "x:y"
+		assert raw.presets["p"].concurrency == 10

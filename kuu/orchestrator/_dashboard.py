@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import anyio
 
-from kuu.config import Kuunfig
+from kuu.config import Settings
 
 if TYPE_CHECKING:
 	import multiprocessing as mp
@@ -19,9 +19,9 @@ log = getLogger("kuu.orchestrator.dashboard-runner")
 
 class DashboardRunner:
 	_orch: Orchestrator
-	_config: Kuunfig
+	_config: Settings
 
-	def __init__(self, orch: Orchestrator, config: Kuunfig) -> None:
+	def __init__(self, orch: Orchestrator, config: Settings) -> None:
 		self._orch = orch
 		self._config = config
 

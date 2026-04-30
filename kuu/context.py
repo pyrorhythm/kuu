@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 type Phase = Literal["enqueue", "process"]
 
 
-@dataclass
+@dataclass(slots=True)
 class Context:
 	"""
 	Execution context for a task.

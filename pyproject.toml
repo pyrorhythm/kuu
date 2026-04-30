@@ -7,14 +7,14 @@ requires-python = ">=3.12"
 license = "Apache-2.0"
 authors = [{ name = "Alexey Pechenin", email = "me@pyrorhythm.dev" }]
 keywords = [
-  "apscheduler",
-  "message queue",
-  "queue",
-  "schedule tasks",
-  "scheduler",
-  "scheduling",
-  "task",
-  "task queue",
+    "apscheduler",
+    "message queue",
+    "queue",
+    "schedule tasks",
+    "scheduler",
+    "scheduling",
+    "task",
+    "task queue",
 ]
 classifiers = [
   "Development Status :: 4 - Beta",

@@ -113,11 +113,8 @@ def test_between_constrains_to_window():
 
 def test_and_composition():
 	s = on(Mon, Wed, Fri) & at(time(9, 0))
-	# Monday at 9:00 — should match
 	assert s.matches(datetime(2026, 4, 27, 9, 0, tzinfo=timezone.utc))  # Monday
-	# Tuesday at 9:00 — should NOT match (wrong day)
 	assert not s.matches(datetime(2026, 4, 28, 9, 0, tzinfo=timezone.utc))  # Tuesday
-	# Monday at 10:00 — should NOT match (wrong time)
 	assert not s.matches(datetime(2026, 4, 27, 10, 0, tzinfo=timezone.utc))
 
 
@@ -146,7 +143,6 @@ def test_scheduler_add_schedule_returns_schedule_job():
 
 
 def test_scheduler_run_is_noop_when_no_jobs():
-	"""scheduler loop exits silently when no jobs (via cancel)"""
 	import anyio
 
 	app = Kuu(broker=MemoryBroker())
@@ -218,13 +214,12 @@ def test_kuu_every_decorator_accepts_optional_kwargs():
 
 
 def test_scheduler_runner_is_noop_when_disabled():
-	"""regression: orchestrator must skip scheduler entirely when disabled"""
 	import anyio
 
-	from kuu.config import Kuunfig
+	from kuu.config import Settings
 	from kuu.orchestrator._scheduler import SchedulerRunner
 
-	cfg = Kuunfig.model_construct(app="x:y", task_modules=[])
+	cfg = Settings.model_construct(app="x:y", task_modules=[])
 	# scheduler.enable defaults to False
 	runner = SchedulerRunner(cfg)
 	# returns immediately without trying to import x:y

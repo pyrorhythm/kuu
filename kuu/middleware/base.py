@@ -27,13 +27,27 @@ async def run_chain(
 	terminal: Callable[[Context], Awaitable[Any]],
 ) -> Any:
 	"""Drive `chain` around `terminal`, returning whatever the chain returns."""
-	idx = -1
+	handlers = [*chain, _TerminalWrapper(terminal)]
 
-	async def _next() -> Any:
-		nonlocal idx
-		idx += 1
-		if idx >= len(chain):
-			return await terminal(ctx)
-		return await chain[idx](ctx, _next)
+	async def _dispatch(i: int = 0) -> Any:
+		if i >= len(handlers):
+			return None
 
-	return await _next()
+		async def _call_next() -> Any:
+			return await _dispatch(i + 1)
+
+		return await handlers[i](ctx, _call_next)
+
+	return await _dispatch(0)
+
+
+class _TerminalWrapper:
+	"""Adapter to make a terminal callable conform to Middleware protocol."""
+
+	__slots__ = ("_terminal",)
+
+	def __init__(self, terminal: Callable[[Context], Awaitable[Any]]) -> None:
+		self._terminal = terminal
+
+	async def __call__(self, ctx: Context, call_next: Next) -> Any:
+		return await self._terminal(ctx)

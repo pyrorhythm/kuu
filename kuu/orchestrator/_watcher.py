@@ -10,7 +10,7 @@ import watchfiles
 from watchfiles import Change, DefaultFilter
 
 from kuu._types import _FnAsync
-from kuu.config import Kuunfig, WatchSettings
+from kuu.config import Settings, WatchSettings
 
 type Changes = set[tuple[Change, str]]
 type CallbackFn = _FnAsync[[Changes], None]
@@ -19,10 +19,10 @@ log = getLogger("kuu.orchestrator.watcher")
 
 
 class Watcher:
-	_config: Kuunfig
+	_config: Settings
 	_callback: CallbackFn
 
-	def __init__(self, config: Kuunfig, callback: CallbackFn) -> None:
+	def __init__(self, config: Settings, callback: CallbackFn) -> None:
 		self._config = config
 		self._callback = callback
 

@@ -7,14 +7,14 @@ import pytest
 from pydantic import BaseModel
 
 from kuu.app import Kuu
-from kuu.config import Kuunfig
+from kuu.config import Settings
 from kuu.exceptions import TaskError
 from kuu.results.redis import RedisResults
 from kuu.worker import Worker
 
 
-def _config(app: Kuu, concurrency: int = 4) -> Kuunfig:
-	return Kuunfig.model_construct(queues=[app.default_queue], concurrency=concurrency)
+def _config(app: Kuu, concurrency: int = 4) -> Settings:
+	return Settings.model_construct(queues=[app.default_queue], concurrency=concurrency)
 
 
 async def _run_worker_until(app: Kuu, predicate, *, timeout: float = 10.0) -> None:

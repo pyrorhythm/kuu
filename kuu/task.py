@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import inspect
-import sys
 from dataclasses import field
 from typing import TYPE_CHECKING, Any, Awaitable, Mapping, cast
 
@@ -79,15 +78,6 @@ class Task[**P, Res]:
 				f"task {task_name!r}: blocking=True is for sync functions; "
 				"async functions should not be offloaded to a thread"
 			)
-
-		new_name = f"{self.original_func.__name__}_kuu"
-		self.original_func.__name__ = new_name
-		if hasattr(self.original_func, "__qualname__"):
-			original_qualname = self.original_func.__qualname__.rsplit(".")
-			original_qualname[-1] = new_name
-			new_qualname = ".".join(original_qualname)
-			self.original_func.__qualname__ = new_qualname
-		setattr(sys.modules[original_func.__module__], new_name, original_func)
 
 	async def __call__(self, *args: P.args, **kwargs: P.kwargs) -> Res:
 		return await if_async(self.original_func(*args, **kwargs))

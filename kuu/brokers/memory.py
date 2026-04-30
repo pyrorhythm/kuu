@@ -95,7 +95,13 @@ class MemoryBroker(Broker):
 					due.append((q, m))
 			for q, m in due:
 				await self._push(q, m)
-			await anyio.sleep(self.pump_interval)
+			async with self._sched_lock:
+				if self._scheduled:
+					next_ts = self._scheduled[0][0]
+					wait = max(0, min(next_ts - self._now(), self.pump_interval))
+				else:
+					wait = self.pump_interval
+			await anyio.sleep(wait)
 
 	async def consume(
 		self, queues: list[str], prefetch: int

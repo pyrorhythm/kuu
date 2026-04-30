@@ -6,7 +6,7 @@ from dataclasses import dataclass
 class RedisConfig:
 	"""Marker base for Redis connection configurations.
 
-	Concrete variants use :func:`match` / ``match … case`` for dispatch.
+	Concrete variants use :func:`match` / ``match ... case`` for dispatch.
 	"""
 
 

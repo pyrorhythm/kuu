@@ -9,7 +9,7 @@ import anyio
 import anyio.to_thread
 
 from kuu._import import import_object, import_tasks
-from kuu.config import Kuunfig
+from kuu.config import Settings
 from kuu.worker import Worker
 
 if TYPE_CHECKING:
@@ -19,12 +19,12 @@ log = logging.getLogger("kuu.orchestrator.worker_pool")
 
 
 class WorkerPool:
-	_config: Kuunfig
+	_config: Settings
 	_stop_event: anyio.Event
 	_processes: list[mp.Process]
 	events_queue: mp.Queue  # type: ignore[type-arg]
 
-	def __init__(self, config: Kuunfig) -> None:
+	def __init__(self, config: Settings) -> None:
 		self._config = config
 		self._processes = []
 		self.events_queue = mp.Queue()
@@ -101,7 +101,7 @@ class WorkerPool:
 						log.exception("mark_worker_dead failed for pid=%s", p.pid)
 
 
-def _run_worker(config: Kuunfig, events_queue: mp.Queue | None = None) -> None:  # type: ignore[type-arg]
+def _run_worker(config: Settings, events_queue: mp.Queue | None = None) -> None:  # type: ignore[type-arg]
 	log.info("worker process starting")
 	app = import_object(config.app)
 	import_tasks(config.task_modules, "", False)

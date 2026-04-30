@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import pathlib
 import re
@@ -14,6 +16,8 @@ from pydantic import (
 	NonNegativeFloat,
 	PositiveInt,
 	StringConstraints,
+	create_model,
+	model_validator,
 )
 
 
@@ -66,7 +70,9 @@ class WatchSettings(BaseModel):
 	reload_debounce: float = Field(0.5)
 
 
-class Kuunfig(BaseModel):
+class Settings(BaseModel):
+	"""Flat, resolved application settings used at runtime."""
+
 	model_config = ConfigDict(
 		frozen=True,
 		extra="forbid",
@@ -139,41 +145,6 @@ class Kuunfig(BaseModel):
 	watch: WatchSettings = Field(WatchSettings())
 	scheduler: SchedulerSettings = Field(SchedulerSettings())
 
-	@classmethod
-	def load(cls, config: str | pathlib.Path | None = None) -> Self:
-		"""
-		Load configuration from TOML.
-
-		When `config` is `None`, autodiscover in the current directory:
-		prefer `./kuunfig.toml`, then fall back to `[tool.kuu]` in
-		`./pyproject.toml`.
-		"""
-		path = cls._resolve(config)
-		data = tomllib.loads(path.read_text())
-		if path.name == "pyproject.toml":
-			data = data.get("tool", {}).get("kuu", {})
-		return cls.model_validate(data)
-
-	@staticmethod
-	def _resolve(config: str | pathlib.Path | None) -> pathlib.Path:
-		if config is not None:
-			p = pathlib.Path(config)
-			if not p.exists():
-				raise FileNotFoundError(f"config file not found: {p}")
-			return p
-
-		for candidate in ("kuunfig.toml", "pyproject.toml"):
-			p = pathlib.Path(candidate)
-			if p.exists():
-				if candidate == "pyproject.toml":
-					raw = tomllib.loads(p.read_text())
-					if "kuu" not in raw.get("tool", {}):
-						continue
-				return p
-		raise FileNotFoundError(
-			"no kuu config found (looked for ./kuunfig.toml and [tool.kuu] in ./pyproject.toml)"
-		)
-
 	def with_overrides(self, overrides: list[str]) -> Self:
 		"""
 		Return a copy of this config with `dotted.path=value` overrides applied.
@@ -202,3 +173,104 @@ class Kuunfig(BaseModel):
 				cursor = existing
 			cursor[parts[-1]] = parsed
 		return type(self).model_validate(data)
+
+
+def unset_required(m: type[BaseModel], name: str | None = None) -> type[BaseModel]:
+	fields: dict = {
+		k: (
+			unset_required(v.annotation) if isinstance(v.annotation, BaseModel) else (v.annotation),
+			None,
+		)
+		for k, v in m.model_fields.items()
+	}
+	return create_model(
+		name if name is not None else m.__name__,
+		__base__=BaseModel,
+		**fields,
+	)
+
+
+SettingsPreset = unset_required(Settings, "SettingsPreset")
+
+
+class Kuunfig(BaseModel):
+	"""Top-level configuration with defaults and named presets.
+
+	.. code-block:: toml
+
+		[default]
+		app = "myapp:kuu"
+		task_modules = ["myapp.tasks"]
+		processes = 4
+		concurrency = 64
+
+		[presets.prod]
+		processes = 8
+
+		[presets.dev]
+		processes = 1
+		concurrency = 16
+
+	Use :meth:`resolve` to merge a named preset with defaults:
+
+		>>> cfg = Kuunfig.load()
+		>>> settings = cfg.resolve("prod")
+	"""
+
+	model_config = ConfigDict(frozen=True, extra="forbid")
+
+	default: Settings
+	presets: dict[str, SettingsPreset] = Field(default_factory=dict)
+
+	@model_validator(mode="before")
+	@classmethod
+	def _auto_wrap_flat(cls, data: Any) -> Any:
+		if isinstance(data, dict) and "default" not in data:
+			if any(k in data for k in ("app", "task_modules")):
+				data = {"default": data}
+		return data
+
+	@classmethod
+	def load(cls, config: str | pathlib.Path | None = None) -> Self:
+		path = cls._resolve(config)
+		data = tomllib.loads(path.read_text())
+		if path.name == "pyproject.toml":
+			data = data.get("tool", {}).get("kuu", {})
+		return cls.model_validate(data)
+
+	@staticmethod
+	def _resolve(config: str | pathlib.Path | None) -> pathlib.Path:
+		if config is not None:
+			p = pathlib.Path(config)
+			if not p.exists():
+				raise FileNotFoundError(f"config file not found: {p}")
+			return p
+
+		for candidate in ("kuunfig.toml", "pyproject.toml"):
+			p = pathlib.Path(candidate)
+			if p.exists():
+				if candidate == "pyproject.toml":
+					raw = tomllib.loads(p.read_text())
+					if "kuu" not in raw.get("tool", {}):
+						continue
+				return p
+		raise FileNotFoundError(
+			"no kuu config found (looked for ./kuunfig.toml and [tool.kuu] in ./pyproject.toml)"
+		)
+
+	def resolve(self, name: str | None = None) -> Settings:
+		"""Resolve a named preset by merging it with ``default``.
+
+		Preset values take precedence; ``None`` fields fall back to the
+		default.  When *name* is ``None``, returns ``self.default``
+		unchanged.
+		"""
+		if name is None:
+			return self.default
+		preset = self.presets.get(name)
+		if preset is None:
+			raise KeyError(f"preset {name!r} not found; available: {sorted(self.presets)}")
+		data = self.default.model_dump()
+		preset_data = preset.model_dump(exclude_none=True)
+		data.update(preset_data)
+		return Settings.model_validate(data)

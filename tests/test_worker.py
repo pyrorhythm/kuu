@@ -8,14 +8,14 @@ import pytest
 
 from kuu.app import Kuu
 from kuu.brokers.memory import MemoryBroker
-from kuu.config import Kuunfig
+from kuu.config import Settings
 from kuu.exceptions import RetryErr
 from kuu.middleware import RetryMiddleware
 from kuu.worker import Worker
 
 
 async def _run_worker_until(app: Kuu, predicate, *, timeout: float = 3.0) -> None:
-	config = Kuunfig.model_construct(queues=["default"], concurrency=4)
+	config = Settings.model_construct(queues=["default"], concurrency=4)
 	worker = Worker(config, app=app)
 
 	async def _supervise(scope: anyio.CancelScope):

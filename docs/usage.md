@@ -274,11 +274,11 @@ app = Kuu(
 - `RetryMiddleware`: catches `RetryErr` and schedules the next attempt with
   exponential backoff plus jitter. Pass `retry_on` to also auto-retry on
   specific exception types without requiring explicit `raise RetryErr(...)`:
-    ```python
-    RetryMiddleware(base=0.5, cap=60.0, jitter=0.2, retry_on=(httpx.HTTPError,))
-    ```
-    Backoff: `min(cap, base * 2 ** attempt)` with jitter applied as a
-    fractional multiplier in `[-jitter, +jitter]`.
+  ```python
+  RetryMiddleware(base=0.5, cap=60.0, jitter=0.2, retry_on=(httpx.HTTPError,))
+  ```
+  Backoff: `min(cap, base * 2 ** attempt)` with jitter applied as a
+  fractional multiplier in `[-jitter, +jitter]`.
 - `TimeoutMiddleware`: per-task `Task.timeout` wins; this `seconds` is the
   default.
 
@@ -349,9 +349,9 @@ Schedule objects compose with `&` (AND - all must match) and `|` (OR - any match
 | --------------------------------------------- | --------------------------------------- |
 | `at(t)`                                       | Daily at wall-clock time `t`            |
 | `every(*, hours, minutes, seconds, starting)` | Fixed interval within each day          |
-| `on(*weekdays)`                               | Restrict to specific weekdays (Mon–Sun) |
-| `on_day(*days)`                               | Restrict to days of month (1–31)        |
-| `in_month(*months)`                           | Restrict to specific months (Jan–Dec)   |
+| `on(*weekdays)`                               | Restrict to specific weekdays (Mon-Sun) |
+| `on_day(*days)`                               | Restrict to days of month (1-31)        |
+| `in_month(*months)`                           | Restrict to specific months (Jan-Dec)   |
 | `between(start, end)`                         | Restrict to time window within each day |
 
 Programmatic registration:
@@ -550,7 +550,7 @@ See {doc}`config` for the full TOML schema.
 import anyio
 from kuu import Kuu
 from kuu.brokers.memory import MemoryBroker
-from kuu.config import Kuunfig
+from kuu.config import Settings
 from kuu.worker import Worker
 
 
@@ -563,7 +563,7 @@ async def test_charge_runs():
 
     handle = await charge.q(5)
 
-    config = Kuunfig.model_construct(queues=["default"], concurrency=4)
+    config = Settings.model_construct(queues=["default"], concurrency=4)
     worker = Worker(config, app=app)
 
     async with anyio.create_task_group() as tg:

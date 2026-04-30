@@ -6,6 +6,8 @@ from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+import anyio
+
 log = logging.getLogger("kuu.events")
 
 Handler = Callable[..., Awaitable[None] | None]
@@ -29,13 +31,17 @@ class Signal:
 			pass
 
 	async def send(self, *args: Any, **kw: Any) -> None:
-		for h in self._handlers:
+		async def _invoke(h: Handler) -> None:
 			try:
 				r = h(*args, **kw)
 				if inspect.isawaitable(r):
 					await r
 			except Exception:
 				log.exception("event handler %s failed on %s", h, self.name)
+
+		async with anyio.create_task_group() as tg:
+			for h in self._handlers:
+				tg.start_soon(_invoke, h)
 
 
 class Events:

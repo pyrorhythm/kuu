@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from typing import Awaitable, Callable, NamedTuple, cast
@@ -136,10 +137,12 @@ class RedisBroker(Broker):
 
 		while True:
 			now = datetime.now(timezone.utc).timestamp()
-			for q in queues:
-				await _asyncify(self.r.evalsha)(
+			await asyncio.gather(*[
+				_asyncify(self.r.evalsha)(
 					self._move_sha, 2, self._zset(q), self._stream(q), str(now), "128"
 				)
+				for q in queues
+			])
 			await anyio.sleep(0.5)
 
 	async def _claim_stale(self, queue: str) -> list[tuple[bytes, dict[bytes, bytes]]]:
@@ -161,19 +164,25 @@ class RedisBroker(Broker):
 		for q in queues:
 			await self.declare(q)
 
+		last_claim = 0.0
+		claim_interval = max(1.0, self.claim_min_idle_ms / 1000 / 2)
+
 		async with anyio.create_task_group() as tg:
 			tg.start_soon(self._pump_scheduled, queues)
 			try:
 				streams: dict[_KT, _ST] = {self._stream(q): ">" for q in queues}
 				q_by_stream = {self._stream(q): q for q in queues}
 				while True:
-					for q in queues:
-						for sid, data in await self._claim_stale(q):
-							yield Delivery(
-								message=self.serializer.unmarshal(data[b"m"], into=Message),
-								receipt=RedisReceipt(queue=q, stream_id=sid),
-								queue=q,
-							)
+					now = anyio.current_time()
+					if now - last_claim >= claim_interval:
+						last_claim = now
+						for q in queues:
+							for sid, data in await self._claim_stale(q):
+								yield Delivery(
+									message=self.serializer.unmarshal(data[b"m"], into=Message),
+									receipt=RedisReceipt(queue=q, stream_id=sid),
+									queue=q,
+								)
 
 					resp = await self.r.xreadgroup(
 						self.group, self.consumer, streams, count=prefetch, block=self.block_ms
@@ -202,8 +211,10 @@ class RedisBroker(Broker):
 				raise InvalidReceiptType(type(delivery.receipt))
 
 		q, sid = delivery.receipt
-		await self.r.xack(self._stream(q), self.group, sid)
-		await self.r.xdel(self._stream(q), sid)
+		async with self.r.pipeline() as pipe:  # type:ignore
+			pipe.xack(self._stream(q), self.group, sid)
+			pipe.xdel(self._stream(q), sid)
+			await pipe.execute()
 
 	@_ensure_connected
 	async def nack(
@@ -220,14 +231,18 @@ class RedisBroker(Broker):
 
 		q, sid = delivery.receipt
 		if not requeue:
-			await self.r.xack(self._stream(q), self.group, sid)
-			await self.r.xdel(self._stream(q), sid)
+			async with self.r.pipeline() as pipe:  # type:ignore
+				pipe.xack(self._stream(q), self.group, sid)
+				pipe.xdel(self._stream(q), sid)
+				await pipe.execute()
 			return
 		msg = delivery.message.model_copy(update={"attempt": delivery.message.attempt + 1})
-		if delay and delay > 0:
-			when = datetime.now(timezone.utc).timestamp() + delay
-			await self.r.zadd(self._zset(q), {self.serializer.marshal(msg): when})
-		else:
-			await self.r.xadd(self._stream(q), {"m": self.serializer.marshal(msg)})
-		await self.r.xack(self._stream(q), self.group, sid)
-		await self.r.xdel(self._stream(q), sid)
+		async with self.r.pipeline() as pipe:  # type:ignore
+			if delay and delay > 0:
+				when = datetime.now(timezone.utc).timestamp() + delay
+				pipe.zadd(self._zset(q), {self.serializer.marshal(msg): when})
+			else:
+				pipe.xadd(self._stream(q), {"m": self.serializer.marshal(msg)})
+			pipe.xack(self._stream(q), self.group, sid)
+			pipe.xdel(self._stream(q), sid)
+			await pipe.execute()

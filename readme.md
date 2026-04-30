@@ -11,7 +11,7 @@
 
 ---
 
-> ### a *native* distributed task queue for python
+> ### a _native_ distributed task queue for python
 
 ```shell
 uv add kuu
@@ -65,18 +65,21 @@ async def run() -> None:
 
 ```sh
 # reads ./kuunfig.toml or [tool.kuu] in ./pyproject.toml
-uv run kuu start 
+uv run kuu start
 
-# reads ./path/to/kuunfig.toml and overriding specified settings
-uv run kuu start -c ./path/to/kuunfig.toml -o concurrency=128 -o dashboard.enable=true
+# pick a preset and override specific settings
+uv run kuu start -p prod -o concurrency=128 -o dashboard.enable=true
 ```
 
 ## config
 
 put the block below into `kuunfig.toml`, or under `[tool.kuu]` in your `pyproject.toml`
-every field except `app` and `task_modules` has a default and can be omitted
+
+`[default]` holds base values; each `[presets.<name>]` overrides only the fields you set.
+unset fields fall back to `[default]`. a flat config (no `[default]` wrapper) still works
 
 ```toml
+[default]
 app = "myapp.module:instance"            # dotted path to the Kuu instance
 task_modules = ["myapp.tasks"]           # modules that register tasks
 
@@ -107,6 +110,14 @@ respect_gitignore = true                 # skip files matched by .gitignore
 exclude = [".git/**"]                    # extra globs to exclude
 reload_delay = 0.25
 reload_debounce = 0.5
+
+[presets.prod]
+processes = 8
+concurrency = 256
+
+[presets.dev]
+processes = 1
+concurrency = 16
 ```
 
 any setting can be overridden from the CLI with `-o dotted.path=value`

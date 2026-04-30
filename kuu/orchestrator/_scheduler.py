@@ -5,15 +5,15 @@ from logging import getLogger
 import anyio
 
 from kuu._import import import_object, import_tasks
-from kuu.config import Kuunfig
+from kuu.config import Settings
 
 log = getLogger("kuu.orchestrator.scheduler-runner")
 
 
 class SchedulerRunner:
-	_config: Kuunfig
+	_config: Settings
 
-	def __init__(self, config: Kuunfig) -> None:
+	def __init__(self, config: Settings) -> None:
 		self._config = config
 
 	async def run(self, stop_event: anyio.Event) -> None:

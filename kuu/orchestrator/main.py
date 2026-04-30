@@ -10,7 +10,7 @@ import typing
 import anyio
 import anyio.to_thread
 
-from kuu.config import Kuunfig
+from kuu.config import Settings
 from kuu.orchestrator._dashboard import DashboardRunner
 from kuu.orchestrator._scheduler import SchedulerRunner
 from kuu.orchestrator._watcher import Watcher
@@ -24,7 +24,7 @@ log = logging.getLogger("kuu.orchestrator")
 
 
 class Orchestrator:
-	config: Kuunfig
+	config: Settings
 
 	_wp: WorkerPool
 	_dash: DashboardRunner
@@ -37,7 +37,7 @@ class Orchestrator:
 
 	def __init__(
 		self,
-		config: Kuunfig,
+		config: Settings,
 	) -> None:
 		self.config = config
 		self._wp = WorkerPool(config)

@@ -7,12 +7,12 @@ from unittest.mock import MagicMock, patch
 import anyio
 from watchfiles import Change
 
-from kuu.config import Kuunfig
+from kuu.config import Settings
 from kuu.orchestrator._watcher import Watcher
 from kuu.orchestrator._worker import WorkerPool
 
 
-def _config(**overrides: Any) -> Kuunfig:
+def _config(**overrides: Any) -> Settings:
 	defaults: dict[str, Any] = dict(
 		app="fake.module:app",
 		task_modules=["fake.tasks"],
@@ -23,7 +23,7 @@ def _config(**overrides: Any) -> Kuunfig:
 		shutdown_timeout=1.0,
 	)
 	defaults.update(overrides)
-	return Kuunfig.model_construct(**defaults)
+	return Settings.model_construct(**defaults)
 
 
 def _fake_awatch_factory(batches: list[set[tuple[Change, str]]]):
@@ -45,7 +45,7 @@ class TestWorkerPool:
 		assert mock_proc_cls.call_count == 3
 		for call in mock_proc_cls.call_args_list:
 			assert call.kwargs["daemon"] is False
-			# args must be a tuple; the buggy `args=(cfg)` form passed a Kuunfig instead
+			# args must be a tuple; the buggy `args=(cfg)` form passed a Settings instead
 			args = call.kwargs["args"]
 			assert isinstance(args, tuple) and len(args) == 2
 			assert args[0] is pool._config
