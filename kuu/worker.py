@@ -4,15 +4,18 @@ import inspect
 import logging
 import signal
 import time
+import typing
 from typing import TYPE_CHECKING, Any
 
 import anyio
 import anyio.to_thread
 from anyio.abc import CancelScope, TaskGroup
+from pydantic import BaseModel
 
 from kuu._import import import_object
 from kuu.context import Context
 from kuu.exceptions import RejectErr, RetryErr, UnknownTask
+from kuu.message import Payload
 from kuu.middleware.base import run_chain
 from kuu.outcome import Fail, Ok, Outcome, Reject, Retry
 from kuu.result import Result
@@ -24,6 +27,51 @@ if TYPE_CHECKING:
 	from kuu.config import Settings
 
 log = logging.getLogger("kuu.worker")
+
+
+def _coerce_payload(func: Any, payload: Payload) -> Payload:
+	"""Reconstruct BaseModel kwargs that arrived as plain dicts after JSON round-trip.
+
+	When a message traverses a JSON-based broker, Pydantic model arguments
+	are flattened to dicts by ``model_dump(mode="json")``. The worker
+	needs to coerce them back so the task function receives proper model
+	instances instead of raw dicts.
+	"""
+	try:
+		sig = inspect.signature(func)
+		hints = typing.get_type_hints(func)
+	except Exception:
+		return payload
+
+	bound = sig.bind_partial(*payload.args, **payload.kwargs)
+	bound.apply_defaults()
+
+	new_kwargs = dict(payload.kwargs)
+	new_args = list(payload.args)
+	params = list(sig.parameters.values())
+
+	for i, (name, value) in enumerate(bound.arguments.items()):
+		ann = hints.get(name)
+		if ann is None or not (isinstance(ann, type) and issubclass(ann, BaseModel)):
+			continue
+		if not isinstance(value, dict):
+			continue
+
+		coerced = ann.model_validate(value)
+
+		p = params[i] if i < len(params) else None
+		if p is not None and p.kind in (
+			inspect.Parameter.POSITIONAL_ONLY,
+			inspect.Parameter.POSITIONAL_OR_KEYWORD,
+		):
+			if name in new_kwargs:
+				new_kwargs[name] = coerced
+			elif i < len(new_args):
+				new_args[i] = coerced
+		elif name in new_kwargs:
+			new_kwargs[name] = coerced
+
+	return Payload(args=tuple(new_args), kwargs=new_kwargs)
 
 
 class Worker:
@@ -125,7 +173,7 @@ class Worker:
 
 			async def _terminal(c: Context) -> Any:
 				await self.app.events.task_started.send(c.message)
-				payload = c.message.payload
+				payload = _coerce_payload(notnil_task.original_func, c.message.payload)
 				if notnil_task.blocking:
 
 					def _call() -> Any:

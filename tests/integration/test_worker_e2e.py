@@ -13,6 +13,38 @@ from kuu.results.redis import RedisResults
 from kuu.worker import Worker
 
 
+class InnerModel(BaseModel):
+	city: str
+	zip_code: str
+
+
+class OuterModel(BaseModel):
+	name: str
+	inner: InnerModel
+
+
+class Address(BaseModel):
+	street: str
+	city: str
+
+
+class Notification(BaseModel):
+	ntype: str
+	message: str
+	address: Address | None = None
+
+
+class OrderLine(BaseModel):
+	sku: str
+	qty: int
+	price: float = 0.0
+
+
+class Order(BaseModel):
+	lines: list[OrderLine]
+	customer: str
+
+
 def _config(app: Kuu, concurrency: int = 4) -> Settings:
 	return Settings.model_construct(queues=[app.default_queue], concurrency=concurrency)
 
@@ -365,3 +397,218 @@ async def test_unknown_task_failure_stores_error_on_final_attempt(make_app, redi
 		assert "UnknownTask" in (saw_error["r"].error or "")
 	finally:
 		await verifier.close()
+
+
+# ── Pydantic model coercion e2e ────────────────────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_pydantic_model_kwarg_round_trips_through_redis(make_app, redis_flushed: str):
+	"""Dict that arrives over the wire should be coerced back to a BaseModel."""
+	app: Kuu = await make_app(
+		stream_prefix="e10:s:", zset_prefix="e10:z:", group="e10", results_prefix="e10:r:"
+	)
+
+	received: list[Notification] = []
+
+	@app.task
+	async def send_notification(notification: Notification) -> str:
+		received.append(notification)
+		return notification.ntype
+
+	await send_notification.q(notification=Notification(ntype="email", message="hello"))
+	await _run_worker_until(app, lambda: len(received) >= 1)
+
+	assert len(received) == 1
+	assert isinstance(received[0], Notification)
+	assert received[0].ntype == "email"
+	assert received[0].message == "hello"
+
+
+@pytest.mark.anyio
+async def test_nested_pydantic_model_kwarg_round_trips(make_app, redis_flushed: str):
+	"""Deeply-nested BaseModel kwargs must be reconstructed with inner models intact."""
+	app: Kuu = await make_app(
+		stream_prefix="e11:s:", zset_prefix="e11:z:", group="e11", results_prefix="e11:r:"
+	)
+
+	received: list[Notification] = []
+
+	@app.task
+	async def send_notification(notification: Notification) -> str:
+		received.append(notification)
+		return notification.ntype
+
+	await send_notification.q(
+		notification=Notification(
+			ntype="sms", message="urgent", address=Address(street="123 Main", city="NYC")
+		)
+	)
+	await _run_worker_until(app, lambda: len(received) >= 1)
+
+	assert isinstance(received[0], Notification)
+	assert isinstance(received[0].address, Address)
+	assert received[0].address.city == "NYC"
+	assert received[0].address.street == "123 Main"
+
+
+@pytest.mark.anyio
+async def test_pydantic_model_positional_arg_round_trips(make_app, redis_flushed: str):
+	"""Positional BaseModel args also need coercion."""
+	app: Kuu = await make_app(
+		stream_prefix="e12:s:", zset_prefix="e12:z:", group="e12", results_prefix="e12:r:"
+	)
+
+	received: list[OuterModel] = []
+
+	@app.task
+	async def process(model: OuterModel) -> str:
+		received.append(model)
+		return model.name
+
+	await process.q(OuterModel(name="Alice", inner=InnerModel(city="LA", zip_code="90001")))
+	await _run_worker_until(app, lambda: len(received) >= 1)
+
+	assert isinstance(received[0], OuterModel)
+	assert isinstance(received[0].inner, InnerModel)
+	assert received[0].inner.zip_code == "90001"
+
+
+@pytest.mark.anyio
+async def test_mixed_args_and_models_round_trip(make_app, redis_flushed: str):
+	"""Mix of primitive positional args and a model kwarg."""
+	app: Kuu = await make_app(
+		stream_prefix="e13:s:", zset_prefix="e13:z:", group="e13", results_prefix="e13:r:"
+	)
+
+	received: list[tuple] = []
+
+	@app.task
+	async def place_order(user_id: int, order: Order) -> str:
+		received.append((user_id, order))
+		return f"{user_id}:{order.customer}"
+
+	await place_order.q(
+		user_id=99,
+		order=Order(
+			customer="Bob",
+			lines=[OrderLine(sku="A1", qty=2, price=9.99), OrderLine(sku="B2", qty=1)],
+		),
+	)
+	await _run_worker_until(app, lambda: len(received) >= 1)
+
+	uid, order = received[0]
+	assert uid == 99
+	assert isinstance(order, Order)
+	assert isinstance(order.lines[0], OrderLine)
+	assert order.lines[0].sku == "A1"
+	assert order.lines[0].price == 9.99
+	assert order.lines[1].qty == 1
+	# default field
+	assert order.lines[1].price == 0.0
+
+
+@pytest.mark.anyio
+async def test_optional_none_field_in_model_round_trips(make_app, redis_flushed: str):
+	"""Optional fields that are None when enqueued should remain None after coercion."""
+	app: Kuu = await make_app(
+		stream_prefix="e14:s:", zset_prefix="e14:z:", group="e14", results_prefix="e14:r:"
+	)
+
+	received: list[Notification] = []
+
+	@app.task
+	async def send_notification(notification: Notification) -> str:
+		received.append(notification)
+		return notification.ntype
+
+	await send_notification.q(notification=Notification(ntype="push", message="ping"))
+	await _run_worker_until(app, lambda: len(received) >= 1)
+
+	assert received[0].address is None
+
+
+@pytest.mark.anyio
+async def test_blocking_task_with_pydantic_model_coerces(make_app, redis_flushed: str):
+	"""Blocking (sync) tasks must also get model coercion."""
+	app: Kuu = await make_app(
+		stream_prefix="e15:s:", zset_prefix="e15:z:", group="e15", results_prefix="e15:r:"
+	)
+
+	import threading
+
+	received: list[tuple[Notification, int]] = []
+	main_thread = threading.get_ident()
+
+	@app.task(blocking=True)
+	def process(notification: Notification) -> str:
+		received.append((notification, threading.get_ident()))
+		return notification.ntype
+
+	await process.q(
+		notification=Notification(
+			ntype="webhook", message="deploy", address=Address(street="1st Ave", city="SF")
+		)
+	)
+	await _run_worker_until(app, lambda: len(received) >= 1)
+
+	notif, tid = received[0]
+	assert isinstance(notif, Notification)
+	assert isinstance(notif.address, Address)
+	assert notif.address.city == "SF"
+	assert tid != main_thread
+
+
+@pytest.mark.anyio
+async def test_multiple_model_kwargs_all_coerced(make_app, redis_flushed: str):
+	"""Two BaseModel kwargs in the same call must both be reconstructed."""
+	app: Kuu = await make_app(
+		stream_prefix="e16:s:", zset_prefix="e16:z:", group="e16", results_prefix="e16:r:"
+	)
+
+	received: list[tuple[Address, InnerModel]] = []
+
+	@app.task
+	async def merge(addr: Address, inner: InnerModel) -> str:
+		received.append((addr, inner))
+		return f"{addr.city}-{inner.zip_code}"
+
+	await merge.q(
+		addr=Address(street="2nd St", city="Chicago"),
+		inner=InnerModel(city="Chicago", zip_code="60601"),
+	)
+	await _run_worker_until(app, lambda: len(received) >= 1)
+
+	a, i = received[0]
+	assert isinstance(a, Address)
+	assert isinstance(i, InnerModel)
+	assert a.street == "2nd St"
+	assert i.zip_code == "60601"
+
+
+@pytest.mark.anyio
+async def test_pydantic_kwarg_with_primitives_coexists(make_app, redis_flushed: str):
+	"""Primitive kwargs pass through untouched alongside model coercion."""
+	app: Kuu = await make_app(
+		stream_prefix="e17:s:", zset_prefix="e17:z:", group="e17", results_prefix="e17:r:"
+	)
+
+	received: list[tuple] = []
+
+	@app.task
+	async def send(channel: str, notification: Notification, priority: int) -> str:
+		received.append((channel, notification, priority))
+		return f"{channel}/{notification.ntype}/{priority}"
+
+	await send.q(
+		channel="slack",
+		notification=Notification(ntype="info", message="deploy done"),
+		priority=3,
+	)
+	await _run_worker_until(app, lambda: len(received) >= 1)
+
+	ch, notif, prio = received[0]
+	assert ch == "slack"
+	assert prio == 3
+	assert isinstance(notif, Notification)
+	assert notif.ntype == "info"
