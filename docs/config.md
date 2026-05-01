@@ -9,45 +9,48 @@ Omitting `[default]` and writing a flat config is allowed for backward compat (k
 
 ```toml
 [default]
-app = "myapp.module:instance"            # dotted path to the Kuu instance
-task_modules = ["myapp.tasks"]           # modules that register tasks
+    app = "src.core.broker:broker"
+    task_modules = [
+        ...
+    ]
+    queues = []
+    processes = 2
+    concurrency = 32
+    prefetch = 16
+    shutdown_timeout = 30.0
+    scheduler.enable = false
+    metrics.enable = true
 
-queues = []                              # consume from; empty = auto-discover
-processes = 1                            # worker subprocesses to spawn
-concurrency = 64                         # max concurrent tasks per worker
-prefetch = 16                            # batch size; defaults to max(1, concurrency // 4)
-shutdown_timeout = 30.0                  # seconds to wait for in-flight tasks on stop
+[default.dashboard]
+    enable = true
+    path = "/"
 
-[scheduler]
-enable = false                           # run scheduler loop in-process
-                                         # jobs declared in code via app.schedule
+[default.watch]
+    enable = true
+    root = "."
+    respect_gitignore = true
+    exclude = [".git/**"]
+    reload_delay = 0.25
+    reload_debounce = 0.5
 
-[metrics]
-enable = false
-host = "0.0.0.0"
-port = 9191
+[presets.scheduler]
+    task_modules = [
+        ...
+    ]
+    processes = 2
+    concurrency = 16
+    scheduler.enable = true
+    dashboard.enable = false
 
-[dashboard]
-enable = false
-host = "0.0.0.0"
-port = 8181
-path = "/dashboard"
-
-[watch]
-enable = false                           # reload workers on filesystem changes
-root = "."                               # path to watch
-respect_gitignore = true                 # skip files matched by .gitignore
-exclude = [".git/**"]                    # extra globs to exclude
-reload_delay = 0.25
-reload_debounce = 0.5
-
-[presets.prod]
-processes = 8
-concurrency = 256
-
-[presets.dev]
-processes = 1
-concurrency = 16
+[presets.message]
+    app = "src.core.message_broker:message_broker"
+    task_modules = [
+        ...
+    ]
+    processes = 1
+    concurrency = 16
+    scheduler.enable = false
+    dashboard.enable = false
 ```
 
 ## CLI Overrides
