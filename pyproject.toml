@@ -1,6 +1,6 @@
 [project]
 name = "kuu"
-version = "0.1.4"
+version = "0.1.5"
 description = "lightweight async distributed task queue"
 readme = "readme.md"
 requires-python = ">=3.12"

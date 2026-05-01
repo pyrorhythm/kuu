@@ -17,53 +17,51 @@ from kuu.web.stats import StatsCollector
 
 
 class Dashboard(DashboardFragmentsMixin, DashbordAPIMixin):
-    def __init__(
-        self,
-        app: Kuu,
-        scheduler: Scheduler | None = None,
-        orchestrator: Orchestrator | None = None,
-        title: str = "kuu dashboard",
-    ) -> None:
-        self.app = app
-        self.scheduler = scheduler
-        self.orchestrator = orchestrator
-        self.title = title
-        self.stats = StatsCollector(app)
-        here = Path(__file__).parent
-        self.jinja = Environment(
-            loader=FileSystemLoader(str(here / "templates")),
-            autoescape=select_autoescape(["html", "xml"]),
-        )
-        self.jinja.filters["tojson"] = orjson.dumps
+	def __init__(
+		self,
+		app: Kuu,
+		scheduler: Scheduler | None = None,
+		orchestrator: Orchestrator | None = None,
+		title: str = "kuu dashboard",
+	) -> None:
+		self.app = app
+		self.scheduler = scheduler
+		self.orchestrator = orchestrator
+		self.title = title
+		self.stats = StatsCollector(app)
+		here = Path(__file__).parent
+		self.jinja = Environment(
+			loader=FileSystemLoader(str(here / "templates")),
+			autoescape=select_autoescape(["html", "xml"]),
+		)
+		self.jinja.filters["tojson"] = orjson.dumps
 
-    def build_app(self) -> Starlette:
-        static_dir = Path(__file__).parent / "static"
-        return Starlette(
-            debug=True,
-            routes=[
-                Route("/", self._index),
-                Route("/fragments/stats", self._frag_stats),
-                Route("/fragments/tasks", self._frag_tasks),
-                Route("/fragments/scheduler", self._frag_scheduler),
-                Route("/fragments/workers", self._frag_workers),
-                Route("/api/activity", self._api_activity),
-                Route("/api/task-params", self._api_task_params),
-                Route("/api/run-task", self._api_run_task, methods=["POST"]),
-                Route("/api/trigger-job", self._api_trigger_job, methods=["POST"]),
-                Route("/api/remove-job", self._api_remove_job, methods=["POST"]),
-                Mount("/static", StaticFiles(directory=str(static_dir)), name="static"),
-            ],
-        )
+	def build_app(self) -> Starlette:
+		static_dir = Path(__file__).parent / "static"
+		return Starlette(
+			debug=True,
+			routes=[
+				Route("/", self._index),
+				Route("/fragments/stats", self._frag_stats),
+				Route("/fragments/tasks", self._frag_tasks),
+				Route("/fragments/scheduler", self._frag_scheduler),
+				Route("/fragments/workers", self._frag_workers),
+				Route("/api/activity", self._api_activity),
+				Route("/api/task-params", self._api_task_params),
+				Route("/api/run-task", self._api_run_task, methods=["POST"]),
+				Route("/api/trigger-job", self._api_trigger_job, methods=["POST"]),
+				Route("/api/remove-job", self._api_remove_job, methods=["POST"]),
+				Mount("/static", StaticFiles(directory=str(static_dir)), name="static"),
+			],
+		)
 
-    def serve(self, host: str = "0.0.0.0", port: int = 8000) -> None:
-        import uvicorn
+	def serve(self, host: str = "0.0.0.0", port: int = 8000) -> None:
+		import uvicorn
 
-        uvicorn.run(self.build_app(), host=host, port=port, log_level="warning")
+		uvicorn.run(self.build_app(), host=host, port=port, log_level="warning")
 
-    async def start_server(self, host: str = "0.0.0.0", port: int = 8000) -> None:
-        import uvicorn
+	async def start_server(self, host: str = "0.0.0.0", port: int = 8000) -> None:
+		import uvicorn
 
-        cfg = uvicorn.Config(
-            self.build_app(), host=host, port=port, log_level="warning"
-        )
-        await uvicorn.Server(cfg).serve()
+		cfg = uvicorn.Config(self.build_app(), host=host, port=port, log_level="warning")
+		await uvicorn.Server(cfg).serve()
