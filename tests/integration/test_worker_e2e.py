@@ -612,3 +612,130 @@ async def test_pydantic_kwarg_with_primitives_coexists(make_app, redis_flushed: 
 	assert prio == 3
 	assert isinstance(notif, Notification)
 	assert notif.ntype == "info"
+
+
+@pytest.mark.anyio
+async def test_list_of_models_round_trips(make_app, redis_flushed: str):
+	"""list[Model] kwargs get each element coerced from dict."""
+	app: Kuu = await make_app(
+		stream_prefix="e18:s:", zset_prefix="e18:z:", group="e18", results_prefix="e18:r:"
+	)
+
+	received: list[list[OrderLine]] = []
+
+	@app.task
+	async def process_order(lines: list[OrderLine]) -> str:
+		received.append(lines)
+		return str(len(lines))
+
+	await process_order.q(
+		lines=[OrderLine(sku="A1", qty=2, price=9.99), OrderLine(sku="B2", qty=1)]
+	)
+	await _run_worker_until(app, lambda: len(received) >= 1)
+
+	lines = received[0]
+	assert len(lines) == 2
+	assert isinstance(lines[0], OrderLine)
+	assert lines[0].sku == "A1"
+	assert lines[0].price == 9.99
+	assert isinstance(lines[1], OrderLine)
+	assert lines[1].qty == 1
+	assert lines[1].price == 0.0
+
+
+@pytest.mark.anyio
+async def test_dict_of_models_round_trips(make_app, redis_flushed: str):
+	"""dict[str, Model] kwargs get each value coerced from dict."""
+	app: Kuu = await make_app(
+		stream_prefix="e19:s:", zset_prefix="e19:z:", group="e19", results_prefix="e19:r:"
+	)
+
+	received: list[dict[str, InnerModel]] = []
+
+	@app.task
+	async def merge_inner(lookup: dict[str, InnerModel]) -> int:
+		received.append(lookup)
+		return len(lookup)
+
+	await merge_inner.q(
+		lookup={
+			"nyc": InnerModel(city="NYC", zip_code="10001"),
+			"la": InnerModel(city="LA", zip_code="90001"),
+		}
+	)
+	await _run_worker_until(app, lambda: len(received) >= 1)
+
+	lookup = received[0]
+	assert len(lookup) == 2
+	assert isinstance(lookup["nyc"], InnerModel)
+	assert lookup["nyc"].zip_code == "10001"
+	assert isinstance(lookup["la"], InnerModel)
+	assert lookup["la"].city == "LA"
+
+
+@pytest.mark.anyio
+async def test_optional_model_none_round_trips(make_app, redis_flushed: str):
+	"""Model | None with None value stays None after coercion."""
+	app: Kuu = await make_app(
+		stream_prefix="e20:s:", zset_prefix="e20:z:", group="e20", results_prefix="e20:r:"
+	)
+
+	received: list[InnerModel | None] = []
+
+	@app.task
+	async def maybe_inner(loc: InnerModel | None) -> str:
+		received.append(loc)
+		return "none" if loc is None else loc.city
+
+	await maybe_inner.q(loc=None)
+	await _run_worker_until(app, lambda: len(received) >= 1)
+
+	assert received[0] is None
+
+
+@pytest.mark.anyio
+async def test_optional_model_present_round_trips(make_app, redis_flushed: str):
+	"""Model | None with a dict value gets coerced to model instance."""
+	app: Kuu = await make_app(
+		stream_prefix="e21:s:", zset_prefix="e21:z:", group="e21", results_prefix="e21:r:"
+	)
+
+	received: list[InnerModel | None] = []
+
+	@app.task
+	async def maybe_inner(loc: InnerModel | None) -> str:
+		received.append(loc)
+		return "none" if loc is None else loc.city
+
+	await maybe_inner.q(loc=InnerModel(city="SF", zip_code="94102"))
+	await _run_worker_until(app, lambda: len(received) >= 1)
+
+	assert isinstance(received[0], InnerModel)
+	assert received[0].city == "SF"
+
+
+@pytest.mark.anyio
+async def test_list_and_dict_models_together(make_app, redis_flushed: str):
+	"""list[Model] and dict[K, Model] in the same call."""
+	app: Kuu = await make_app(
+		stream_prefix="e22:s:", zset_prefix="e22:z:", group="e22", results_prefix="e22:r:"
+	)
+
+	received: list[tuple[list[OrderLine], dict[str, OrderLine]]] = []
+
+	@app.task
+	async def bulk(lines: list[OrderLine], by_sku: dict[str, OrderLine]) -> int:
+		received.append((lines, by_sku))
+		return len(lines) + len(by_sku)
+
+	await bulk.q(
+		lines=[OrderLine(sku="A", qty=1, price=1.0), OrderLine(sku="B", qty=2)],
+		by_sku={"C": OrderLine(sku="C", qty=3, price=5.0)},
+	)
+	await _run_worker_until(app, lambda: len(received) >= 1)
+
+	lines, by_sku = received[0]
+	assert isinstance(lines[0], OrderLine)
+	assert lines[0].price == 1.0
+	assert isinstance(by_sku["C"], OrderLine)
+	assert by_sku["C"].qty == 3
