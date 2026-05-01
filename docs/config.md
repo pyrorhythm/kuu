@@ -11,7 +11,7 @@ Omitting `[default]` and writing a flat config is allowed for backward compat (k
 [default]
     app = "src.core.broker:broker"
     task_modules = [
-        ...
+        #...
     ]
     queues = []
     processes = 2
@@ -35,7 +35,7 @@ Omitting `[default]` and writing a flat config is allowed for backward compat (k
 
 [presets.scheduler]
     task_modules = [
-        ...
+        #...
     ]
     processes = 2
     concurrency = 16
@@ -45,7 +45,7 @@ Omitting `[default]` and writing a flat config is allowed for backward compat (k
 [presets.message]
     app = "src.core.message_broker:message_broker"
     task_modules = [
-        ...
+        #...
     ]
     processes = 1
     concurrency = 16
