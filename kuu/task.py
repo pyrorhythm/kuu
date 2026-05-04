@@ -5,7 +5,7 @@ from dataclasses import field
 from typing import TYPE_CHECKING, Any, Awaitable, Mapping, cast
 
 if TYPE_CHECKING:
-	from kuu._types import _Fn
+	from kuu._types import _FnAny
 	from kuu.app import Kuu
 	from kuu.handle import TaskHandle
 
@@ -30,7 +30,7 @@ class Task[**P, Res]:
 
 	name: str
 	task_queue: str
-	original_func: _Fn[P, Res]
+	original_func: _FnAny[P, Res]
 	max_attempts: int = 5
 	timeout: float | None = None
 	blocking: bool = False
@@ -39,7 +39,7 @@ class Task[**P, Res]:
 	def __init__(
 		self,
 		manager: Kuu,
-		original_func: _Fn[P, Res],
+		original_func: _FnAny[P, Res],
 		task_name: str,
 		task_queue: str,
 		task_labels: Mapping[str, Any],

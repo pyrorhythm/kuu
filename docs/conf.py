@@ -16,7 +16,6 @@ release = _pyproject["project"]["version"]
 version = release
 
 extensions = [
-	"myst_parser",
 	"autodoc2",
 	"sphinx.ext.intersphinx",
 	"sphinx.ext.viewcode",
@@ -24,22 +23,11 @@ extensions = [
 ]
 
 source_suffix = {
-	".md": "markdown",
 	".rst": "restructuredtext",
 }
 
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 templates_path = ["_templates"]
-
-myst_enable_extensions = [
-	"colon_fence",
-	"deflist",
-	"fieldlist",
-	"linkify",
-	"smartquotes",
-	"tasklist",
-]
-myst_heading_anchors = 3
 
 autodoc2_packages = [
 	{
@@ -47,7 +35,7 @@ autodoc2_packages = [
 		"auto_mode": True,
 	},
 ]
-autodoc2_render_plugin = "myst"
+autodoc2_render_plugin = "rst"
 autodoc2_output_dir = "apidocs"
 autodoc2_hidden_objects = ["dunder", "private", "inherited"]
 autodoc2_class_inheritance = True

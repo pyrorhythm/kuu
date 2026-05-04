@@ -38,7 +38,6 @@ urls = { "homepage" = "https://github.com/pyrorhythm/kuu" }
 dependencies = [
   "anyio>=4.10,<5",
   "click>=8.3.3",
-  "cyclopts>=4.11.0",
   "orjson>=3.10",
   "pydantic>=2.12,<3",
   "typer>=0.24.2",
@@ -59,6 +58,9 @@ msgspec = ["msgspec>=0.21"]
 nats = ["nats-py>=2.7"]
 prometheus = ["prometheus-client>=0.20"]
 redis = ["redis>=6.0,<8"]
+postgres = [
+    "asyncpg>=0.31.0",
+]
 
 [dependency-groups]
 dev = [
@@ -72,8 +74,6 @@ dev = [
 ]
 docs = [
     "furo>=2024.8",
-    "linkify-it-py>=2.0",
-    "myst-parser>=4.0",
     "sphinx>=8.1,<9",
     "sphinx-autobuild>=2024.10",
     "sphinx-autodoc2>=0.5",

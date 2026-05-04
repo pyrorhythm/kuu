@@ -14,12 +14,7 @@ logger = logging.getLogger(__name__)
 
 @contextmanager
 def add_cwd_in_path() -> Generator[None]:
-	"""
-	Temporarily prepend the current working directory to `sys.path`.
-
-	Lets `import_module` find user code without requiring the project to
-	be installed as a package.
-	"""
+	"""Adds cwd to current context."""
 	cwd = Path.cwd()
 	if str(cwd) in sys.path:
 		yield
@@ -35,13 +30,12 @@ def add_cwd_in_path() -> Generator[None]:
 
 
 def import_object(object_spec: str, app_dir: str | None = None) -> Any:
-	"""
-	Parse a `module:attribute` spec and return the imported attribute.
+	"""Parse a `module:attribute` spec and return the imported attribute.
 
-	- `object_spec`: dotted path in the form `package.module:variable`.
-	- `app_dir`: optional extra directory to prepend to `sys.path`.
-
-	Raises `ValueError` if the spec is missing the `:` separator.
+	:param object_spec: dotted path in the form `package.module:variable`.
+	:param app_dir: optional extra directory to prepend to `sys.path`.
+	:raises ValueError: if the spec is missing the `:` separator.
+	:returns: the imported object.
 	"""
 	import_spec = object_spec.split(":")
 	if len(import_spec) != 2:
@@ -65,12 +59,11 @@ def import_from_modules(modules: list[str]) -> None:
 
 
 def import_tasks(modules: list[str], pattern: str | Sequence[str], fs_discover: bool) -> None:
-	"""
-	Import the modules that register tasks via `@app.task`.
+	"""Import the modules that register tasks via `@app.task`.
 
-	- `modules`: explicit module list to import.
-	- `pattern`: glob(s) used when `fs_discover` is true.
-	- `fs_discover`: when true, expand `pattern` into module names and
+	:param modules: list of modules to import.
+	:param pattern: glob(s) used when `fs_discover` is true.
+	:param fs_discover: when true, expand `pattern` into module names and
 	  add them to `modules` before importing.
 	"""
 	if fs_discover:

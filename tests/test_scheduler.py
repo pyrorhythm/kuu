@@ -198,7 +198,7 @@ def test_kuu_every_decorator_accepts_optional_kwargs():
 
 	@app.every(
 		timedelta(seconds=30),
-		id="custom-id",
+		sched_id="custom-sched_id",
 		queue="high",
 		headers={"x-priority": "1"},
 		max_attempts=2,
@@ -207,7 +207,7 @@ def test_kuu_every_decorator_accepts_optional_kwargs():
 		pass
 
 	job = app.schedule.jobs[0]
-	assert job.id == "custom-id"
+	assert job.id == "custom-sched_id"
 	assert job.queue == "high"
 	assert job.headers == {"x-priority": "1"}
 	assert job.max_attempts == 2

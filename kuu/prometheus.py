@@ -55,7 +55,7 @@ class WorkerMetrics:
 	  - {ns}_task_retry_delay_seconds{task,queue}   (from task_retried)
 	  - {ns}_tasks_in_flight{task,queue}            gauge (livesum across procs)
 
-	`in_flight` is decremented on the first terminal event per message id
+	`in_flight` is decremented on the first terminal event per message sched_id
 	(succeeded/retried/failed/dead) to handle the Fail->Dead chain and the
 	standalone Reject->Dead path without double-counting.
 	"""

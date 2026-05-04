@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, overload
 
 from kuu._import import object_fqn
-from kuu._types import _Fn, _FnAsync, _Wrap
+from kuu._types import _FnAny, _FnAsync, _Wrap
 from kuu.brokers.base import Broker
 from kuu.context import Context
 from kuu.events import Events
@@ -27,13 +27,12 @@ class Kuu:
 		middleware: list[Middleware] | None = None,
 		results: ResultBackend | None = None,
 	) -> None:
-		"""
-		The Kuu app.
+		"""Core app, which behaves as a main entrypoint for tasks
 
-		- `broker`: transport for enqueue and consume.
-		- `default_queue`: fallback queue when `@app.task(queue=...)` is omitted.
-		- `middleware`: optional middleware chain applied around every task.
-		- `results`: optional result backend. Result-persistence policy
+		:param broker: transport for enqueue and consume.
+		:param default_queue: fallback queue when `@app.task(queue=...)` is omitted.
+		:param middleware: optional middleware chain applied around every task.
+		:param results: optional result backend. Result-persistence policy
 		  (`ttl`, `replay`, `store_errors`) lives on the backend itself.
 		"""
 
@@ -58,11 +57,11 @@ class Kuu:
 	) -> _Wrap[P, R]: ...
 
 	@overload
-	def task[**P, R](self, func: _Fn[P, R], /) -> Task[P, R]: ...
+	def task[**P, R](self, func: _FnAny[P, R], /) -> Task[P, R]: ...
 
 	def task[**P, R](
 		self,
-		name_or_func: str | _Fn[P, R] | None = None,
+		name_or_func: str | _FnAny[P, R] | None = None,
 		/,
 		queue: str | None = None,
 		max_attempts: int = 5,
@@ -70,26 +69,26 @@ class Kuu:
 		blocking: bool = False,
 		**labels: Any,
 	) -> _Wrap[P, R] | Task[P, R]:
-		"""Register function as a task.
+		"""Register function as a task
 
 		Accepts the bare function (`@app.task`) or a parametrized decorator
 		(`@app.task(queue=..., max_attempts=...)`).
 
-		- `queue`: destination queue; defaults to `Kuu.default_queue`.
-		- `max_attempts`: retry budget before the task is declared dead.
-		- `timeout`: per-run wall-clock limit in seconds; `None` means no limit.
-		- `blocking`: when `True`, offloads a sync function to a thread.
-		- `**labels`: arbitrary metadata attached to the task.
+		:param queue: destination queue; defaults to `Kuu.default_queue`.
+		:param max_attempts: retry budget before the task is declared dead.
+		:param timeout: per-run wall-clock limit in seconds; `None` means no limit.
+		:param blocking: when `True`, offloads a sync function to a thread.
+		:param labels: arbitrary metadata attached to the task.
 		"""
 
 		def _get_wrap(
 			_name: str | None = None,
 		):
-			def _wrap(func: _Fn[P, R]) -> Task[P, R]:
+			def _wrap(_func: _FnAny[P, R]) -> Task[P, R]:
 				t: Task[P, R] = Task(
 					manager=self,
-					original_func=func,
-					task_name=_name or object_fqn(func),
+					original_func=_func,
+					task_name=_name or object_fqn(_func),
 					task_queue=queue or self.default_queue,
 					task_labels=labels,
 					max_attempts=max_attempts,
@@ -114,27 +113,29 @@ class Kuu:
 		interval: timedelta,
 		args: Payload = Payload(),
 		*,
-		id: str | None = None,
+		sched_id: str | None = None,
 		queue: str | None = None,
 		headers: dict[str, str] | None = None,
 		max_attempts: int | None = None,
 	) -> _Wrap[P, R]:
 		"""Register function as a scheduled task with specified interval `timedelta`.
 
-		- `id`: optional, specific id for scheduler
-		- `queue`: destination queue; defaults to `Kuu.default_queue`.
-		- `headers`: arbitrary metadata attached to the scheduled task.
-		- `max_attempts`: retry budget before the task is declared dead.
+		:param interval: timedelta, in which task would be scheduled
+		:param args: args for the task to be executed with
+		:param sched_id: optional, specific sched_id for scheduler
+		:param queue: destination queue; defaults to `Kuu.default_queue`
+		:param headers: arbitrary metadata attached to the scheduled task
+		:param max_attempts: retry budget before the task is declared dead
 		"""
 
-		def wrap(fn: _Fn[P, R]) -> Task[P, R]:
+		def wrap(fn: _FnAny[P, R]) -> Task[P, R]:
 			if not isinstance(fn, Task):
 				fn = self.task(fn)
 			self.schedule.add_every(
 				interval,
 				fn,
 				args,
-				id=id,
+				id=sched_id,
 				queue=queue,
 				headers=headers,
 				max_attempts=max_attempts,
@@ -148,29 +149,29 @@ class Kuu:
 		sched: Schedule,
 		args: Payload = Payload(),
 		*,
-		id: str | None = None,
+		sched_id: str | None = None,
 		queue: str | None = None,
 		headers: dict[str, str] | None = None,
 		max_attempts: int | None = None,
 	) -> _Wrap[P, R]:
-		"""Register function as a scheduled task with `Schedule`.
+		"""Register function as a task with `Schedule`
 
-		Runs according to the provided `sched`.
-
-		- `id`: optional, specific id for scheduler
-		- `queue`: destination queue; defaults to `Kuu.default_queue`.
-		- `headers`: arbitrary metadata attached to the scheduled task.
-		- `max_attempts`: retry budget before the task is declared dead.
+		:param sched: schedule to run task with
+		:param args: args for the task to be executed with
+		:param sched_id: optional, specific sched_id for scheduler
+		:param queue: destination queue; defaults to `Kuu.default_queue`
+		:param headers: arbitrary metadata attached to the scheduled task
+		:param max_attempts: retry budget before the task is declared dead
 		"""
 
-		def wrap(fn: _Fn[P, R]) -> Task[P, R]:
+		def wrap(fn: _FnAny[P, R]) -> Task[P, R]:
 			if not isinstance(fn, Task):
 				fn = self.task(fn)
 			self.schedule.add_schedule(
 				sched,
 				fn,
 				args,
-				id=id,
+				id=sched_id,
 				queue=queue,
 				headers=headers,
 				max_attempts=max_attempts,
@@ -250,15 +251,14 @@ class Kuu:
 		headers: dict[str, str] | None = None,
 		max_attempts: int | None = None,
 	) -> TaskHandle[Any]:
-		"""
-		Enqueue a task by its registered dotted name.
+		"""Enqueue a task by its registered dotted name.
 
-		- `task`: registered task name (e.g. `"myapp.tasks:charge"`).
-		- `args`: positional and keyword arguments passed to the task.
-		- `queue`: destination queue override.
-		- `not_before`: earliest UTC time the task may run.
-		- `headers`: custom message headers.
-		- `max_attempts`: retry budget override.
+		:param task: registered task name (e.g. `"myapp.tasks:charge"`).
+		:param args: positional and keyword arguments passed to the task.
+		:param queue: destination queue override.
+		:param not_before: earliest UTC time the task may run.
+		:param headers: custom message headers.
+		:param max_attempts: retry budget override.
 		"""
 
 		t = self.registry.get(task)

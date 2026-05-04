@@ -42,8 +42,7 @@ class RedisReceipt(NamedTuple):
 
 
 class RedisBroker(Broker):
-	"""
-	Redis Streams broker.
+	"""Redis Streams broker.
 
 	Uses streams for the live queue and sorted sets for scheduled messages.
 	Consumer groups handle competing consumers across worker subprocesses.
@@ -96,7 +95,7 @@ class RedisBroker(Broker):
 		return self._redis.zset_key(self.zp, q)
 
 	async def connect(self) -> None:
-		if self._redis.r is not None:
+		if self._redis.r is not None and self._move_sha is not None:
 			return
 		await self._redis.connect()
 		self._move_sha = await self.r.script_load(_MOVE_LUA)

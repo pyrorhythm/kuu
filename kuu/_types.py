@@ -102,15 +102,19 @@ def _is_structlike(cls: type) -> bool:
 def _coerce(value: Any, ann: Any) -> Any:
 	"""Recursively coerce *value* to match *ann* (the type annotation).
 
+	:param value: target value
+	:param ann: annotation to be resolved against value
+
 	Algorithm:
-	  1. Resolve the annotation — strip Optional unions, get origin.
-	  2. If concrete struct-like type → construct from dict / recurse fields.
-	  3. If ``list[Inner]`` → recurse each element against Inner.
-	  4. If ``dict[K, V]`` → recurse each value against V.
-	  5. If ``X | None`` → recurse value against X (or passthrough None).
-	  6. If annotation incomplete → try runtime deduction.
-	  7. Otherwise return value unchanged.
+		#. Resolve the annotation — strip Optional unions, get origin.
+		#. If concrete struct-like type ~> construct from dict / recurse fields.
+		#. If `list[Inner]` ~> recurse each element against Inner.
+		#. If `dict[K, V]` ~> recurse each value against V.
+		#. If `X | None` ~> recurse value against X (or passthrough None).
+		#. If annotation incomplete ~> try runtime deduction.
+		#. Otherwise return value unchanged.
 	"""
+
 	if ann is inspect.Parameter.empty or ann is None:
 		return _coerce_runtime(value)
 
@@ -134,14 +138,12 @@ def _coerce(value: Any, ann: Any) -> Any:
 
 	origin = typing.get_origin(ann)
 
-	# list[X]
 	if origin is list:
 		inner = typing.get_args(ann)[0] if typing.get_args(ann) else Any
 		if not isinstance(value, list):
 			return value
 		return [_coerce(v, inner) for v in value]
 
-	# dict[K, V]
 	if origin is dict:
 		args = typing.get_args(ann)
 		val_ann = args[1] if len(args) > 1 else Any
@@ -149,14 +151,12 @@ def _coerce(value: Any, ann: Any) -> Any:
 			return value
 		return {k: _coerce(v, val_ann) for k, v in value.items()}
 
-	# set[X]
 	if origin is set:
 		inner = typing.get_args(ann)[0] if typing.get_args(ann) else Any
 		if not isinstance(value, (set, list, tuple)):
 			return value
 		return {_coerce(v, inner) for v in value}
 
-	# tuple[X, ...] or tuple[X, Y, Z]
 	if origin is tuple:
 		args = typing.get_args(ann)
 		if not args:
@@ -167,7 +167,6 @@ def _coerce(value: Any, ann: Any) -> Any:
 			return tuple(_coerce(v, args[0]) for v in value)
 		return tuple(_coerce(v, a) for v, a in zip(value, args))
 
-	# Concrete struct-like type (pydantic model, dataclass, etc.)
 	if isinstance(ann, type) and _is_structlike(ann):
 		if isinstance(value, ann):
 			return value
@@ -175,13 +174,11 @@ def _coerce(value: Any, ann: Any) -> Any:
 			return _model_construct(ann, value)
 		return value
 
-	# Primitives with simple coercion
 	if isinstance(ann, type):
 		if isinstance(value, ann):
 			return value
-		# int/float/str/bool from compatible types
 		if ann is int and isinstance(value, (bool, int)):
-			return value  # booleans are ints in Python, preserve
+			return value
 		if ann is float and isinstance(value, (int, float)) and not isinstance(value, bool):
 			return float(value)
 		if ann is str and isinstance(value, str):
@@ -224,22 +221,22 @@ def _flatten_union(ann: Any) -> tuple[list[Any], bool]:
 	return [], False
 
 
-# ── payload coercion ──────────────────────────────────────────────────────
-
-
 def _coerce_payload(func: Any, payload: Payload) -> Payload:
 	"""Coerce every argument in *payload* according to *func*'s type annotations.
 
-	Annotations are the source of truth. When an annotation is missing or
+	:param func: target function to be executed with payload.
+	:param payload: raw payload, possibly untyped
+
+	- Annotations are the source of truth. When an annotation is missing or
 	incomplete (``Any``, ``None``, unresolved forward ref), the function
 	attempts runtime type deduction.
 
-	Returns a new ``Payload`` with coerced values.
+	:returns: a new ``Payload`` with coerced values.
 	"""
 	try:
 		sig = inspect.signature(func)
 		hints = typing.get_type_hints(func, include_extras=True)
-	except Exception:
+	except BaseException:  # noqa
 		return payload
 
 	bound = sig.bind(*payload.args, **payload.kwargs)
@@ -252,7 +249,7 @@ def _coerce_payload(func: Any, payload: Payload) -> Payload:
 	for i, (name, value) in enumerate(bound.arguments.items()):
 		ann = hints.get(name, inspect.Parameter.empty)
 		if ann is inspect.Parameter.empty:
-			# No annotation at all — try runtime deduction
+			# No annotation at all -> try runtime deduction
 			ann = None
 
 		coerced = _coerce(value, ann)
@@ -276,10 +273,10 @@ class Connectable(Protocol):
 	async def connect(self) -> None: ...
 
 
+type _FnAny[**P, R] = Callable[P, R] | Callable[P, Coroutine[Any, Any, R]]
 type _FnAsync[**P, R] = Callable[P, Coroutine[Any, Any, R]]
-type _Fn[**P, R] = Callable[P, R] | Callable[P, Coroutine[Any, Any, R]]
 type _FnSingle[P, R] = Callable[[P], R]
-type _Wrap[**P, R] = _FnSingle[_Fn[P, R], Task[P, R]]
+type _Wrap[**P, R] = _FnSingle[_FnAny[P, R], Task[P, R]]
 
 
 def _ensure_connected[T: Connectable, **P, R](
