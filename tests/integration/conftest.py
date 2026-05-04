@@ -9,6 +9,8 @@ from kuu.app import Kuu
 from kuu.brokers.redis import RedisBroker
 from kuu.results.redis import RedisResults
 
+pytestmark = pytest.mark.anyio
+
 
 @pytest.fixture(scope="session")
 def redis_container() -> Iterator[RedisContainer]:
@@ -37,7 +39,7 @@ async def redis_flushed(redis_url: str):
 
 
 @pytest.fixture
-async def make_app(redis_flushed: str):
+async def make_redis_app(redis_flushed: str):
 	created: list[Kuu] = []
 
 	async def _make(

@@ -32,20 +32,6 @@ class ResultBackend(Protocol):
 	replay: bool
 	store_errors: bool
 
-	def __init__(
-		self,
-		serializer: Serializer,
-		marshal_types: bool,
-		ttl: float | None,
-		replay: bool,
-		store_errors: bool,
-	) -> None:
-		self.serializer = serializer
-		self.marshal_types = marshal_types
-		self.ttl = ttl
-		self.replay = replay
-		self.store_errors = store_errors
-
 	def encode(self, value: Any) -> tuple[bytes, str | None]:
 		"""
 		Encode `value` into a serialized payload and an optional type FQN.
@@ -74,13 +60,13 @@ class ResultBackend(Protocol):
 	async def close(self) -> None:
 		"""Close the backend connection."""
 
-	async def get(self, key: str) -> Result | None:
+	async def get(self, key: str, **kwargs) -> Result | None:
 		"""Fetch a result by `key`. Returns `None` if absent."""
 
 	async def set(self, key: str, result: Result, ttl: float | None = None) -> None:
 		"""Store `result` at `key`, optionally expiring after `ttl` seconds."""
 
-	async def setnx(self, key: str, result: Result, ttl: float | None = None) -> bool:
+	async def set_not_exists(self, key: str, result: Result, ttl: float | None = None) -> bool:
 		"""
 		Store `result` at `key` only if the key is absent.
 

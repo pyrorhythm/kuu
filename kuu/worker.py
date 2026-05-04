@@ -32,11 +32,11 @@ class Worker:
 		"""
 		Worker process.
 
-		- `config`: carries every tunable (queues, concurrency, prefetch,
+		- `conn_config`: carries every tunable (queues, concurrency, prefetch,
 		  shutdown timeout, app spec).
 		- `app`: optional already-imported `Kuu` instance. When provided, the
 		  worker skips the dotted-spec import round-trip; otherwise it resolves
-		  `config.app` itself.
+		  `conn_config.app` itself.
 		"""
 
 		self.app = app if app is not None else import_object(config.app)

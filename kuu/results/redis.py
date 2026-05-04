@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+from .base import Result, ResultBackend
 from .._types import _ensure_connected
 from ..redis import RedisTransport, StandaloneConfig
 from ..serializers import JSONSerializer
 from ..serializers.base import Serializer
-from .base import Result, ResultBackend
 
 
 class RedisResults(ResultBackend):
@@ -20,26 +20,22 @@ class RedisResults(ResultBackend):
 		replay: bool = True,
 		store_errors: bool = True,
 	):
-		"""
-		Redis-backed result store.
+		"""Redis-backed result store.
 
-		- `url`: Redis connection URL (convenience alias for ``StandaloneConfig``).
-		- `prefix`: key prefix for every stored result.
-		- `transport`: pre-configured :class:`~kuu.redis.RedisTransport`.
-		  When given, ``url`` is ignored.
-		- `serializer`: payload serializer.
-		- `marshal_types`: persist type info alongside the payload.
-		- `ttl`: default expiry in seconds; ``None`` means no expiry.
-		- `replay`: short-circuit task execution when a cached result is present.
-		- `store_errors`: persist terminal failures so callers can observe them.
+		:param url: Redis connection URL (convenience alias for ``StandaloneConfig``).
+		:param prefix: key prefix for every stored result.
+		:param transport: pre-configured :class:`~kuu.redis.RedisTransport`. When given, ``url`` is ignored.
+		:param serializer: payload serializer.
+		:param marshal_types: persist type info alongside the payload.
+		:param ttl: default expiry in seconds; ``None`` means no expiry.
+		:param replay: short-circuit task execution when a cached result is present.
+		:param store_errors: persist terminal failures so callers can observe them.
 		"""
-		super().__init__(
-			serializer=serializer,
-			marshal_types=marshal_types,
-			ttl=ttl,
-			replay=replay,
-			store_errors=store_errors,
-		)
+		self.serializer = serializer
+		self.marshal_types = marshal_types
+		self.ttl = ttl
+		self.replay = replay
+		self.store_errors = store_errors
 		self.prefix = prefix
 		self._redis = transport or RedisTransport(StandaloneConfig(url=url))
 
@@ -60,7 +56,7 @@ class RedisResults(ResultBackend):
 		await self._redis.close()
 
 	@_ensure_connected
-	async def get(self, key: str) -> Result | None:
+	async def get(self, key: str, **kwargs) -> Result | None:
 		data = await self.r.get(self._k(key))
 		return self.serializer.unmarshal(data, into=Result) if data else None
 
@@ -71,7 +67,7 @@ class RedisResults(ResultBackend):
 		)
 
 	@_ensure_connected
-	async def setnx(self, key: str, result: Result, ttl: float | None = None) -> bool:
+	async def set_not_exists(self, key: str, result: Result, ttl: float | None = None) -> bool:
 		return bool(
 			await self.r.set(
 				self._k(key), self.serializer.marshal(result), ex=int(ttl) if ttl else None, nx=True

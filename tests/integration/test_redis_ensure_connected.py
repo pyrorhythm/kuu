@@ -1,9 +1,3 @@
-"""Tests for @_ensure_connected decorator and _move_sha lifecycle in RedisBroker.
-
-Covers the bug where _pump_scheduled raises NotConnected because connect()
-early-returns when _redis.r is set but _move_sha is None (partial connect).
-"""
-
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -21,12 +15,7 @@ def _msg(queue: str = "q", **kw) -> Message:
 	return Message(task="t", queue=queue, payload=Payload(), **kw)
 
 
-# ── connect() idempotency ──────────────────────────────────────────────
-
-
-@pytest.mark.anyio
 async def test_connect_is_idempotent(redis_flushed: str):
-	"""Calling connect() twice does not re-load the script or raise."""
 	broker = RedisBroker(
 		url=redis_flushed, group="g_idem", stream_prefix="idem:s:", zset_prefix="idem:z:"
 	)
@@ -34,16 +23,13 @@ async def test_connect_is_idempotent(redis_flushed: str):
 	sha1 = broker._move_sha
 	assert sha1 is not None
 
-	# second connect must be a no-op
 	await broker.connect()
 	assert broker._move_sha == sha1
 
 	await broker.close()
 
 
-@pytest.mark.anyio
 async def test_connect_sets_move_sha(redis_flushed: str):
-	"""connect() must populate _move_sha via script_load."""
 	broker = RedisBroker(
 		url=redis_flushed, group="g_sha", stream_prefix="sha:s:", zset_prefix="sha:z:"
 	)

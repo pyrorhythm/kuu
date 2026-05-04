@@ -147,7 +147,7 @@ class Settings(BaseModel):
 
 	def with_overrides(self, overrides: list[str]) -> Self:
 		"""
-		Return a copy of this config with `dotted.path=value` overrides applied.
+		Return a copy of this conn_config with `dotted.path=value` overrides applied.
 
 		Values are parsed as JSON when possible (so `true`, `42`, `"x"`,
 		`[1,2]` all work); otherwise they are kept as raw strings.
@@ -235,7 +235,7 @@ class Kuunfig(BaseModel):
 		path = cls._resolve(config)
 		data = tomllib.loads(path.read_text())
 		if path.name == "pyproject.toml":
-			data = data.get("tool", {}).get("kuu", {})
+			data = data.get("tool", {}).get("kuu")
 		return cls.model_validate(data)
 
 	@staticmethod
@@ -243,7 +243,7 @@ class Kuunfig(BaseModel):
 		if config is not None:
 			p = pathlib.Path(config)
 			if not p.exists():
-				raise FileNotFoundError(f"config file not found: {p}")
+				raise FileNotFoundError(f"conn_config file not found: {p}")
 			return p
 
 		for candidate in ("kuunfig.toml", "pyproject.toml"):
@@ -255,7 +255,7 @@ class Kuunfig(BaseModel):
 						continue
 				return p
 		raise FileNotFoundError(
-			"no kuu config found (looked for ./kuunfig.toml and [tool.kuu] in ./pyproject.toml)"
+			"no kuu conn_config found (looked for ./kuunfig.toml and [tool.kuu] in ./pyproject.toml)"
 		)
 
 	def resolve(self, name: str | None = None) -> Settings:

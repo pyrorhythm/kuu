@@ -11,19 +11,17 @@ from ._config import ClusterConfig, RedisConfig, SentinelConfig, StandaloneConfi
 class RedisTransport:
 	"""Manages a redis-py client lifecycle with cluster-aware key formatting.
 
-	Accepts any :class:`RedisConfig` variant or a pre-built client::
+	Accepts any :class:`RedisConfig` variant or a pre-built client.
 
-	    # Config-driven
-	    t = RedisTransport(StandaloneConfig(url="redis://localhost:6379/0"))
-	    t = RedisTransport(ClusterConfig(url="redis://node1:6379"))
-	    t = RedisTransport(SentinelConfig(
+	.. code-block::
+	    RedisTransport(StandaloneConfig(url="redis://localhost:6379/0"))
+	    RedisTransport(ClusterConfig(url="redis://node1:6379"))
+	    RedisTransport(SentinelConfig(
 	        hosts=(("s1", 26379), ("s2", 26379)),
 	        service_name="mymaster",
 	    ))
-
-	    # Pre-built client (config is ignored)
-	    t = RedisTransport(client=Redis.from_url("redis://localhost:6379/0"))
-	    t = RedisTransport(client=RedisCluster.from_url("redis://n1:6379"))
+	    RedisTransport(client=Redis.from_url("redis://localhost:6379/0"))
+	    RedisTransport(client=RedisCluster.from_url("redis://n1:6379"))
 
 	After :meth:`connect`, the underlying client is available as ``.r``.
 	"""

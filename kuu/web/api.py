@@ -105,8 +105,8 @@ class DashbordAPIMixin:
 		task_name = body.get("task")
 		if not task_name:
 			return Err("task required")
-		raw_args = body.get("args", [])
-		raw_kwargs = body.get("kwargs", {})
+		raw_args = body.get("args")
+		raw_kwargs = body.get("kwargs")
 		if not isinstance(raw_args, list) or not isinstance(raw_kwargs, dict):
 			return Err("args must be array, kwargs must be object")
 		task = self.app.registry.get(task_name)

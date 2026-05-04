@@ -15,9 +15,9 @@ def worker(
 	config: Annotated[
 		str | None,
 		Option(
-			"--config",
+			"--conn_config",
 			"-c",
-			help="path to config file (TOML). defaults to ./kuunfig.toml or [tool.kuu] in ./pyproject.toml",
+			help="path to conn_config file (TOML). defaults to ./kuunfig.toml or [tool.kuu] in ./pyproject.toml",
 		),
 	] = None,
 	preset: Annotated[
@@ -25,7 +25,7 @@ def worker(
 		Option(
 			"--preset",
 			"-p",
-			help="config preset, `default` if unspecified",
+			help="conn_config preset, `default` if unspecified",
 		),
 	] = None,
 	override: Annotated[
@@ -33,7 +33,7 @@ def worker(
 		Option(
 			"--override",
 			"-o",
-			help="override a config setting: --override dotted.path=value (repeatable)",
+			help="override a conn_config setting: --override dotted.path=value (repeatable)",
 		),
 	] = None,
 ):

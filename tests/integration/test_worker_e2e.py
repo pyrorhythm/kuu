@@ -64,8 +64,8 @@ async def _run_worker_until(app: Kuu, predicate, *, timeout: float = 10.0) -> No
 
 
 @pytest.mark.anyio
-async def test_success_result_is_stored_and_retrievable(make_app, redis_flushed: str):
-	app: Kuu = await make_app(
+async def test_success_result_is_stored_and_retrievable(make_redis_app, redis_flushed: str):
+	app: Kuu = await make_redis_app(
 		stream_prefix="e1:s:", zset_prefix="e1:z:", group="e1", results_prefix="e1:r:"
 	)
 
@@ -95,8 +95,8 @@ async def test_success_result_is_stored_and_retrievable(make_app, redis_flushed:
 
 
 @pytest.mark.anyio
-async def test_replay_skips_re_execution_for_same_idempotency_key(make_app):
-	app: Kuu = await make_app(
+async def test_replay_skips_re_execution_for_same_idempotency_key(make_redis_app):
+	app: Kuu = await make_redis_app(
 		stream_prefix="e2:s:", zset_prefix="e2:z:", group="e2", results_prefix="e2:r:"
 	)
 
@@ -138,8 +138,8 @@ async def test_replay_skips_re_execution_for_same_idempotency_key(make_app):
 
 
 @pytest.mark.anyio
-async def test_final_attempt_failure_stores_error(make_app, redis_flushed: str):
-	app: Kuu = await make_app(
+async def test_final_attempt_failure_stores_error(make_redis_app, redis_flushed: str):
+	app: Kuu = await make_redis_app(
 		stream_prefix="e3:s:", zset_prefix="e3:z:", group="e3", results_prefix="e3:r:"
 	)
 
@@ -175,8 +175,8 @@ async def test_final_attempt_failure_stores_error(make_app, redis_flushed: str):
 
 
 @pytest.mark.anyio
-async def test_store_errors_disabled_does_not_persist_failure(make_app, redis_flushed: str):
-	app: Kuu = await make_app(
+async def test_store_errors_disabled_does_not_persist_failure(make_redis_app, redis_flushed: str):
+	app: Kuu = await make_redis_app(
 		stream_prefix="e4:s:",
 		zset_prefix="e4:z:",
 		group="e4",
@@ -204,8 +204,8 @@ async def test_store_errors_disabled_does_not_persist_failure(make_app, redis_fl
 
 
 @pytest.mark.anyio
-async def test_replay_disabled_reruns_task_on_redelivery(make_app):
-	app: Kuu = await make_app(
+async def test_replay_disabled_reruns_task_on_redelivery(make_redis_app):
+	app: Kuu = await make_redis_app(
 		stream_prefix="e5:s:",
 		zset_prefix="e5:z:",
 		group="e5",
@@ -237,8 +237,8 @@ class Outcome(BaseModel):
 
 
 @pytest.mark.anyio
-async def test_marshal_types_round_trips_pydantic_model(make_app, redis_flushed: str):
-	app: Kuu = await make_app(
+async def test_marshal_types_round_trips_pydantic_model(make_redis_app, redis_flushed: str):
+	app: Kuu = await make_redis_app(
 		stream_prefix="e6:s:", zset_prefix="e6:z:", group="e6", results_prefix="e6:r:"
 	)
 
@@ -285,11 +285,11 @@ async def test_marshal_types_round_trips_pydantic_model(make_app, redis_flushed:
 
 
 @pytest.mark.anyio
-async def test_retry_then_success_stores_only_final_value(make_app, redis_flushed: str):
+async def test_retry_then_success_stores_only_final_value(make_redis_app, redis_flushed: str):
 	from kuu.exceptions import RetryErr
 	from kuu.middleware import RetryMiddleware
 
-	app: Kuu = await make_app(
+	app: Kuu = await make_redis_app(
 		stream_prefix="e7:s:",
 		zset_prefix="e7:z:",
 		group="e7",
@@ -322,8 +322,8 @@ async def test_retry_then_success_stores_only_final_value(make_app, redis_flushe
 
 
 @pytest.mark.anyio
-async def test_non_final_failure_does_not_store_error(make_app, redis_flushed: str):
-	app: Kuu = await make_app(
+async def test_non_final_failure_does_not_store_error(make_redis_app, redis_flushed: str):
+	app: Kuu = await make_redis_app(
 		stream_prefix="e8:s:", zset_prefix="e8:z:", group="e8", results_prefix="e8:r:"
 	)
 
@@ -354,8 +354,10 @@ async def test_non_final_failure_does_not_store_error(make_app, redis_flushed: s
 
 
 @pytest.mark.anyio
-async def test_unknown_task_failure_stores_error_on_final_attempt(make_app, redis_flushed: str):
-	app: Kuu = await make_app(
+async def test_unknown_task_failure_stores_error_on_final_attempt(
+	make_redis_app, redis_flushed: str
+):
+	app: Kuu = await make_redis_app(
 		stream_prefix="e9:s:", zset_prefix="e9:z:", group="e9", results_prefix="e9:r:"
 	)
 
@@ -403,9 +405,9 @@ async def test_unknown_task_failure_stores_error_on_final_attempt(make_app, redi
 
 
 @pytest.mark.anyio
-async def test_pydantic_model_kwarg_round_trips_through_redis(make_app, redis_flushed: str):
+async def test_pydantic_model_kwarg_round_trips_through_redis(make_redis_app, redis_flushed: str):
 	"""Dict that arrives over the wire should be coerced back to a BaseModel."""
-	app: Kuu = await make_app(
+	app: Kuu = await make_redis_app(
 		stream_prefix="e10:s:", zset_prefix="e10:z:", group="e10", results_prefix="e10:r:"
 	)
 
@@ -426,9 +428,9 @@ async def test_pydantic_model_kwarg_round_trips_through_redis(make_app, redis_fl
 
 
 @pytest.mark.anyio
-async def test_nested_pydantic_model_kwarg_round_trips(make_app, redis_flushed: str):
+async def test_nested_pydantic_model_kwarg_round_trips(make_redis_app, redis_flushed: str):
 	"""Deeply-nested BaseModel kwargs must be reconstructed with inner models intact."""
-	app: Kuu = await make_app(
+	app: Kuu = await make_redis_app(
 		stream_prefix="e11:s:", zset_prefix="e11:z:", group="e11", results_prefix="e11:r:"
 	)
 
@@ -453,9 +455,9 @@ async def test_nested_pydantic_model_kwarg_round_trips(make_app, redis_flushed: 
 
 
 @pytest.mark.anyio
-async def test_pydantic_model_positional_arg_round_trips(make_app, redis_flushed: str):
+async def test_pydantic_model_positional_arg_round_trips(make_redis_app, redis_flushed: str):
 	"""Positional BaseModel args also need coercion."""
-	app: Kuu = await make_app(
+	app: Kuu = await make_redis_app(
 		stream_prefix="e12:s:", zset_prefix="e12:z:", group="e12", results_prefix="e12:r:"
 	)
 
@@ -475,9 +477,9 @@ async def test_pydantic_model_positional_arg_round_trips(make_app, redis_flushed
 
 
 @pytest.mark.anyio
-async def test_mixed_args_and_models_round_trip(make_app, redis_flushed: str):
+async def test_mixed_args_and_models_round_trip(make_redis_app, redis_flushed: str):
 	"""Mix of primitive positional args and a model kwarg."""
-	app: Kuu = await make_app(
+	app: Kuu = await make_redis_app(
 		stream_prefix="e13:s:", zset_prefix="e13:z:", group="e13", results_prefix="e13:r:"
 	)
 
@@ -509,9 +511,9 @@ async def test_mixed_args_and_models_round_trip(make_app, redis_flushed: str):
 
 
 @pytest.mark.anyio
-async def test_optional_none_field_in_model_round_trips(make_app, redis_flushed: str):
+async def test_optional_none_field_in_model_round_trips(make_redis_app, redis_flushed: str):
 	"""Optional fields that are None when enqueued should remain None after coercion."""
-	app: Kuu = await make_app(
+	app: Kuu = await make_redis_app(
 		stream_prefix="e14:s:", zset_prefix="e14:z:", group="e14", results_prefix="e14:r:"
 	)
 
@@ -529,9 +531,9 @@ async def test_optional_none_field_in_model_round_trips(make_app, redis_flushed:
 
 
 @pytest.mark.anyio
-async def test_blocking_task_with_pydantic_model_coerces(make_app, redis_flushed: str):
+async def test_blocking_task_with_pydantic_model_coerces(make_redis_app, redis_flushed: str):
 	"""Blocking (sync) tasks must also get model coercion."""
-	app: Kuu = await make_app(
+	app: Kuu = await make_redis_app(
 		stream_prefix="e15:s:", zset_prefix="e15:z:", group="e15", results_prefix="e15:r:"
 	)
 
@@ -560,9 +562,9 @@ async def test_blocking_task_with_pydantic_model_coerces(make_app, redis_flushed
 
 
 @pytest.mark.anyio
-async def test_multiple_model_kwargs_all_coerced(make_app, redis_flushed: str):
+async def test_multiple_model_kwargs_all_coerced(make_redis_app, redis_flushed: str):
 	"""Two BaseModel kwargs in the same call must both be reconstructed."""
-	app: Kuu = await make_app(
+	app: Kuu = await make_redis_app(
 		stream_prefix="e16:s:", zset_prefix="e16:z:", group="e16", results_prefix="e16:r:"
 	)
 
@@ -587,9 +589,9 @@ async def test_multiple_model_kwargs_all_coerced(make_app, redis_flushed: str):
 
 
 @pytest.mark.anyio
-async def test_pydantic_kwarg_with_primitives_coexists(make_app, redis_flushed: str):
+async def test_pydantic_kwarg_with_primitives_coexists(make_redis_app, redis_flushed: str):
 	"""Primitive kwargs pass through untouched alongside model coercion."""
-	app: Kuu = await make_app(
+	app: Kuu = await make_redis_app(
 		stream_prefix="e17:s:", zset_prefix="e17:z:", group="e17", results_prefix="e17:r:"
 	)
 
@@ -615,9 +617,9 @@ async def test_pydantic_kwarg_with_primitives_coexists(make_app, redis_flushed: 
 
 
 @pytest.mark.anyio
-async def test_list_of_models_round_trips(make_app, redis_flushed: str):
+async def test_list_of_models_round_trips(make_redis_app, redis_flushed: str):
 	"""list[Model] kwargs get each element coerced from dict."""
-	app: Kuu = await make_app(
+	app: Kuu = await make_redis_app(
 		stream_prefix="e18:s:", zset_prefix="e18:z:", group="e18", results_prefix="e18:r:"
 	)
 
@@ -644,9 +646,9 @@ async def test_list_of_models_round_trips(make_app, redis_flushed: str):
 
 
 @pytest.mark.anyio
-async def test_dict_of_models_round_trips(make_app, redis_flushed: str):
+async def test_dict_of_models_round_trips(make_redis_app, redis_flushed: str):
 	"""dict[str, Model] kwargs get each value coerced from dict."""
-	app: Kuu = await make_app(
+	app: Kuu = await make_redis_app(
 		stream_prefix="e19:s:", zset_prefix="e19:z:", group="e19", results_prefix="e19:r:"
 	)
 
@@ -674,9 +676,8 @@ async def test_dict_of_models_round_trips(make_app, redis_flushed: str):
 
 
 @pytest.mark.anyio
-async def test_optional_model_none_round_trips(make_app, redis_flushed: str):
-	"""Model | None with None value stays None after coercion."""
-	app: Kuu = await make_app(
+async def test_optional_model_none_round_trips(make_redis_app, redis_flushed: str):
+	app: Kuu = await make_redis_app(
 		stream_prefix="e20:s:", zset_prefix="e20:z:", group="e20", results_prefix="e20:r:"
 	)
 
@@ -694,9 +695,8 @@ async def test_optional_model_none_round_trips(make_app, redis_flushed: str):
 
 
 @pytest.mark.anyio
-async def test_optional_model_present_round_trips(make_app, redis_flushed: str):
-	"""Model | None with a dict value gets coerced to model instance."""
-	app: Kuu = await make_app(
+async def test_optional_model_present_round_trips(make_redis_app, redis_flushed: str):
+	app: Kuu = await make_redis_app(
 		stream_prefix="e21:s:", zset_prefix="e21:z:", group="e21", results_prefix="e21:r:"
 	)
 
@@ -715,9 +715,8 @@ async def test_optional_model_present_round_trips(make_app, redis_flushed: str):
 
 
 @pytest.mark.anyio
-async def test_list_and_dict_models_together(make_app, redis_flushed: str):
-	"""list[Model] and dict[K, Model] in the same call."""
-	app: Kuu = await make_app(
+async def test_list_and_dict_models_together(make_redis_app, redis_flushed: str):
+	app: Kuu = await make_redis_app(
 		stream_prefix="e22:s:", zset_prefix="e22:z:", group="e22", results_prefix="e22:r:"
 	)
 
