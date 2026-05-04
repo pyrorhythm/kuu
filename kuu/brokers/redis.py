@@ -131,6 +131,7 @@ class RedisBroker(Broker):
 		)
 		await self.r.zadd(self._zset(msg.queue), {self.serializer.marshal(msg): score})
 
+	@_ensure_connected
 	async def _pump_scheduled(self, queues: list[str]) -> None:
 		if self._move_sha is None:
 			raise NotConnected("redis broker not connected")

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Any
+
 from pydantic import BaseModel
 
 from kuu.message import Payload
 from kuu.worker import _coerce_payload
+from kuu._types import _coerce
 
 
 class Address(BaseModel):
@@ -306,3 +310,193 @@ class TestMultipleGenerics:
 		result = _coerce_payload(_func_multi_generics, payload)
 		assert isinstance(result.kwargs["items"][0], Item)
 		assert isinstance(result.kwargs["by_sku"]["B2"], Item)
+
+
+# ── dataclass fixtures ─────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class DCAddress:
+	city: str
+	zip_code: str
+
+
+@dataclass(frozen=True)
+class DCUser:
+	name: str
+	address: DCAddress
+
+
+@dataclass
+class DCPoint:
+	x: float
+	y: float
+
+
+def _func_dc_user(u: DCUser) -> str:
+	return u.name
+
+
+def _func_dc_points(pts: list[DCPoint]) -> str:
+	return ",".join(f"{p.x},{p.y}" for p in pts)
+
+
+def _func_dc_optional(u: DCUser | None) -> str:
+	return u.name if u else "none"
+
+
+def _func_dc_dict(users: dict[str, DCUser]) -> str:
+	return ",".join(sorted(users.keys()))
+
+
+# ── primitives / deep nesting fixtures ──────────────────────────────────────
+
+
+def _func_int(x: int) -> int:
+	return x
+
+
+def _func_float(x: float) -> float:
+	return x
+
+
+def _func_str(x: str) -> str:
+	return x
+
+
+def _func_nested(data: dict[str, list[Item]]) -> str:
+	return "ok"
+
+
+def _func_tuple(t: tuple[int, str]) -> str:
+	return f"{t[0]}:{t[1]}"
+
+
+def _func_set_int(s: set[int]) -> str:
+	return "ok"
+
+
+def _func_no_ann(x) -> str:
+	return str(x)
+
+
+def _func_any_ann(x: Any) -> Any:
+	return x
+
+
+# ── dataclass tests ────────────────────────────────────────────────────────
+
+
+class TestDataclass:
+	def test_coerces_dict_to_dataclass(self):
+		payload = Payload(
+			kwargs={"u": {"name": "Alice", "address": {"city": "NYC", "zip_code": "10001"}}}
+		)
+		result = _coerce_payload(_func_dc_user, payload)
+		u = result.kwargs["u"]
+		assert isinstance(u, DCUser)
+		assert isinstance(u.address, DCAddress)
+		assert u.address.city == "NYC"
+
+	def test_coerces_list_of_dataclasses(self):
+		payload = Payload(kwargs={"pts": [{"x": 1.0, "y": 2.0}, {"x": 3.0, "y": 4.0}]})
+		result = _coerce_payload(_func_dc_points, payload)
+		pts = result.kwargs["pts"]
+		assert all(isinstance(p, DCPoint) for p in pts)
+		assert pts[0].x == 1.0
+
+	def test_optional_dataclass_none(self):
+		payload = Payload(kwargs={"u": None})
+		result = _coerce_payload(_func_dc_optional, payload)
+		assert result.kwargs["u"] is None
+
+	def test_optional_dataclass_present(self):
+		payload = Payload(
+			kwargs={"u": {"name": "Bob", "address": {"city": "LA", "zip_code": "90001"}}}
+		)
+		result = _coerce_payload(_func_dc_optional, payload)
+		assert isinstance(result.kwargs["u"], DCUser)
+
+	def test_dict_of_dataclasses(self):
+		payload = Payload(
+			kwargs={
+				"users": {
+					"a": {"name": "A", "address": {"city": "X", "zip_code": "1"}},
+				}
+			}
+		)
+		result = _coerce_payload(_func_dc_dict, payload)
+		u = result.kwargs["users"]["a"]
+		assert isinstance(u, DCUser)
+
+
+class TestPrimitives:
+	def test_int_passthrough(self):
+		payload = Payload(kwargs={"x": 42})
+		result = _coerce_payload(_func_int, payload)
+		assert result.kwargs["x"] == 42
+
+	def test_float_from_int(self):
+		assert _coerce(5, float) == 5.0
+		assert isinstance(_coerce(5, float), float)
+
+	def test_str_passthrough(self):
+		payload = Payload(kwargs={"x": "hello"})
+		result = _coerce_payload(_func_str, payload)
+		assert result.kwargs["x"] == "hello"
+
+
+class TestDeepNesting:
+	def test_dict_str_list_model(self):
+		payload = Payload(
+			kwargs={
+				"data": {
+					"group1": [{"sku": "A1", "qty": 1}],
+					"group2": [{"sku": "B2", "qty": 2}],
+				}
+			}
+		)
+		result = _coerce_payload(_func_nested, payload)
+		data = result.kwargs["data"]
+		assert isinstance(data["group1"][0], Item)
+		assert data["group1"][0].sku == "A1"
+
+	def test_tuple_annotation(self):
+		assert _coerce((1, "x"), tuple[int, str]) == (1, "x")
+
+	def test_set_annotation(self):
+		result = _coerce({1, 2, 3}, set[int])
+		assert result == {1, 2, 3}
+
+
+class TestNoAnnotation:
+	def test_no_annotation_passthrough(self):
+		payload = Payload(kwargs={"x": 42})
+		result = _coerce_payload(_func_no_ann, payload)
+		assert result.kwargs["x"] == 42
+
+	def test_any_annotation_passthrough(self):
+		payload = Payload(kwargs={"x": {"a": 1}})
+		result = _coerce_payload(_func_any_ann, payload)
+		assert result.kwargs["x"] == {"a": 1}
+
+	def test_runtime_deduction_dict(self):
+		"""Without annotation, dicts are recursively walked but not coerced to a type."""
+		assert _coerce({"a": 1, "b": [2, 3]}, None) == {"a": 1, "b": [2, 3]}
+
+
+class TestMixedPydanticDataclass:
+	def test_pydantic_and_primitive_mixed(self):
+		"""Function with both pydantic model and primitive annotations."""
+
+		def func(x: int, u: User) -> str:
+			return f"{x}:{u.name}"
+
+		payload = Payload(
+			args=(42,),
+			kwargs={"u": {"name": "Zed", "address": {"city": "SF", "zip_code": "94102"}}},
+		)
+		result = _coerce_payload(func, payload)
+		assert result.args == (42,)
+		assert isinstance(result.kwargs["u"], User)
+		assert result.kwargs["u"].name == "Zed"
