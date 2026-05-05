@@ -27,7 +27,10 @@ import anyio.to_thread
 from kuu.config import Kuunfig, Settings
 from kuu.observability import (
 	Bye,
+	Cmd,
+	CmdResponse,
 	Envelope,
+	Event,
 	Hello,
 	InMemoryRegistry,
 	MpQueueSink,
@@ -38,15 +41,25 @@ from kuu.observability import (
 if typing.TYPE_CHECKING:
 	from wsgiref.simple_server import WSGIServer
 
+	from kuu.web.dashboard import Dashboard
 
 log = logging.getLogger("kuu.control_plane")
 
 
+def _request_id_of(cmd: Cmd) -> str:
+	rid = getattr(cmd, "request_id", None)
+	if not rid:
+		raise ValueError("command missing request_id")
+	return rid
+
+
 def _run_supervisor_child(
-	config: Settings,
-	preset: str,
-	queue: "mp.Queue[Envelope]",
-	instance_id: str,
+		config: Settings,
+		preset: str,
+		queue: mp.Queue[Envelope],
+		instance_id: str,
+		cmd_in: mp.Queue[Cmd],
+		cmd_out: mp.Queue[CmdResponse],
 ) -> None:
 	"""child entrypoint: build a sink-driven supervisor and run it"""
 	import anyio as _anyio
@@ -55,11 +68,13 @@ def _run_supervisor_child(
 
 	sink = MpQueueSink(queue)
 	sup = PresetSupervisor(
-		config,
-		preset=preset,
-		events_sink=sink,
-		instance_id=instance_id,
-		manage_metrics=False,
+			config,
+			preset=preset,
+			events_sink=sink,
+			instance_id=instance_id,
+			manage_metrics=False,
+			cmd_in=cmd_in,
+			cmd_out=cmd_out,
 	)
 	_anyio.run(sup.start)
 
@@ -69,10 +84,16 @@ class ControlPlane:
 
 	kuunfig: Kuunfig
 
-	_events_queue: "mp.Queue[Envelope]"
+	_events_queue: mp.Queue[Envelope]
 	_source: MpQueueSource
 	_registry: InMemoryRegistry
 	_procs: list[tuple[str, mp.Process]]
+	_dashboard: Dashboard | None
+
+	_cmd_responses: mp.Queue[CmdResponse]
+	_cmd_in_per_instance: dict[str, mp.Queue[Cmd]]
+	_cmd_pending: dict[str, anyio.Event]
+	_cmd_results: dict[str, CmdResponse]
 
 	_stop_event: anyio.Event
 	_metrics_dir: str | None = None
@@ -84,21 +105,30 @@ class ControlPlane:
 		self._source = MpQueueSource(self._events_queue)
 		self._registry = InMemoryRegistry()
 		self._procs = []
+		self._dashboard = None
+		self._cmd_responses = mp.Queue()
+		self._cmd_in_per_instance = {}
+		self._cmd_pending = {}
+		self._cmd_results = {}
 		self._stop_event = anyio.Event()
 
 	async def start(self) -> None:
 		instances = self._instances()
 		log.info(
-			"starting control plane presets=%s",
-			[name for name, _ in instances],
+				"starting control plane presets=%s",
+				[name for name, _ in instances],
 		)
 		try:
 			await self._start_metrics_server(instances)
+			self._build_dashboard()
 			self._spawn_all(instances)
 			async with anyio.create_task_group() as tg:
 				tg.start_soon(self._signal_listener)
 				tg.start_soon(self._ingest_loop)
+				tg.start_soon(self._cmd_response_loop)
 				tg.start_soon(self._roster_log_loop)
+				if self._dashboard is not None:
+					tg.start_soon(self._serve_dashboard)
 				await self._stop_event.wait()
 				tg.cancel_scope.cancel()
 		except Exception:
@@ -122,11 +152,13 @@ class ControlPlane:
 	def _spawn_all(self, instances: list[tuple[str, Settings]]) -> None:
 		for preset, cfg in instances:
 			instance_id = str(uuid.uuid4())
+			cmd_in: mp.Queue[Cmd] = mp.Queue()
+			self._cmd_in_per_instance[instance_id] = cmd_in
 			p = mp.Process(
-				target=_run_supervisor_child,
-				args=(cfg, preset, self._events_queue, instance_id),
-				name=f"kuu-supervisor-{preset}",
-				daemon=False,
+					target=_run_supervisor_child,
+					args=(cfg, preset, self._events_queue, instance_id, cmd_in, self._cmd_responses),
+					name=f"kuu-supervisor-{preset}",
+					daemon=False,
 			)
 			p.start()
 			self._procs.append((preset, p))
@@ -146,12 +178,14 @@ class ControlPlane:
 			self._registry.ingest(env)
 			match env.body:
 				case Hello() as h:
-					log.info(
-						"hello instance=%s preset=%s broker=%s/%s pid=%d",
-						env.instance, h.preset, h.broker.type, h.broker.key[:12], h.pid,
-					)
+					log.info("hello instance=%s preset=%s broker=%s/%s pid=%d",
+					         env.instance, h.preset, h.broker.type,
+					         h.broker.key[:12], h.pid)
 				case Bye() as b:
 					log.info("bye   instance=%s reason=%s", env.instance, b.reason)
+				case Event() as e:
+					if self._dashboard is not None:
+						self._dashboard.stats.ingest(e.kind, e.task, env.ts)
 				case State():
 					pass
 				case _:
@@ -163,12 +197,12 @@ class ControlPlane:
 			roster = self._registry.all()
 			if roster:
 				log.debug(
-					"roster: %s",
-					", ".join(
-						f"{e.hello.preset}/{e.instance_id[:8]}"
-						f"({len(e.last_state.workers) if e.last_state else 0}w)"
-						for e in roster
-					),
+						"roster: %s",
+						", ".join(
+								f"{e.hello.preset}/{e.instance_id[:8]}"
+								f"({len(e.last_state.workers) if e.last_state else 0}w)"
+								for e in roster
+						),
 				)
 			with anyio.move_on_after(2.0):
 				await self._stop_event.wait()
@@ -198,6 +232,116 @@ class ControlPlane:
 		await anyio.to_thread.run_sync(_terminate_and_wait)
 		self._procs = []
 
+	# === command rpc
+
+	async def send_command(self, instance_id: str, cmd: Cmd, timeout: float = 10.0) -> CmdResponse:
+		"""dispatch a command to ``instance_id`` and await its response
+
+		raises ``KeyError`` if the instance is unknown, ``TimeoutError`` if
+		no response arrives within ``timeout`` seconds
+		"""
+		cmd_in = self._cmd_in_per_instance.get(instance_id)
+		if cmd_in is None:
+			raise KeyError(f"unknown instance {instance_id!r}")
+		rid = _request_id_of(cmd)
+		event = anyio.Event()
+		self._cmd_pending[rid] = event
+		try:
+			cmd_in.put_nowait(cmd)
+		except Exception as exc:
+			self._cmd_pending.pop(rid, None)
+			return CmdResponse(request_id=rid, ok=False, error=f"send failed: {exc}")
+		try:
+			with anyio.fail_after(timeout):
+				await event.wait()
+		except TimeoutError:
+			self._cmd_pending.pop(rid, None)
+			return CmdResponse(request_id=rid, ok=False, error="timeout")
+		return self._cmd_results.pop(rid)
+
+	async def _cmd_response_loop(self) -> None:
+		"""drain CmdResponses; wake waiters by request_id"""
+		from queue import Empty as _QueueEmpty
+
+		while not self._stop_event.is_set():
+			try:
+				while True:
+					resp = self._cmd_responses.get_nowait()
+					ev = self._cmd_pending.pop(resp.request_id, None)
+					if ev is not None:
+						self._cmd_results[resp.request_id] = resp
+						ev.set()
+			except _QueueEmpty:
+				pass
+			await anyio.sleep(0.05)
+
+	# === dashboard
+
+	def _build_dashboard(self) -> None:
+		"""build the aggregating dashboard if enabled in default settings
+
+		uses ``kuunfig.default.app`` for registry / broker introspection;
+		stats are fed exclusively from the envelope stream
+		(``connect_app_events=False``); workers / scheduler fragments
+		read from the ``InstanceRegistry``
+		"""
+		dash_cfg = self.kuunfig.default.dashboard
+		if not dash_cfg.enable:
+			return
+		try:
+			from kuu._import import import_object, import_tasks
+			from kuu.web.dashboard import Dashboard
+		except ImportError:
+			log.exception("dashboard dependencies missing; install kuu[dashboard]")
+			return
+
+		try:
+			app = import_object(self.kuunfig.default.app)
+			import_tasks(self.kuunfig.default.task_modules, pattern=(), fs_discover=False)
+		except Exception:
+			log.exception("failed to import app for dashboard")
+			return
+
+		self._dashboard = Dashboard(app=app, registry=self._registry, control=self)
+
+	async def _serve_dashboard(self) -> None:
+		dash = self._dashboard
+		if dash is None:
+			return
+		import uvicorn
+
+		dash_cfg = self.kuunfig.default.dashboard
+		asgi_app = dash.build_app()
+		if dash_cfg.path and dash_cfg.path != "/":
+			from starlette.applications import Starlette
+			from starlette.routing import Mount
+
+			asgi_app = Starlette(routes=[Mount(dash_cfg.path, app=asgi_app)])
+
+		cfg = uvicorn.Config(
+				asgi_app,
+				host=dash_cfg.host,
+				port=dash_cfg.port,
+				log_level="warning",
+		)
+		server = uvicorn.Server(cfg)
+		log.info(
+				"dashboard serving on http://%s:%d%s",
+				dash_cfg.host,
+				dash_cfg.port,
+				dash_cfg.path,
+		)
+		try:
+			async with anyio.create_task_group() as tg:
+				tg.start_soon(server.serve)
+				await self._stop_event.wait()
+				tg.cancel_scope.cancel()
+		finally:
+			with anyio.move_on_after(delay=5.0):
+				await server.shutdown()
+			if server.started:
+				server.force_exit = True
+
 	# === prometheus
 
 	async def _start_metrics_server(self, instances: list[tuple[str, Settings]]) -> None:
@@ -207,8 +351,8 @@ class ControlPlane:
 		inherit ``PROMETHEUS_MULTIPROC_DIR`` from the parent env
 		"""
 		metrics_cfg = next(
-			(cfg.metrics for _, cfg in instances if cfg.metrics.enable),
-			None,
+				(cfg.metrics for _, cfg in instances if cfg.metrics.enable),
+				None,
 		)
 		if metrics_cfg is None:
 			return
@@ -218,13 +362,15 @@ class ControlPlane:
 		self._metrics_dir = await anyio.mkdtemp(prefix="kuu-prom-")
 		os.environ["PROMETHEUS_MULTIPROC_DIR"] = self._metrics_dir
 		self._metrics_server, _ = serve(
-			host=metrics_cfg.host,
-			port=metrics_cfg.port,
-			multiprocess_dir=self._metrics_dir,
+				host=metrics_cfg.host,
+				port=metrics_cfg.port,
+				multiprocess_dir=self._metrics_dir,
 		)
 		log.info(
-			"prometheus aggregator on %s:%d (dir=%s)",
-			metrics_cfg.host, metrics_cfg.port, self._metrics_dir,
+				"prometheus aggregator on %s:%d (dir=%s)",
+				metrics_cfg.host,
+				metrics_cfg.port,
+				self._metrics_dir,
 		)
 
 	def _stop_metrics_server(self) -> None:

@@ -61,3 +61,11 @@ class Broker[Receipt](Protocol):
 
 		Raises `InvalidReceiptType` when receipts cross brokers.
 		"""
+
+	async def queue_depth(self, queue: str) -> int | None:
+		"""Best-effort count of messages waiting on `queue`.
+
+		Returns ``None`` when the broker cannot report depth cheaply.
+		Implementations should not block; expensive probes belong elsewhere.
+		"""
+		return None

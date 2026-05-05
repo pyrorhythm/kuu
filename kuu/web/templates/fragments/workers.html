@@ -3,6 +3,7 @@
   <thead>
     <tr>
       <th>pid</th>
+      {% if processes[0].preset is not none %}<th>preset</th>{% endif %}
       <th>status</th>
     </tr>
   </thead>
@@ -10,8 +11,11 @@
     {% for p in processes %}
     <tr>
       <td class="mono-cell">{{ p.pid }}</td>
+      {% if p.preset is not none %}
+      <td class="mono-cell dim">{{ p.preset }}</td>
+      {% endif %}
       <td>
-        {% if p.is_alive() %}
+        {% if p.alive %}
         <span class="chip alive"><span class="dot"></span>alive</span>
         {% else %}
         <span class="chip dead"><span class="dot"></span>dead</span>

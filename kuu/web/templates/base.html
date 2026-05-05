@@ -185,12 +185,14 @@
 				} catch (_) { showToast('request failed', false); }
 			});
 
-			window.kuuTriggerJob = async function (jobId) {
+			window.kuuTriggerJob = async function (jobId, instance) {
 				try {
+					const body = { job_id: jobId };
+					if (instance) body.instance = instance;
 					const r = await fetch('api/trigger-job', {
 						method: 'POST',
 						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ job_id: jobId }),
+						body: JSON.stringify(body),
 					});
 					const d = await r.json().catch(() => ({}));
 					if (r.ok) {
@@ -200,12 +202,14 @@
 				} catch (_) { showToast('request failed', false); }
 			};
 
-			window.kuuRemoveJob = async function (jobId) {
+			window.kuuRemoveJob = async function (jobId, instance) {
 				try {
+					const body = { job_id: jobId };
+					if (instance) body.instance = instance;
 					const r = await fetch('api/remove-job', {
 						method: 'POST',
 						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ job_id: jobId }),
+						body: JSON.stringify(body),
 					});
 					const d = await r.json().catch(() => ({}));
 					if (r.ok) {

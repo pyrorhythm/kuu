@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import queue as _queue
+import queue
 from logging import getLogger
 from typing import TYPE_CHECKING
 
@@ -82,15 +82,15 @@ class DashboardRunner:
 			return None
 
 	async def _drain_events(self, stats: StatsCollector, stop_event: anyio.Event) -> None:
-		"""Read (event, task, ts, pid) tuples from the worker pool queue and feed StatsCollector."""
+		"""read (event, task, queue, ts, pid) tuples and feed StatsCollector"""
 		q = self._worker_events_queue()
 		if q is None:
 			return
 		while not stop_event.is_set():
 			try:
 				while True:
-					event, task, ts, _pid = q.get_nowait()
+					event, task, _queue, ts, _pid = q.get_nowait()
 					stats.ingest(event, task, ts)
-			except _queue.Empty:
+			except queue.Empty:
 				pass
 			await anyio.sleep(1.0)

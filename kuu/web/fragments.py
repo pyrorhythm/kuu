@@ -48,15 +48,49 @@ class DashboardFragmentsMixin:
 		tasks = [self.app.registry.get(n) for n in names]
 		return HTMLResponse(self._render("fragments/tasks.html", tasks=tasks))
 
-	async def _frag_scheduler(self, _: Request) -> HTMLResponse:
-		jobs = self.scheduler.jobs if self.scheduler else []
-		return HTMLResponse(self._render("fragments/scheduler.html", jobs=jobs))
-
 	async def _frag_workers(self, _: Request) -> HTMLResponse:
-		processes = (
-			self.orchestrator._wp._processes if self.orchestrator and self.orchestrator._wp else []
-		)
-		return HTMLResponse(self._render("fragments/workers.html", processes=processes))
+		rows = self._workers_rows()
+		return HTMLResponse(self._render("fragments/workers.html", processes=rows))
+
+	def _workers_rows(self) -> list[dict]:
+		"""normalize workers list across leaf (orchestrator) and control-plane (registry) modes"""
+		if self.registry is not None:
+			rows: list[dict] = []
+			for entry in self.registry.all():
+				preset = entry.hello.preset
+				if entry.last_state is None:
+					continue
+				for w in entry.last_state.workers:
+					rows.append({
+						"pid": w.pid,
+						"alive": w.alive,
+						"preset": preset,
+						"instance": entry.instance_id[:8],
+					})
+			return rows
+		if self.orchestrator and self.orchestrator._wp:
+			return [
+				{"pid": p.pid, "alive": p.is_alive(), "preset": None, "instance": None}
+				for p in self.orchestrator._wp._processes
+			]
+		return []
+
+	async def _frag_scheduler(self, _: Request) -> HTMLResponse:
+		if self.registry is not None:
+			jobs: list = []
+			for entry in self.registry.all():
+				if entry.last_state is None:
+					continue
+				for j in entry.last_state.jobs:
+					jobs.append({
+						"id": j.id,
+						"task": j.task,
+						"next_run": j.next_run,
+						"instance": entry.instance_id,
+					})
+			return HTMLResponse(self._render("fragments/scheduler.html", jobs=jobs, aggregated=True))
+		jobs = self.scheduler.jobs if self.scheduler else []
+		return HTMLResponse(self._render("fragments/scheduler.html", jobs=jobs, aggregated=False))
 
 	async def _broker_stats(self) -> dict:
 		broker = self.app.broker

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import multiprocessing as mp
 import os
 import shutil
 import signal
@@ -9,6 +10,7 @@ import threading
 import time
 import typing
 import uuid
+from collections import Counter
 from importlib.metadata import version as _pkg_version
 from queue import Empty as _QueueEmpty
 
@@ -21,12 +23,19 @@ from kuu.observability import (
 	BrokerInfo,
 	Bye,
 	ByeReason,
+	Cmd,
+	CmdResponse,
+	EnqueueCmd,
 	Envelope,
 	Event,
 	EventKind,
 	EventsSink,
 	Hello,
+	JobSnapshot,
+	QueueSnapshot,
+	RemoveJobCmd,
 	State,
+	TriggerJobCmd,
 	WorkerSnapshot,
 	broker_key,
 )
@@ -80,6 +89,8 @@ class PresetSupervisor:
 		events_sink: EventsSink | None = None,
 		instance_id: str | None = None,
 		manage_metrics: bool = True,
+		cmd_in: "mp.Queue[Cmd] | None" = None,
+		cmd_out: "mp.Queue[CmdResponse] | None" = None,
 	) -> None:
 		self.config = config
 		self.preset = preset
@@ -92,6 +103,10 @@ class PresetSupervisor:
 		self._stop_event = anyio.Event()
 		self._started_at = 0.0
 		self._manage_metrics = manage_metrics
+		self._app: typing.Any = None
+		self._inflight: Counter[str] = Counter()
+		self._cmd_in = cmd_in
+		self._cmd_out = cmd_out
 
 	async def _signal_listener(self) -> None:
 		if threading.current_thread() is not threading.main_thread():
@@ -132,6 +147,8 @@ class PresetSupervisor:
 				if self._events_sink is not None:
 					tg.start_soon(self._forward_worker_events)
 					tg.start_soon(self._emit_state_loop)
+				if self._cmd_in is not None and self._cmd_out is not None:
+					tg.start_soon(self._command_loop)
 				await self._stop_event.wait()
 				tg.cancel_scope.cancel()
 		except Exception:
@@ -164,23 +181,30 @@ class PresetSupervisor:
 
 	async def _emit_state_loop(self) -> None:
 		while not self._stop_event.is_set():
-			self._emit(self._build_state())
+			state = await self._build_state_async()
+			self._emit(state)
 			with anyio.move_on_after(STATE_INTERVAL):
 				await self._stop_event.wait()
 
 	async def _forward_worker_events(self) -> None:
-		"""drain worker mp.Queue tuples; convert to Event envelopes and forward"""
+		"""drain worker mp.Queue tuples; track in_flight; emit Event envelopes for finishing kinds"""
 		q = self._wp.events_queue
 		while not self._stop_event.is_set():
 			try:
 				while True:
-					event, task, ts, pid = q.get_nowait()
-					self._emit_event(event, task, pid, ts)
+					event, task, queue, ts, pid = q.get_nowait()
+					if event == "started":
+						self._inflight[queue] += 1
+						continue
+					if event in ("succeeded", "failed", "retried", "dead"):
+						if self._inflight[queue] > 0:
+							self._inflight[queue] -= 1
+					self._emit_event(event, task, queue, pid, ts)
 			except _QueueEmpty:
 				pass
 			await anyio.sleep(0.1)
 
-	def _emit_event(self, kind: str, task: str, worker_pid: int, ts: float) -> None:
+	def _emit_event(self, kind: str, task: str, queue: str, worker_pid: int, ts: float) -> None:
 		sink = self._events_sink
 		if sink is None:
 			return
@@ -193,13 +217,87 @@ class PresetSupervisor:
 					body=Event(
 						kind=typing.cast(EventKind, kind),
 						task=task,
-						queue="",  # not currently propagated by the worker forwarder
+						queue=queue,
 						worker_pid=worker_pid,
 					),
 				)
 			)
 		except Exception:
 			log.exception("events sink emit failed (event)")
+
+	# === command rpc
+
+	async def _command_loop(self) -> None:
+		"""drain inbound commands, dispatch, push responses to the shared queue"""
+		assert self._cmd_in is not None and self._cmd_out is not None
+		while not self._stop_event.is_set():
+			cmd: Cmd | None = None
+			try:
+				cmd = self._cmd_in.get_nowait()
+			except _QueueEmpty:
+				await anyio.sleep(0.05)
+				continue
+			response = await self._dispatch_command(cmd)
+			try:
+				self._cmd_out.put_nowait(response)
+			except Exception:
+				log.exception("cmd_out put failed")
+
+	async def _dispatch_command(self, cmd: Cmd) -> CmdResponse:
+		match cmd:
+			case EnqueueCmd(request_id=rid, task=task, args=args, kwargs=kwargs):
+				return await self._handle_enqueue(rid, task, args, kwargs)
+			case TriggerJobCmd(request_id=rid, job_id=job_id):
+				return await self._handle_trigger_job(rid, job_id)
+			case RemoveJobCmd(request_id=rid, job_id=job_id):
+				return self._handle_remove_job(rid, job_id)
+			case _:
+				return CmdResponse(
+					request_id="?", ok=False, error=f"unknown command: {type(cmd).__name__}"
+				)
+
+	async def _handle_enqueue(self, rid: str, task: str, args: list, kwargs: dict) -> CmdResponse:
+		from kuu.message import Payload
+
+		app = self._ensure_app()
+		if app is None:
+			return CmdResponse(request_id=rid, ok=False, error="app not loaded")
+		try:
+			await app.broker.connect()
+			await app.enqueue_by_name(task, Payload(args=tuple(args), kwargs=kwargs))
+			return CmdResponse(request_id=rid, ok=True)
+		except Exception as exc:
+			return CmdResponse(request_id=rid, ok=False, error=str(exc))
+
+	async def _handle_trigger_job(self, rid: str, job_id: str) -> CmdResponse:
+		app = self._ensure_app()
+		if app is None:
+			return CmdResponse(request_id=rid, ok=False, error="app not loaded")
+		job = next((j for j in app.schedule.jobs if j.id == job_id), None)
+		if job is None:
+			return CmdResponse(request_id=rid, ok=False, error="job not found")
+		try:
+			await app.broker.connect()
+			await app.enqueue_by_name(
+				job.task_name,
+				job.args,
+				queue=job.queue,
+				headers=job.headers,
+				max_attempts=job.max_attempts,
+			)
+			return CmdResponse(request_id=rid, ok=True)
+		except Exception as exc:
+			return CmdResponse(request_id=rid, ok=False, error=str(exc))
+
+	def _handle_remove_job(self, rid: str, job_id: str) -> CmdResponse:
+		app = self._ensure_app()
+		if app is None:
+			return CmdResponse(request_id=rid, ok=False, error="app not loaded")
+		before = len(app.schedule.jobs)
+		app.schedule.jobs = [j for j in app.schedule.jobs if j.id != job_id]
+		if len(app.schedule.jobs) == before:
+			return CmdResponse(request_id=rid, ok=False, error="job not found")
+		return CmdResponse(request_id=rid, ok=True)
 
 	# === snapshot builders
 
@@ -215,23 +313,83 @@ class PresetSupervisor:
 			processes=self.config.processes,
 		)
 
-	def _build_broker_info(self) -> BrokerInfo:
+	def _ensure_app(self) -> typing.Any:
+		"""lazy-load and cache the app for introspection (broker, scheduler.jobs)"""
+		if self._app is not None:
+			return self._app
 		try:
-			from kuu._import import import_object
+			from kuu._import import import_object, import_tasks
 
-			app = import_object(self.config.app)
+			self._app = import_object(self.config.app)
+			import_tasks(self.config.task_modules, pattern=(), fs_discover=False)
+		except Exception:
+			log.exception("could not import app")
+		return self._app
+
+	def _build_broker_info(self) -> BrokerInfo:
+		app = self._ensure_app()
+		if app is None:
+			return BrokerInfo(type="unknown", key="")
+		try:
 			broker = app.broker
 			return BrokerInfo(type=type(broker).__name__, key=broker_key(broker))
 		except Exception:
 			log.exception("could not introspect broker for hello")
 			return BrokerInfo(type="unknown", key="")
 
-	def _build_state(self) -> State:
+	async def _build_state_async(self) -> State:
 		workers = [
 			WorkerSnapshot(pid=p.pid or -1, alive=p.is_alive(), current_task=None)
 			for p in self._wp._processes
 		]
-		return State(workers=workers, jobs=[], queues={})
+		jobs = self._build_jobs()
+		queues = await self._build_queues()
+		return State(workers=workers, jobs=jobs, queues=queues)
+
+	async def _build_queues(self) -> dict[str, QueueSnapshot]:
+		"""one snapshot per known queue: tracked in_flight + best-effort broker depth"""
+		known_queues = set(self._inflight.keys())
+		app = self._ensure_app()
+		if app is not None:
+			try:
+				known_queues |= set(app.registry.queues() or [app.default_queue])
+			except Exception:
+				pass
+
+		out: dict[str, QueueSnapshot] = {}
+		for q in known_queues:
+			depth = await self._probe_depth(q)
+			out[q] = QueueSnapshot(in_flight=self._inflight.get(q, 0), depth=depth)
+		return out
+
+	async def _probe_depth(self, queue: str) -> int | None:
+		app = self._app
+		if app is None:
+			return None
+		broker = app.broker
+		probe = getattr(broker, "queue_depth", None)
+		if probe is None:
+			return None
+		try:
+			return await probe(queue)
+		except Exception:
+			return None
+
+	def _build_jobs(self) -> list[JobSnapshot]:
+		"""snapshot of scheduler jobs; empty if scheduler disabled or app unavailable"""
+		if not self.config.scheduler.enable:
+			return []
+		app = self._ensure_app()
+		if app is None:
+			return []
+		try:
+			return [
+				JobSnapshot(id=j.id, task=j.task_name, next_run=j.next_run.timestamp())
+				for j in app.schedule.jobs
+			]
+		except Exception:
+			log.exception("could not snapshot scheduler jobs")
+			return []
 
 	# === prometheus
 

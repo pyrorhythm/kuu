@@ -1,5 +1,6 @@
 import inspect
 import typing
+import uuid
 
 import orjson
 from starlette.requests import Request
@@ -7,15 +8,19 @@ from starlette.responses import JSONResponse
 
 from kuu.app import Kuu
 from kuu.message import Payload
+from kuu.observability import EnqueueCmd, RemoveJobCmd, TriggerJobCmd
 from kuu.orchestrator import PresetSupervisor
 from kuu.scheduler import Scheduler
 from kuu.web.stats import StatsCollector
+
+if typing.TYPE_CHECKING:
+	from kuu.orchestrator._control import ControlPlane
 
 _SIMPLE_TYPES = (bool, int, float, str)
 
 
 def _sig_params(fn: typing.Any) -> tuple[list[dict], bool]:
-	"""Returns (params_list, has_varargs) for a callable."""
+	"""returns (params_list, has_varargs) for a callable"""
 	sig = inspect.signature(fn)
 	try:
 		hints = typing.get_type_hints(fn)
@@ -82,6 +87,7 @@ class DashbordAPIMixin:
 	app: Kuu
 	scheduler: Scheduler | None = None
 	orchestrator: PresetSupervisor | None = None
+	control: "ControlPlane | None" = None
 	stats: StatsCollector
 
 	async def _api_activity(self, request: Request) -> JSONResponse:
@@ -115,50 +121,87 @@ class DashbordAPIMixin:
 		err = _validate_payload(task.original_func, raw_args, raw_kwargs)
 		if err:
 			return Err(err, 422)
+
+		instance = body.get("instance")
+		if self.control is not None and instance:
+			cmd = EnqueueCmd(
+					request_id=uuid.uuid4().hex,
+					task=task_name,
+					args=raw_args,
+					kwargs=raw_kwargs,
+			)
+			return await _route(self.control, instance, cmd)
+
 		try:
 			await self.app.enqueue_by_name(
-				task_name, Payload(args=tuple(raw_args), kwargs=raw_kwargs)
+					task_name, Payload(args=tuple(raw_args), kwargs=raw_kwargs)
 			)
 			return Ok()
 		except Exception as exc:
 			return Err(str(exc))
 
 	async def _api_trigger_job(self, request: Request) -> JSONResponse:
-		if not self.scheduler:
-			return Err("no scheduler")
 		try:
 			body = await request.json()
 		except Exception:
 			return Err("invalid json")
 		job_id = body.get("job_id")
+		if not job_id:
+			return Err("job_id required")
+
+		instance = body.get("instance")
+		if self.control is not None and instance:
+			cmd = TriggerJobCmd(request_id=uuid.uuid4().hex, job_id=job_id)
+			return await _route(self.control, instance, cmd)
+
+		if not self.scheduler:
+			return Err("no scheduler")
 		job = next((j for j in self.scheduler.jobs if j.id == job_id), None)
 		if not job:
 			return Err("job not found", 404)
 		try:
 			await self.app.enqueue_by_name(
-				job.task_name,
-				job.args,
-				queue=job.queue,
-				headers=job.headers,
-				max_attempts=job.max_attempts,
+					job.task_name,
+					job.args,
+					queue=job.queue,
+					headers=job.headers,
+					max_attempts=job.max_attempts,
 			)
 			return Ok()
 		except Exception as exc:
 			return Err(str(exc))
 
 	async def _api_remove_job(self, request: Request) -> JSONResponse:
-		if not self.scheduler:
-			return Err("no scheduler")
 		try:
 			body = await request.json()
 		except Exception:
 			return Err("invalid json")
 		job_id = body.get("job_id")
+		if not job_id:
+			return Err("job_id required")
+
+		instance = body.get("instance")
+		if self.control is not None and instance:
+			cmd = RemoveJobCmd(request_id=uuid.uuid4().hex, job_id=job_id)
+			return await _route(self.control, instance, cmd)
+
+		if not self.scheduler:
+			return Err("no scheduler")
 		before = len(self.scheduler.jobs)
 		self.scheduler.jobs = [j for j in self.scheduler.jobs if j.id != job_id]
 		if len(self.scheduler.jobs) == before:
 			return Err("job not found", 404)
 		return Ok()
+
+
+async def _route(control: "ControlPlane", instance: str, cmd: typing.Any) -> JSONResponse:
+	try:
+		resp = await control.send_command(instance, cmd)
+	except KeyError:
+		return Err("unknown instance", 404)
+	if resp.ok:
+		return Ok()
+	return Err(resp.error or "command failed")
 
 
 class Ok(JSONResponse):

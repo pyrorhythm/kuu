@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Annotated
 
 from typer import Option, Typer
@@ -12,7 +13,8 @@ app = Typer()
 	help=(
 		"launch kuu. without --preset, starts the control plane and forks "
 		"one supervisor per preset; with --preset, runs a single leaf "
-		"supervisor as before"
+		"supervisor (legacy embedded dashboard, or remote uplink if "
+		"--uplink/$KUU_DASHBOARD_URL is set)"
 	),
 )
 def worker(
@@ -29,7 +31,7 @@ def worker(
 		Option(
 			"--preset",
 			"-p",
-			help="run only this preset as a single leaf supervisor (legacy mode)",
+			help="run only this preset as a single leaf supervisor",
 		),
 	] = None,
 	override: Annotated[
@@ -40,6 +42,13 @@ def worker(
 			help="override a conn_config setting: --override dotted.path=value (repeatable)",
 		),
 	] = None,
+	uplink: Annotated[
+		str | None,
+		Option(
+			"--uplink",
+			help="ws url of a remote dashboard collector; falls back to $KUU_DASHBOARD_URL",
+		),
+	] = None,
 ):
 	import anyio
 
@@ -48,12 +57,11 @@ def worker(
 	kuucfg = Kuunfig.load(config)
 
 	if preset is not None:
-		from kuu.orchestrator.main import PresetSupervisor
-
 		cfg = kuucfg.resolve(preset)
 		if override:
 			cfg = cfg.with_overrides(override)
-		anyio.run(PresetSupervisor(cfg, preset=preset).start)
+		uplink_url = uplink or os.environ.get("KUU_DASHBOARD_URL")
+		anyio.run(_run_leaf, cfg, preset, uplink_url)
 		return
 
 	if override:
@@ -62,6 +70,24 @@ def worker(
 	from kuu.orchestrator import ControlPlane
 
 	anyio.run(ControlPlane(kuucfg).start)
+
+
+async def _run_leaf(cfg, preset: str, uplink_url: str | None) -> None:
+	from kuu.orchestrator.main import PresetSupervisor
+
+	if not uplink_url:
+		await PresetSupervisor(cfg, preset=preset).start()
+		return
+
+	import anyio as _anyio
+
+	from kuu.observability import WsUplink
+
+	uplink = WsUplink(uplink_url)
+	sup = PresetSupervisor(cfg, preset=preset, events_sink=uplink.sink)
+	async with _anyio.create_task_group() as tg:
+		tg.start_soon(uplink.run, sup._stop_event)
+		tg.start_soon(sup.start)
 
 
 def _apply_overrides(kuucfg, overrides):

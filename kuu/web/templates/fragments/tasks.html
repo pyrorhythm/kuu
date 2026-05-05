@@ -17,7 +17,7 @@
 			<td>{{ t.max_attempts }}</td>
 			<td class="dim">{{ "%.1fs"|format(t.timeout) if t.timeout else "—" }}</td>
 			<td class="action-cell">
-				<button class="btn" onclick="kuuRunTask({{ t.task_name }})">run</button>
+				<button class="btn" onclick="kuuRunTask({{ t.task_name|tojson }})">run</button>
 			</td>
 		</tr>
 		{% endfor %}

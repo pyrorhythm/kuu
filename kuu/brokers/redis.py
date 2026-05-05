@@ -110,6 +110,16 @@ class RedisBroker(Broker[RedisReceipt]):
 			await self._redis.close()
 		self._move_sha = None
 
+	async def queue_depth(self, queue: str) -> int | None:
+		if self._redis.r is None:
+			return None
+		try:
+			stream = await self.r.xlen(self._stream(queue))
+			scheduled = await self.r.zcard(self._zset(queue))
+			return int(stream) + int(scheduled)
+		except Exception:
+			return None
+
 	@_ensure_connected
 	async def declare(self, queue: str) -> None:
 		if queue in self._declared:

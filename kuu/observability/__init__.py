@@ -1,4 +1,12 @@
 from kuu.observability._broker_key import broker_key
+from kuu.observability._codec import envelope_from_bytes, envelope_to_bytes
+from kuu.observability._commands import (
+	Cmd,
+	CmdResponse,
+	EnqueueCmd,
+	RemoveJobCmd,
+	TriggerJobCmd,
+)
 from kuu.observability._local import InMemoryRegistry, MpQueueSink, MpQueueSource
 from kuu.observability._protocol import (
 	PROTOCOL_VERSION,
@@ -19,6 +27,7 @@ from kuu.observability._protocol import (
 	State,
 	WorkerSnapshot,
 )
+from kuu.observability._ws import WsUplink
 
 __all__ = [
 	"PROTOCOL_VERSION",
@@ -41,5 +50,13 @@ __all__ = [
 	"InMemoryRegistry",
 	"MpQueueSink",
 	"MpQueueSource",
+	"Cmd",
+	"EnqueueCmd",
+	"TriggerJobCmd",
+	"RemoveJobCmd",
+	"CmdResponse",
+	"WsUplink",
+	"envelope_to_bytes",
+	"envelope_from_bytes",
 	"broker_key",
 ]

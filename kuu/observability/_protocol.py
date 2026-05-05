@@ -55,6 +55,7 @@ class QueueSnapshot:
 # === body sum type
 
 
+@dataclass(frozen=True, slots=True)
 class Body:
 	"""sealed base for envelope bodies: use ``match`` to dispatch"""
 

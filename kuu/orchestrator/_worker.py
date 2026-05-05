@@ -3,12 +3,13 @@ from __future__ import annotations
 import logging
 import multiprocessing as mp
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import anyio
 import anyio.to_thread
 
 from kuu._import import import_object, import_tasks
+from kuu.app import Kuu
 from kuu.config import Settings
 from kuu.worker import Worker
 
@@ -22,7 +23,7 @@ class WorkerPool:
 	_config: Settings
 	_stop_event: anyio.Event
 	_processes: list[mp.Process]
-	events_queue: mp.Queue  # type: ignore[type-arg]
+	events_queue: mp.Queue
 
 	def __init__(self, config: Settings) -> None:
 		self._config = config
@@ -118,20 +119,21 @@ def _run_worker(config: Settings, events_queue: mp.Queue | None = None) -> None:
 	log.info("worker process exiting")
 
 
-def _install_event_forwarder(app: Any, q: mp.Queue) -> None:  # type: ignore[type-arg]
-	"""Push lightweight event records onto the inter-process queue so the dashboard can consume them."""
+def _install_event_forwarder(app: Kuu, q: mp.Queue) -> None:  # type: ignore[type-arg]
+	"""push (event, task, queue, ts, pid) records onto the inter-process queue"""
 	import os
 
 	pid = os.getpid()
 
-	def _put(event: str, task: str) -> None:
+	def _put(event: str, task: str, queue: str) -> None:
 		try:
-			q.put_nowait((event, task, time.time(), pid))
+			q.put_nowait((event, task, queue, time.time(), pid))
 		except Exception:
 			pass
 
 	ev = app.events
-	ev.task_succeeded.connect(lambda msg, elapsed: _put("succeeded", msg.task))
-	ev.task_failed.connect(lambda msg, exc: _put("failed", msg.task))
-	ev.task_retried.connect(lambda msg, delay: _put("retried", msg.task))
-	ev.task_dead.connect(lambda msg: _put("dead", msg.task))
+	ev.task_started.connect(lambda msg: _put("started", msg.task, msg.queue))
+	ev.task_succeeded.connect(lambda msg, elapsed: _put("succeeded", msg.task, msg.queue))
+	ev.task_failed.connect(lambda msg, exc: _put("failed", msg.task, msg.queue))
+	ev.task_retried.connect(lambda msg, delay: _put("retried", msg.task, msg.queue))
+	ev.task_dead.connect(lambda msg: _put("dead", msg.task, msg.queue))

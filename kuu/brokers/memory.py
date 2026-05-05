@@ -149,6 +149,12 @@ class MemoryBroker(Broker[MemoryReceipt]):
 				raise InvalidReceiptType(type(delivery.receipt))
 		self._pending.pop((delivery.receipt.queue, delivery.receipt.seq), None)
 
+	async def queue_depth(self, queue: str) -> int | None:
+		q = self._queues.get(queue)
+		if q is None:
+			return 0
+		return q.recv.statistics().current_buffer_used
+
 	async def nack(self,
 	               delivery: Delivery,
 	               requeue: bool = True,

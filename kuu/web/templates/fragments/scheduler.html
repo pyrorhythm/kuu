@@ -1,34 +1,43 @@
 {% if jobs %}
 <table class="kuu-table">
-	<thead>
-		<tr>
-			<th>task</th>
-			<th>next run</th>
-			<th>rule</th>
-			<th></th>
-		</tr>
-	</thead>
-	<tbody>
-		{% for j in jobs %}
-		<tr>
-			<td class="mono-cell">{{ j.task_name }}</td>
-			<td class="dim">{{ j.next_run.strftime("%H:%M:%S") }}</td>
-			<td class="mono-cell">
-				{%- if j.every is defined and j.every is not none -%}
-				every {{ j.every.total_seconds()|int }}s
-				{%- elif j.schedule is defined and j.schedule is not none -%}
-				{{ j.schedule.__class__.__name__ }}
-				{%- else -%}
-				—
-				{%- endif -%}
-			</td>
-			<td class="action-cell">
-				<button class="btn" onclick="kuuTriggerJob({{ j.id | tojson }})">trigger</button>
-				<button class="btn btn-danger" onclick="kuuRemoveJob({{ j.id | tojson }})">remove</button>
-			</td>
-		</tr>
-		{% endfor %}
-	</tbody>
+  <thead>
+    <tr>
+      <th>task</th>
+      <th>next run</th>
+      {% if not aggregated %}<th>rule</th>{% endif %}
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for j in jobs %}
+    <tr>
+      {% if aggregated %}
+      <td class="mono-cell">{{ j.task }}</td>
+      <td class="dim">{{ j.next_run|int }}</td>
+      <td class="action-cell">
+        <button class="btn" onclick="kuuTriggerJob({{ j.id|tojson }}, {{ j.instance|tojson }})">trigger</button>
+        <button class="btn btn-danger" onclick="kuuRemoveJob({{ j.id|tojson }}, {{ j.instance|tojson }})">remove</button>
+      </td>
+      {% else %}
+      <td class="mono-cell">{{ j.task_name }}</td>
+      <td class="dim">{{ j.next_run.strftime("%H:%M:%S") }}</td>
+      <td class="mono-cell">
+        {%- if j.every is defined and j.every is not none -%}
+          every {{ j.every.total_seconds()|int }}s
+        {%- elif j.schedule is defined and j.schedule is not none -%}
+          {{ j.schedule.__class__.__name__ }}
+        {%- else -%}
+          —
+        {%- endif -%}
+      </td>
+      <td class="action-cell">
+        <button class="btn" onclick="kuuTriggerJob({{ j.id|tojson }})">trigger</button>
+        <button class="btn btn-danger" onclick="kuuRemoveJob({{ j.id|tojson }})">remove</button>
+      </td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+  </tbody>
 </table>
 {% else %}
 <p class="placeholder">no scheduled jobs</p>
