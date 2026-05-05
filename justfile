@@ -12,7 +12,6 @@ build:
 
 lint PATH=".":
     uv run ruff check --fix-only "{{ PATH }}"
-    uv run ruff format "{{ PATH }}"
 
 typecheck PATH="kuu":
     uv run pyrefly check "{{ PATH }}"
@@ -40,7 +39,7 @@ release SEMVER: sync lint typecheck (test '-q' 'no') (bump SEMVER) (release-git 
 [arg('q', long='quiet', short='q', value='-q')]
 [arg('tb', long='tb')]
 test q='' tb='short' DIR="tests/" *FLAGS:
-    uv run pytest {{ FLAGS }} "{{ DIR }}" {{ q }} --tb={{ tb }}
+    uv run pytest {{ FLAGS }} "{{ DIR }}" {{ q }} --tb={{ tb }} -n auto
 
 docs:
     uv run --group docs sphinx-build -b html -W --keep-going docs docs/_build/html

@@ -99,6 +99,8 @@ class Worker:
 		task = self.app.registry.get(msg.task)
 		ctx = Context(app=self.app, message=msg, phase="process", task=task)
 
+		log.debug("WORKER HANDLE: task=%s, key=%s, attempt=%s", msg.task, result_key(msg), msg.attempt)
+
 		with anyio.CancelScope(shield=True):
 			await self.app.events.task_received.send(msg)
 
@@ -108,8 +110,10 @@ class Worker:
 		key = result_key(msg)
 
 		if results is not None and results.replay:
-			cached = await results.get(key)
+			log.debug("WORKER HANDLE: checking replay for key=%s", key)
+			cached = await results.get(key, listen_timeout=0)
 			if cached is not None and cached.status == "ok":
+				log.debug("WORKER HANDLE: replay hit for key=%s", key)
 				with anyio.CancelScope(shield=True):
 					await self._finalize(delivery, msg, Ok(0.0))
 				self._inflight -= 1
@@ -139,7 +143,9 @@ class Worker:
 				return r
 
 			started = time.perf_counter()
+			log.debug("WORKER HANDLE: executing task=%s", msg.task)
 			value = await run_chain(ctx, self.app.middleware, _terminal)
+			log.debug("WORKER HANDLE: task=%s completed, storing result", msg.task)
 			if results is not None:
 				payload, type_fqn = results.encode(value)
 				await results.set(
@@ -147,6 +153,7 @@ class Worker:
 					Result(status="ok", value=payload, type=type_fqn),
 					ttl=results.ttl,
 				)
+				log.debug("WORKER HANDLE: result stored for key=%s", key)
 			outcome = Ok(time.perf_counter() - started)
 		except RetryErr as r:
 			outcome = Retry(

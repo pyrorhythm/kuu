@@ -21,15 +21,15 @@ from kuu.task import Task
 
 class Kuu:
 	def __init__(
-		self,
-		broker: Broker,
-		default_queue: str = "default",
-		middleware: list[Middleware] | None = None,
-		results: ResultBackend | None = None,
+			self,
+			broker: Broker,
+			default_queue: str = "default",
+			middleware: list[Middleware] | None = None,
+			results: ResultBackend | None = None,
 	) -> None:
 		"""Core app, which behaves as a main entrypoint for tasks
 
-		:param broker: transport for enqueue and consume.
+		:param broker: t for enqueue and consume.
 		:param default_queue: fallback queue when `@app.task(queue=...)` is omitted.
 		:param middleware: optional middleware chain applied around every task.
 		:param results: optional result backend. Result-persistence policy
@@ -46,28 +46,30 @@ class Kuu:
 
 	@overload
 	def task[**P, R](
-		self,
-		name: str | None = ...,
-		/,
-		queue: str | None = ...,
-		max_attempts: int = ...,
-		timeout: float | None = ...,
-		blocking: bool = ...,
-		**labels: Any,
-	) -> _Wrap[P, R]: ...
+			self,
+			name: str | None = ...,
+			/,
+			queue: str | None = ...,
+			max_attempts: int = ...,
+			timeout: float | None = ...,
+			blocking: bool = ...,
+			**labels: Any,
+	) -> _Wrap[P, R]:
+		...
 
 	@overload
-	def task[**P, R](self, func: _FnAny[P, R], /) -> Task[P, R]: ...
+	def task[**P, R](self, func: _FnAny[P, R], /) -> Task[P, R]:
+		...
 
 	def task[**P, R](
-		self,
-		name_or_func: str | _FnAny[P, R] | None = None,
-		/,
-		queue: str | None = None,
-		max_attempts: int = 5,
-		timeout: float | None = None,
-		blocking: bool = False,
-		**labels: Any,
+			self,
+			name_or_func: str | _FnAny[P, R] | None = None,
+			/,
+			queue: str | None = None,
+			max_attempts: int = 5,
+			timeout: float | None = None,
+			blocking: bool = False,
+			**labels: Any,
 	) -> _Wrap[P, R] | Task[P, R]:
 		"""Register function as a task
 
@@ -82,18 +84,18 @@ class Kuu:
 		"""
 
 		def _get_wrap(
-			_name: str | None = None,
+				_name: str | None = None,
 		):
 			def _wrap(_func: _FnAny[P, R]) -> Task[P, R]:
 				t: Task[P, R] = Task(
-					manager=self,
-					original_func=_func,
-					task_name=_name or object_fqn(_func),
-					task_queue=queue or self.default_queue,
-					task_labels=labels,
-					max_attempts=max_attempts,
-					timeout=timeout,
-					blocking=blocking,
+						manager=self,
+						original_func=_func,
+						task_name=_name or object_fqn(_func),
+						task_queue=queue or self.default_queue,
+						task_labels=labels,
+						max_attempts=max_attempts,
+						timeout=timeout,
+						blocking=blocking,
 				)
 				self.registry.add(t)
 				return t
@@ -109,14 +111,14 @@ class Kuu:
 		raise TypeError(type(name_or_func))
 
 	def every[**P, R](
-		self,
-		interval: timedelta,
-		args: Payload = Payload(),
-		*,
-		sched_id: str | None = None,
-		queue: str | None = None,
-		headers: dict[str, str] | None = None,
-		max_attempts: int | None = None,
+			self,
+			interval: timedelta,
+			args: Payload = Payload(),
+			*,
+			sched_id: str | None = None,
+			queue: str | None = None,
+			headers: dict[str, str] | None = None,
+			max_attempts: int | None = None,
 	) -> _Wrap[P, R]:
 		"""Register function as a scheduled task with specified interval `timedelta`.
 
@@ -132,27 +134,27 @@ class Kuu:
 			if not isinstance(fn, Task):
 				fn = self.task(fn)
 			self.schedule.add_every(
-				interval,
-				fn,
-				args,
-				id=sched_id,
-				queue=queue,
-				headers=headers,
-				max_attempts=max_attempts,
+					interval,
+					fn,
+					args,
+					id=sched_id,
+					queue=queue,
+					headers=headers,
+					max_attempts=max_attempts,
 			)
 			return fn
 
 		return wrap
 
 	def sched[**P, R](
-		self,
-		sched: Schedule,
-		args: Payload = Payload(),
-		*,
-		sched_id: str | None = None,
-		queue: str | None = None,
-		headers: dict[str, str] | None = None,
-		max_attempts: int | None = None,
+			self,
+			sched: Schedule,
+			args: Payload = Payload(),
+			*,
+			sched_id: str | None = None,
+			queue: str | None = None,
+			headers: dict[str, str] | None = None,
+			max_attempts: int | None = None,
 	) -> _Wrap[P, R]:
 		"""Register function as a task with `Schedule`
 
@@ -168,44 +170,44 @@ class Kuu:
 			if not isinstance(fn, Task):
 				fn = self.task(fn)
 			self.schedule.add_schedule(
-				sched,
-				fn,
-				args,
-				id=sched_id,
-				queue=queue,
-				headers=headers,
-				max_attempts=max_attempts,
+					sched,
+					fn,
+					args,
+					id=sched_id,
+					queue=queue,
+					headers=headers,
+					max_attempts=max_attempts,
 			)
 			return fn
 
 		return wrap
 
 	def _build_message(
-		self,
-		task_name: str,
-		task: Task | None,
-		args: Payload,
-		queue: str | None,
-		not_before: datetime | None,
-		headers: dict[str, str] | None,
-		max_attempts: int | None,
+			self,
+			task_name: str,
+			task: Task | None,
+			args: Payload,
+			queue: str | None,
+			not_before: datetime | None,
+			headers: dict[str, str] | None,
+			max_attempts: int | None,
 	) -> Message:
 		return Message(
-			task=task_name,
-			queue=queue or (task.task_queue if task else self.default_queue),
-			payload=args,
-			headers=headers or {},
-			max_attempts=(
-				max_attempts if max_attempts is not None else (task.max_attempts if task else 5)
-			),
-			not_before=not_before,
+				task=task_name,
+				queue=queue or (task.task_queue if task else self.default_queue),
+				payload=args,
+				headers=headers or {},
+				max_attempts=(
+					max_attempts if max_attempts is not None else (task.max_attempts if task else 5)
+				),
+				not_before=not_before,
 		)
 
 	async def _dispatch(
-		self,
-		msg: Message,
-		task: Task[Any, Any] | None,
-		not_before: datetime | None,
+			self,
+			msg: Message,
+			task: Task[Any, Any] | None,
+			not_before: datetime | None,
 	) -> None:
 		ctx = Context(app=self, message=msg, phase="enqueue", task=task)
 
@@ -219,23 +221,23 @@ class Kuu:
 		await run_chain(ctx, self.middleware, _terminal)
 
 	def _enqueue_task[**P, Res](
-		self,
-		task: Task[P, Res],
-		queue: str | None = None,
-		not_before: datetime | None = None,
-		headers: dict[str, str] | None = None,
-		max_attempts: int | None = None,
+			self,
+			task: Task[P, Res],
+			queue: str | None = None,
+			not_before: datetime | None = None,
+			headers: dict[str, str] | None = None,
+			max_attempts: int | None = None,
 	) -> _FnAsync[P, TaskHandle[Res]]:
 		async def _(*args: P.args, **kwargs: P.kwargs) -> TaskHandle[Res]:
 			payload = Payload(args=args, kwargs=kwargs)
 			msg = self._build_message(
-				task.task_name,
-				task,
-				payload,
-				queue=queue,
-				not_before=not_before,
-				headers=headers,
-				max_attempts=max_attempts,
+					task.task_name,
+					task,
+					payload,
+					queue=queue,
+					not_before=not_before,
+					headers=headers,
+					max_attempts=max_attempts,
 			)
 			await self._dispatch(msg, task, not_before)
 			return TaskHandle[Res](message=msg, app=self)
@@ -243,13 +245,13 @@ class Kuu:
 		return _
 
 	async def enqueue_by_name(
-		self,
-		task: str,
-		args: Payload = Payload(),
-		queue: str | None = None,
-		not_before: datetime | None = None,
-		headers: dict[str, str] | None = None,
-		max_attempts: int | None = None,
+			self,
+			task: str,
+			args: Payload = Payload(),
+			queue: str | None = None,
+			not_before: datetime | None = None,
+			headers: dict[str, str] | None = None,
+			max_attempts: int | None = None,
 	) -> TaskHandle[Any]:
 		"""Enqueue a task by its registered dotted name.
 
@@ -263,13 +265,13 @@ class Kuu:
 
 		t = self.registry.get(task)
 		msg = self._build_message(
-			task,
-			t,
-			args,
-			queue=queue,
-			not_before=not_before,
-			headers=headers,
-			max_attempts=max_attempts,
+				task,
+				t,
+				args,
+				queue=queue,
+				not_before=not_before,
+				headers=headers,
+				max_attempts=max_attempts,
 		)
 		await self._dispatch(msg, t, not_before)
 		return TaskHandle[Any](message=msg, app=self)

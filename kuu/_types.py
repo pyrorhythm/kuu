@@ -5,16 +5,9 @@ import functools
 import inspect
 import types
 import typing
+from collections.abc import AsyncGenerator
 from types import NoneType
-from typing import (
-	TYPE_CHECKING,
-	Any,
-	Callable,
-	Concatenate,
-	Coroutine,
-	Protocol,
-	TypeIs,
-)
+from typing import Any, AsyncIterator, Callable, Concatenate, Coroutine, Protocol, TYPE_CHECKING, TypeIs
 
 from pydantic import BaseModel
 
@@ -26,7 +19,6 @@ import logging
 from kuu.message import Payload
 
 log = logging.getLogger("kuu.worker")
-
 
 _Incomplete = (Any, NoneType)
 
@@ -256,8 +248,8 @@ def _coerce_payload(func: Any, payload: Payload) -> Payload:
 
 		p = params[i] if i < len(params) else None
 		if p is not None and p.kind in (
-			inspect.Parameter.POSITIONAL_ONLY,
-			inspect.Parameter.POSITIONAL_OR_KEYWORD,
+				inspect.Parameter.POSITIONAL_ONLY,
+				inspect.Parameter.POSITIONAL_OR_KEYWORD,
 		):
 			if name in new_kwargs:
 				new_kwargs[name] = coerced
@@ -280,11 +272,23 @@ type _Wrap[**P, R] = _FnSingle[_FnAny[P, R], Task[P, R]]
 
 
 def _ensure_connected[T: Connectable, **P, R](
-	fn: Callable[Concatenate[T, P], Coroutine[Any, Any, R]],
+		fn: Callable[Concatenate[T, P], Coroutine[Any, Any, R]],
 ) -> Callable[Concatenate[T, P], Coroutine[Any, Any, R]]:
 	@functools.wraps(fn)
 	async def wrapper(self: T, *args: P.args, **kwargs: P.kwargs) -> R:
 		await self.connect()
 		return await fn(self, *args, **kwargs)
+
+	return wrapper
+
+
+def _ensure_connected_cm[T: Connectable, **P, R](
+		fn: Callable[Concatenate[T, P], AsyncIterator[R]],
+) -> Callable[Concatenate[T, P], AsyncGenerator[R]]:
+	async def wrapper(self: T, *args: P.args, **kwargs: P.kwargs) -> AsyncGenerator[R]:
+		await self.connect()
+		async for item in fn(self, *args, **kwargs):
+			yield item
+			return
 
 	return wrapper

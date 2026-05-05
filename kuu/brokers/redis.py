@@ -8,12 +8,12 @@ from typing import Awaitable, Callable, NamedTuple, cast
 import anyio
 from redis.asyncio import Redis, RedisCluster
 
+from .base import Broker, Delivery
 from .._types import _ensure_connected
 from ..exceptions import InvalidReceiptType, NotConnected
 from ..message import Message
-from ..redis import RedisTransport, StandaloneConfig
 from ..serializers import JSONSerializer, Serializer
-from .base import Broker, Delivery
+from ..transports.redis import RedisTransport, StandaloneConfig
 
 _MOVE_LUA = """
 local z = KEYS[1]
@@ -41,14 +41,14 @@ class RedisReceipt(NamedTuple):
 	stream_id: bytes
 
 
-class RedisBroker(Broker):
+class RedisBroker(Broker[RedisReceipt]):
 	"""Redis Streams broker.
 
 	Uses streams for the live queue and sorted sets for scheduled messages.
 	Consumer groups handle competing consumers across worker subprocesses.
 
 	- `url`: Redis connection URL (convenience alias for ``StandaloneConfig``).
-	- `transport`: pre-configured :class:`~kuu.redis.RedisTransport`.
+	- `t`: pre-configured :class:`~kuu.redis.RedisTransport`.
 	  When given, ``url`` is ignored.
 	- `group`: consumer group name.
 	- `consumer`: consumer name within the group.
@@ -60,19 +60,24 @@ class RedisBroker(Broker):
 	"""
 
 	def __init__(
-		self,
-		url: str = "redis://localhost:6379/0",
-		*,
-		transport: RedisTransport | None = None,
-		group: str = "qq",
-		consumer: str = "c1",
-		stream_prefix: str = "qq:s:",
-		zset_prefix: str = "qq:z:",
-		block_ms: int = 5000,
-		claim_min_idle_ms: int = 60000,
-		serializer: Serializer = JSONSerializer(),
+			self,
+			url: str = "redis://localhost:6379/0",
+			*,
+			transport: RedisTransport | None = None,
+			group: str = "qq",
+			consumer: str = "c1",
+			stream_prefix: str = "qq:s:",
+			zset_prefix: str = "qq:z:",
+			block_ms: int = 5000,
+			claim_min_idle_ms: int = 60000,
+			serializer: Serializer = JSONSerializer(),
 	):
-		self._redis = transport or RedisTransport(StandaloneConfig(url=url))
+		if transport is not None:
+			self._redis = transport
+			self._owns_transport = False
+		else:
+			self._redis = RedisTransport(StandaloneConfig(url=url))
+			self._owns_transport = True
 		self.group = group
 		self.consumer = consumer
 		self.sp = stream_prefix
@@ -101,7 +106,8 @@ class RedisBroker(Broker):
 		self._move_sha = await self.r.script_load(_MOVE_LUA)
 
 	async def close(self) -> None:
-		await self._redis.close()
+		if self._owns_transport:
+			await self._redis.close()
 		self._move_sha = None
 
 	@_ensure_connected
@@ -139,7 +145,7 @@ class RedisBroker(Broker):
 			now = datetime.now(timezone.utc).timestamp()
 			await asyncio.gather(*[
 				_asyncify(self.r.evalsha)(
-					self._move_sha, 2, self._zset(q), self._stream(q), str(now), "128"
+						self._move_sha, 2, self._zset(q), self._stream(q), str(now), "128"
 				)
 				for q in queues
 			])
@@ -148,18 +154,18 @@ class RedisBroker(Broker):
 	async def _claim_stale(self, queue: str) -> list[tuple[bytes, dict[bytes, bytes]]]:
 		try:
 			_, items, _ = await self.r.xautoclaim(
-				self._stream(queue),
-				self.group,
-				self.consumer,
-				min_idle_time=self.claim_min_idle_ms,
-				count=32,
+					self._stream(queue),
+					self.group,
+					self.consumer,
+					min_idle_time=self.claim_min_idle_ms,
+					count=32,
 			)
 			return items or []
 		except Exception:
 			return []
 
 	async def consume(
-		self, queues: list[str], prefetch: int
+			self, queues: list[str], prefetch: int
 	) -> AsyncIterator[Delivery[RedisReceipt]]:
 		for q in queues:
 			await self.declare(q)
@@ -179,13 +185,13 @@ class RedisBroker(Broker):
 						for q in queues:
 							for sid, data in await self._claim_stale(q):
 								yield Delivery(
-									message=self.serializer.unmarshal(data[b"m"], into=Message),
-									receipt=RedisReceipt(queue=q, stream_id=sid),
-									queue=q,
+										message=self.serializer.unmarshal(data[b"m"], into=Message),
+										receipt=RedisReceipt(queue=q, stream_id=sid),
+										queue=q,
 								)
 
 					resp = await self.r.xreadgroup(
-						self.group, self.consumer, streams, count=prefetch, block=self.block_ms
+							self.group, self.consumer, streams, count=prefetch, block=self.block_ms
 					)
 					if not resp:
 						continue
@@ -195,9 +201,9 @@ class RedisBroker(Broker):
 						]
 						for sid, data in entries:
 							yield Delivery(
-								message=self.serializer.unmarshal(data[b"m"], into=Message),
-								receipt=RedisReceipt(queue=q, stream_id=sid),
-								queue=q,
+									message=self.serializer.unmarshal(data[b"m"], into=Message),
+									receipt=RedisReceipt(queue=q, stream_id=sid),
+									queue=q,
 							)
 			finally:
 				tg.cancel_scope.cancel()
@@ -218,10 +224,10 @@ class RedisBroker(Broker):
 
 	@_ensure_connected
 	async def nack(
-		self,
-		delivery: Delivery,
-		requeue: bool = True,
-		delay: float | None = None,
+			self,
+			delivery: Delivery,
+			requeue: bool = True,
+			delay: float | None = None,
 	) -> None:
 		match delivery.receipt:
 			case RedisReceipt():

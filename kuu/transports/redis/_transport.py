@@ -14,6 +14,7 @@ class RedisTransport:
 	Accepts any :class:`RedisConfig` variant or a pre-built client.
 
 	.. code-block::
+
 	    RedisTransport(StandaloneConfig(url="redis://localhost:6379/0"))
 	    RedisTransport(ClusterConfig(url="redis://node1:6379"))
 	    RedisTransport(SentinelConfig(
@@ -27,10 +28,10 @@ class RedisTransport:
 	"""
 
 	def __init__(
-		self,
-		config: RedisConfig | None = None,
-		*,
-		client: Redis | RedisCluster | None = None,
+			self,
+			config: RedisConfig | None = None,
+			*,
+			client: Redis | RedisCluster | None = None,
 	) -> None:
 		self._config = config or StandaloneConfig()
 		self._client = client

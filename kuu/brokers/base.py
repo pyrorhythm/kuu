@@ -15,7 +15,7 @@ class Delivery[Receipt]:
 	queue: str
 
 
-class Broker(Protocol):
+class Broker[Receipt](Protocol):
 	"""Transport for enqueuing and consuming task messages."""
 
 	async def connect(self) -> None:
@@ -33,7 +33,7 @@ class Broker(Protocol):
 	async def schedule(self, msg: Message, not_before: datetime) -> None:
 		"""Schedule `msg` to become deliverable at or after `not_before`."""
 
-	def consume(self, queues: list[str], prefetch: int) -> AsyncIterator[Delivery]:
+	def consume(self, queues: list[str], prefetch: int) -> AsyncIterator[Delivery[Receipt]]:
 		"""
 		Stream deliveries from `queues`, prefetching up to `prefetch` per pull.
 
@@ -41,7 +41,7 @@ class Broker(Protocol):
 		is typed against the concrete broker.
 		"""
 
-	async def ack(self, delivery: Delivery) -> None:
+	async def ack(self, delivery: Delivery[Receipt]) -> None:
 		"""
 		Acknowledge `delivery` as successfully processed.
 
@@ -49,9 +49,10 @@ class Broker(Protocol):
 		passed to a different broker (e.g. Redis receipt fed into NATS).
 		"""
 
-	async def nack(
-		self, delivery: Delivery, requeue: bool = True, delay: float | None = None
-	) -> None:
+	async def nack(self,
+	               delivery: Delivery[Receipt],
+	               requeue: bool = True,
+	               delay: float | None = None) -> None:
 		"""
 		Negatively acknowledge `delivery`.
 

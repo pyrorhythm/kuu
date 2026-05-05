@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import heapq
 import itertools
 from collections.abc import AsyncIterator
@@ -9,9 +10,9 @@ from typing import NamedTuple
 import anyio
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
+from .base import Broker, Delivery
 from ..exceptions import InvalidReceiptType
 from ..message import Message
-from .base import Broker, Delivery
 
 
 class MemoryReceipt(NamedTuple):
@@ -24,8 +25,10 @@ class _Q(NamedTuple):
 	recv: MemoryObjectReceiveStream[Delivery[MemoryReceipt]]
 
 
-class MemoryBroker(Broker):
-	def __init__(self, buffer: int = 1024, pump_interval: float = 0.05):
+class MemoryBroker(Broker[MemoryReceipt]):
+	def __init__(self,
+	             buffer: int = 1024,
+	             pump_interval: float = 0.05):
 		"""
 		In-memory broker for tests and single-process setups.
 
@@ -103,9 +106,9 @@ class MemoryBroker(Broker):
 					wait = self.pump_interval
 			await anyio.sleep(wait)
 
-	async def consume(
-		self, queues: list[str], prefetch: int
-	) -> AsyncIterator[Delivery[MemoryReceipt]]:
+	async def consume(self,
+	                  queues: list[str],
+	                  prefetch: int) -> AsyncIterator[Delivery[MemoryReceipt]]:
 		del prefetch  # buffer size on the memory stream controls prefetch
 		for q in queues:
 			await self.declare(q)
@@ -116,16 +119,27 @@ class MemoryBroker(Broker):
 			async for delivery in self._queues[q].recv.clone():
 				await send.send(delivery)
 
-		async with anyio.create_task_group() as tg:
-			tg.start_soon(self._pump_scheduled)
-			for q in queues:
-				tg.start_soon(_forward, q)
-			try:
-				async with recv:
-					async for delivery in recv:
-						yield delivery
-			finally:
-				tg.cancel_scope.cancel()
+		# Use asyncio.create_task instead of anyio task group to avoid
+		# cancel-scope "entered in different task" errors when the async
+		# generator is closed from a different task than the one that
+		# started iterating it.
+		pump_task = asyncio.create_task(self._pump_scheduled())
+		forward_tasks = [asyncio.create_task(_forward(q)) for q in queues]
+
+		try:
+			async with recv:
+				async for delivery in recv:
+					yield delivery
+		finally:
+			pump_task.cancel()
+			for t in forward_tasks:
+				t.cancel()
+			await send.aclose()
+			for t in [pump_task, *forward_tasks]:
+				try:
+					await t
+				except asyncio.CancelledError:
+					pass
 
 	async def ack(self, delivery: Delivery) -> None:
 		match delivery.receipt:
@@ -135,12 +149,10 @@ class MemoryBroker(Broker):
 				raise InvalidReceiptType(type(delivery.receipt))
 		self._pending.pop((delivery.receipt.queue, delivery.receipt.seq), None)
 
-	async def nack(
-		self,
-		delivery: Delivery,
-		requeue: bool = True,
-		delay: float | None = None,
-	) -> None:
+	async def nack(self,
+	               delivery: Delivery,
+	               requeue: bool = True,
+	               delay: float | None = None) -> None:
 		match delivery.receipt:
 			case MemoryReceipt():
 				pass

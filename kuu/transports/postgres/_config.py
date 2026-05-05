@@ -1,3 +1,4 @@
+from asyncio import AbstractEventLoop
 from dataclasses import dataclass
 
 try:
@@ -17,24 +18,22 @@ class PostgresDSN(PostgresConfig):
 	conn_config: _ClientConfiguration
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=True)
 class PostgresParams(PostgresConfig):
-	"""mirrors :func:`~asyncpg.connection.connect` arguments"""
-
-	host = None
-	port = None
-	user = None
-	password = None
-	passfile = None
-	service = None
-	servicefile = None
-	database = None
-	loop = None
-	timeout = 60
-	statement_cache_size = 100
-	max_cached_statement_lifetime = 300
-	max_cacheable_statement_size = 1024 * 15
-	command_timeout = None
+	host: str | None = None
+	port: int | None = None
+	user: str | None = None
+	password: str | None = None
+	passfile: str | None = None
+	service: str | None = None
+	servicefile: str | None = None
+	database: str | None = None
+	loop: AbstractEventLoop | None = None
+	timeout: float | None = 60
+	statement_cache_size: int = 100
+	max_cached_statement_lifetime: float = 300
+	max_cacheable_statement_size: int = 1024 * 15
+	command_timeout: float | None = None
 	ssl = None
 	direct_tls = None
 	connection_class = asyncpg.Connection
@@ -47,8 +46,8 @@ class PostgresParams(PostgresConfig):
 	@property
 	def conn_config(self) -> _ClientConfiguration:
 		return _ClientConfiguration(
-			statement_cache_size=self.statement_cache_size,
-			max_cached_statement_lifetime=self.max_cached_statement_lifetime,
-			max_cacheable_statement_size=self.max_cacheable_statement_size,
-			command_timeout=self.command_timeout,
+				statement_cache_size=self.statement_cache_size,
+				max_cached_statement_lifetime=self.max_cached_statement_lifetime,
+				max_cacheable_statement_size=self.max_cacheable_statement_size,
+				command_timeout=self.command_timeout,
 		)

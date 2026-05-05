@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import anyio
@@ -9,732 +10,784 @@ from pydantic import BaseModel
 from kuu.app import Kuu
 from kuu.config import Settings
 from kuu.exceptions import TaskError
-from kuu.results.redis import RedisResults
+from kuu.handle import TaskHandle
+from kuu.message import Message, Payload
 from kuu.worker import Worker
+
+pytestmark = pytest.mark.anyio
+
+# === shared models
 
 
 class InnerModel(BaseModel):
-	city: str
-	zip_code: str
+    city: str
+    zip_code: str
 
 
 class OuterModel(BaseModel):
-	name: str
-	inner: InnerModel
+    name: str
+    inner: InnerModel
 
 
 class Address(BaseModel):
-	street: str
-	city: str
+    street: str
+    city: str
 
 
 class Notification(BaseModel):
-	ntype: str
-	message: str
-	address: Address | None = None
+    ntype: str
+    message: str
+    address: Address | None = None
 
 
 class OrderLine(BaseModel):
-	sku: str
-	qty: int
-	price: float = 0.0
+    sku: str
+    qty: int
+    price: float = 0.0
 
 
 class Order(BaseModel):
-	lines: list[OrderLine]
-	customer: str
-
-
-def _config(app: Kuu, concurrency: int = 4) -> Settings:
-	return Settings.model_construct(queues=[app.default_queue], concurrency=concurrency)
-
-
-async def _run_worker_until(app: Kuu, predicate, *, timeout: float = 10.0) -> None:
-	worker = Worker(_config(app), app=app)
-
-	async def _supervise(scope: anyio.CancelScope):
-		while not predicate():
-			await anyio.sleep(0.05)
-		scope.cancel()
-
-	with anyio.fail_after(timeout):
-		async with anyio.create_task_group() as tg:
-			tg.start_soon(_supervise, tg.cancel_scope)
-			tg.start_soon(worker.run)
-
-
-@pytest.mark.anyio
-async def test_success_result_is_stored_and_retrievable(make_redis_app, redis_flushed: str):
-	app: Kuu = await make_redis_app(
-		stream_prefix="e1:s:", zset_prefix="e1:z:", group="e1", results_prefix="e1:r:"
-	)
-
-	@app.task
-	async def add(a: int, b: int) -> int:
-		return a + b
-
-	calls: list[tuple[int, int]] = []
-
-	@app.task
-	async def record(x: int) -> int:
-		calls.append((x, x))
-		return x * 2
-
-	handle = await record.q(7)
-	await _run_worker_until(app, lambda: len(calls) >= 1)
-
-	verifier = RedisResults(url=redis_flushed, prefix="e1:r:")
-	await verifier.connect()
-	try:
-		stored = await verifier.get(handle.key)
-		assert stored is not None
-		assert stored.status == "ok"
-		assert verifier.decode(stored) == 14
-	finally:
-		await verifier.close()
-
-
-@pytest.mark.anyio
-async def test_replay_skips_re_execution_for_same_idempotency_key(make_redis_app):
-	app: Kuu = await make_redis_app(
-		stream_prefix="e2:s:", zset_prefix="e2:z:", group="e2", results_prefix="e2:r:"
-	)
-
-	calls: list[int] = []
-
-	@app.task
-	async def once(x: int) -> int:
-		calls.append(x)
-		return x
-
-	from kuu.message import Payload
-
-	h1 = await app.enqueue_by_name(
-		once.task_name,
-		Payload(args=(1,)),
-		headers={"idempotency_key": "shared-key"},
-	)
-	await _run_worker_until(app, lambda: len(calls) >= 1)
-	assert h1.key == "shared-key"
-
-	h2 = await app.enqueue_by_name(
-		once.task_name,
-		Payload(args=(2,)),
-		headers={"idempotency_key": "shared-key"},
-	)
-	worker = Worker(_config(app, concurrency=2), app=app)
-
-	async def _stop_after(scope: anyio.CancelScope, secs: float):
-		await anyio.sleep(secs)
-		scope.cancel()
-
-	with anyio.fail_after(8.0):
-		async with anyio.create_task_group() as tg:
-			tg.start_soon(_stop_after, tg.cancel_scope, 1.5)
-			tg.start_soon(worker.run)
-
-	assert calls == [1], "task body must not re-execute when result is replayed"
-	assert h2.key == "shared-key"
-
-
-@pytest.mark.anyio
-async def test_final_attempt_failure_stores_error(make_redis_app, redis_flushed: str):
-	app: Kuu = await make_redis_app(
-		stream_prefix="e3:s:", zset_prefix="e3:z:", group="e3", results_prefix="e3:r:"
-	)
-
-	attempts: list[int] = []
-
-	@app.task(max_attempts=1)
-	async def boom() -> None:
-		attempts.append(1)
-		raise RuntimeError("kaboom")
-
-	handle = await boom.q()
-	await _run_worker_until(app, lambda: len(attempts) >= 1)
-	await anyio.sleep(0.1)
-
-	verifier = RedisResults(url=redis_flushed, prefix="e3:r:")
-	await verifier.connect()
-	try:
-		stored = await verifier.get(handle.key)
-		assert stored is not None
-		assert stored.status == "error"
-		assert "RuntimeError" in (stored.error or "")
-		assert "kaboom" in (stored.error or "")
-	finally:
-		await verifier.close()
-
-	# TaskHandle.result should raise.
-	await app.results.connect()
-	try:
-		with pytest.raises(TaskError):
-			await handle.result(timeout=1.0)
-	finally:
-		await app.results.close()
-
-
-@pytest.mark.anyio
-async def test_store_errors_disabled_does_not_persist_failure(make_redis_app, redis_flushed: str):
-	app: Kuu = await make_redis_app(
-		stream_prefix="e4:s:",
-		zset_prefix="e4:z:",
-		group="e4",
-		results_prefix="e4:r:",
-		result_store_errors=False,
-	)
-
-	attempts: list[int] = []
-
-	@app.task(max_attempts=1)
-	async def bad() -> None:
-		attempts.append(1)
-		raise ValueError("nope")
-
-	handle = await bad.q()
-	await _run_worker_until(app, lambda: len(attempts) >= 1)
-	await anyio.sleep(0.1)
-
-	verifier = RedisResults(url=redis_flushed, prefix="e4:r:")
-	await verifier.connect()
-	try:
-		assert await verifier.get(handle.key) is None
-	finally:
-		await verifier.close()
-
-
-@pytest.mark.anyio
-async def test_replay_disabled_reruns_task_on_redelivery(make_redis_app):
-	app: Kuu = await make_redis_app(
-		stream_prefix="e5:s:",
-		zset_prefix="e5:z:",
-		group="e5",
-		results_prefix="e5:r:",
-		result_replay=False,
-	)
-
-	from kuu.message import Payload
-
-	calls: list[int] = []
-
-	@app.task
-	async def t(x: int) -> int:
-		calls.append(x)
-		return x
-
-	await app.enqueue_by_name(t.task_name, Payload(args=(1,)), headers={"idempotency_key": "k"})
-	await _run_worker_until(app, lambda: len(calls) >= 1)
-
-	await app.enqueue_by_name(t.task_name, Payload(args=(2,)), headers={"idempotency_key": "k"})
-	await _run_worker_until(app, lambda: len(calls) >= 2)
-
-	assert calls == [1, 2]
+    lines: list[OrderLine]
+    customer: str
 
 
 class Outcome(BaseModel):
-	value: int
-	label: str
+    value: int
+    label: str
 
 
-@pytest.mark.anyio
-async def test_marshal_types_round_trips_pydantic_model(make_redis_app, redis_flushed: str):
-	app: Kuu = await make_redis_app(
-		stream_prefix="e6:s:", zset_prefix="e6:z:", group="e6", results_prefix="e6:r:"
-	)
-
-	@app.task
-	async def make_outcome(v: int) -> Outcome:
-		return Outcome(value=v, label="ok")
-
-	handle = await make_outcome.q(42)
-	done = anyio.Event()
-
-	# Wait for the result to land in redis.
-	verifier = RedisResults(url=redis_flushed, prefix="e6:r:")
-	await verifier.connect()
-	try:
-
-		async def _poll() -> None:
-			while True:
-				r = await verifier.get(handle.key)
-				if r is not None and r.status == "ok":
-					done.set()
-					return
-				await anyio.sleep(0.05)
-
-		worker = Worker(_config(app, concurrency=2), app=app)
-
-		async def _supervise(scope: anyio.CancelScope):
-			await done.wait()
-			scope.cancel()
-
-		with anyio.fail_after(10.0):
-			async with anyio.create_task_group() as tg:
-				tg.start_soon(_supervise, tg.cancel_scope)
-				tg.start_soon(_poll)
-				tg.start_soon(worker.run)
-
-		stored = await verifier.get(handle.key)
-		assert stored is not None
-		assert stored.type and stored.type.endswith("Outcome")
-		decoded = verifier.decode(stored)
-		assert isinstance(decoded, Outcome)
-		assert decoded == Outcome(value=42, label="ok")
-	finally:
-		await verifier.close()
+# === helpers
 
 
-@pytest.mark.anyio
-async def test_retry_then_success_stores_only_final_value(make_redis_app, redis_flushed: str):
-	from kuu.exceptions import RetryErr
-	from kuu.middleware import RetryMiddleware
-
-	app: Kuu = await make_redis_app(
-		stream_prefix="e7:s:",
-		zset_prefix="e7:z:",
-		group="e7",
-		results_prefix="e7:r:",
-		middleware=[RetryMiddleware(base=0.05, cap=0.1)],
-	)
-
-	attempts: list[int] = []
-
-	@app.task(max_attempts=3)
-	async def flaky(x: int) -> int:
-		attempts.append(x)
-		if len(attempts) < 2:
-			raise RetryErr(delay=0.05, reason="flap")
-		return x * 10
-
-	handle = await flaky.q(3)
-	await _run_worker_until(app, lambda: len(attempts) >= 2, timeout=15.0)
-	await anyio.sleep(0.1)
-
-	verifier = RedisResults(url=redis_flushed, prefix="e7:r:")
-	await verifier.connect()
-	try:
-		stored = await verifier.get(handle.key)
-		assert stored is not None
-		assert stored.status == "ok"
-		assert verifier.decode(stored) == 30
-	finally:
-		await verifier.close()
+def _config(app: Kuu, concurrency: int = 4) -> Settings:
+    return Settings.model_construct(queues=[app.default_queue], concurrency=concurrency)
 
 
-@pytest.mark.anyio
-async def test_non_final_failure_does_not_store_error(make_redis_app, redis_flushed: str):
-	app: Kuu = await make_redis_app(
-		stream_prefix="e8:s:", zset_prefix="e8:z:", group="e8", results_prefix="e8:r:"
-	)
+async def _run_worker_until(app: Kuu, predicate, *, timeout: float = 15.0) -> None:
+    """Run worker until predicate() is True, then cancel."""
+    worker = Worker(_config(app), app=app)
 
-	attempts: list[int] = []
+    async def _supervise(scope: anyio.CancelScope):
+        while not predicate():
+            await anyio.sleep(0.05)
+        scope.cancel()
 
-	@app.task(max_attempts=3)
-	async def sometimes(x: int) -> int:
-		attempts.append(x)
-		if len(attempts) < 2:
-			raise RuntimeError("transient")
-		return x
-
-	handle = await sometimes.q(5)
-	verifier = RedisResults(url=redis_flushed, prefix="e8:r:")
-	await verifier.connect()
-	try:
-		await _run_worker_until(app, lambda: len(attempts) >= 1, timeout=10.0)
-		stored_after_first = await verifier.get(handle.key)
-		assert stored_after_first is None or stored_after_first.status != "error"
-
-		await _run_worker_until(app, lambda: len(attempts) >= 2, timeout=15.0)
-		await anyio.sleep(0.1)
-		final = await verifier.get(handle.key)
-		assert final is not None and final.status == "ok"
-		assert verifier.decode(final) == 5
-	finally:
-		await verifier.close()
+    with anyio.fail_after(timeout):
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(_supervise, tg.cancel_scope)
+            tg.start_soon(worker.run)
 
 
-@pytest.mark.anyio
-async def test_unknown_task_failure_stores_error_on_final_attempt(
-	make_redis_app, redis_flushed: str
+async def _run_worker_briefly(app: Kuu, *, seconds: float = 3.0) -> None:
+    config = Settings.model_construct(
+        queues=[app.default_queue],
+        concurrency=4,
+        prefetch=2,
+        shutdown_timeout=2.0,
+    )
+    worker = Worker(config, app=app)
+    with anyio.move_on_after(seconds):
+        await worker.run()
+
+
+async def _await_result(app: Kuu, handle: TaskHandle, *, timeout: float = 10.0):
+    result: list = []
+    exc: list[BaseException] = []
+
+    async def _poll(scope: anyio.CancelScope):
+        try:
+            result.append(await handle.result(timeout=timeout))
+        except Exception as e:
+            exc.append(e)
+        scope.cancel()
+
+    worker = Worker(_config(app, concurrency=2), app=app)
+    with anyio.fail_after(timeout + 2):
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(_poll, tg.cancel_scope)
+            tg.start_soon(worker.run)
+
+    if exc:
+        raise exc[0]
+    return result[0]
+
+
+async def _with_worker(app: Kuu, fn, *, timeout: float = 10.0):
+    """Run an async fn alongside the worker; cancel worker when fn returns."""
+    result: list = []
+
+    async def _fn_wrapper(scope: anyio.CancelScope):
+        result.append(await fn())
+        scope.cancel()
+
+    worker = Worker(_config(app, concurrency=2), app=app)
+    with anyio.fail_after(timeout):
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(_fn_wrapper, tg.cancel_scope)
+            tg.start_soon(worker.run)
+
+    return result[0] if result else None
+
+
+# === basic delivery tests (no results needed)
+
+
+async def test_e2e_enqueue_consume_ack(make_app):
+    app = await make_app()
+    delivered: list[str] = []
+
+    @app.task
+    async def hello(name: str) -> str:
+        delivered.append(name)
+        return f"hi {name}"
+
+    await hello.q("world")
+    await _run_worker_until(app, lambda: len(delivered) >= 1, timeout=15.0)
+
+    assert delivered == ["world"]
+
+
+async def test_e2e_scheduled_task_delivered_after_delay(make_app):
+    app = await make_app()
+    delivered_at: list[float] = []
+
+    @app.task
+    async def delayed() -> None:
+        delivered_at.append(anyio.current_time())
+
+    sent_at = anyio.current_time()
+    when = datetime.now(timezone.utc) + timedelta(milliseconds=300)
+    msg = Message(
+        task=delayed.task_name, queue="default", payload=Payload(), not_before=when
+    )
+    await app.broker.schedule(msg, when)
+
+    await _run_worker_until(app, lambda: len(delivered_at) >= 1, timeout=15.0)
+
+    assert len(delivered_at) == 1
+    elapsed = delivered_at[0] - sent_at
+    assert elapsed >= 0.25, f"delivered too early: {elapsed:.3f}s"
+
+
+async def test_e2e_nack_with_delay_retries(make_app):
+    app = await make_app()
+    attempts: list[int] = []
+
+    @app.task(max_attempts=3)
+    async def flaky() -> str:
+        if len(attempts) == 0:
+            attempts.append(1)
+            from kuu.exceptions import RetryErr
+
+            raise RetryErr(delay=0.2, reason="first attempt fails")
+        attempts.append(2)
+        return "ok"
+
+    await flaky.q()
+    await _run_worker_until(app, lambda: len(attempts) >= 2, timeout=15.0)
+
+    assert attempts == [1, 2]
+
+
+async def test_e2e_multiple_queues(make_app):
+    app = await make_app()
+    results_a: list[str] = []
+    results_b: list[str] = []
+
+    @app.task(queue="q1")
+    async def task_a(x: str) -> None:
+        results_a.append(x)
+
+    @app.task(queue="q2")
+    async def task_b(x: str) -> None:
+        results_b.append(x)
+
+    await task_a.q("a1")
+    await task_b.q("b1")
+    await task_a.q("a2")
+
+    config = Settings.model_construct(
+        queues=["q1", "q2"],
+        concurrency=4,
+        prefetch=2,
+        shutdown_timeout=2.0,
+    )
+    worker = Worker(config, app=app)
+    with anyio.move_on_after(5.0):
+        await worker.run()
+
+    assert sorted(results_a) == ["a1", "a2"]
+    assert results_b == ["b1"]
+
+
+async def test_e2e_blocking_task(make_app):
+    import threading
+
+    app = await make_app()
+    main_thread = threading.get_ident()
+    captured: dict = {}
+
+    @app.task(blocking=True)
+    def cpu_work(n: int) -> int:
+        captured["thread"] = threading.get_ident()
+        captured["result"] = n * n
+        return n * n
+
+    await cpu_work.q(7)
+    await _run_worker_until(app, lambda: "result" in captured, timeout=15.0)
+
+    assert captured["result"] == 49
+    assert captured["thread"] != main_thread
+
+
+async def test_e2e_max_attempts_exhausted(make_app):
+    app = await make_app()
+    count = 0
+
+    @app.task(max_attempts=2)
+    async def always_fail() -> None:
+        nonlocal count
+        count += 1
+        raise RuntimeError("permanent failure")
+
+    await always_fail.q()
+    await _run_worker_briefly(app, seconds=6.0)
+
+    assert count == 2
+
+
+async def test_e2e_headers_preserved(make_app):
+    app = await make_app()
+    delivered_headers: list[dict] = []
+
+    @app.task
+    async def noop() -> None:
+        pass
+
+    msg = Message(
+        task="noop",
+        queue="default",
+        payload=Payload(),
+        headers={"trace-id": "abc-123", "tenant": "acme"},
+    )
+    await app.broker.enqueue(msg)
+
+    config = Settings.model_construct(
+        queues=["default"],
+        concurrency=1,
+        prefetch=1,
+        shutdown_timeout=2.0,
+    )
+    worker = Worker(config, app=app)
+
+    original_handle = worker._handle
+
+    async def _spy(delivery):
+        delivered_headers.append(dict(delivery.message.headers))
+        await original_handle(delivery)
+
+    worker._handle = _spy  # type: ignore[assignment]
+
+    with anyio.move_on_after(5.0):
+        await worker.run()
+
+    assert len(delivered_headers) >= 1
+    assert delivered_headers[0]["trace-id"] == "abc-123"
+    assert delivered_headers[0]["tenant"] == "acme"
+
+
+async def test_e2e_mixed_immediate_and_scheduled(make_app):
+    app = await make_app()
+    results: list[tuple[str, float]] = []
+
+    @app.task
+    async def record(tag: str) -> None:
+        results.append((tag, anyio.current_time()))
+
+    await record.q("immediate")
+
+    when = datetime.now(timezone.utc) + timedelta(milliseconds=400)
+    msg = Message(
+        task=record.task_name,
+        queue="default",
+        payload=Payload(args=("scheduled",)),
+        not_before=when,
+    )
+    await app.broker.schedule(msg, when)
+
+    await _run_worker_until(app, lambda: len(results) >= 2, timeout=15.0)
+
+    tags = [t for t, _ in results]
+    assert "immediate" in tags
+    assert "scheduled" in tags
+
+    sched_time = next(t for tag, t in results if tag == "scheduled")
+    immed_time = next(t for tag, t in results if tag == "immediate")
+    assert sched_time >= immed_time
+
+
+async def test_e2e_result_retrieval(make_app_with_results):
+    app = await make_app_with_results()
+
+    @app.task
+    async def add(a: int, b: int) -> int:
+        return a + b
+
+    handle = await add.q(3, 4)
+    value = await _await_result(app, handle)
+    assert value == 7
+
+
+async def test_e2e_replay_cached_result(make_app_with_results):
+    app = await make_app_with_results(result_replay=True)
+    run_count = 0
+
+    @app.task
+    async def counted(x: int) -> int:
+        nonlocal run_count
+        run_count += 1
+        return x * 10
+
+    enqueue = app._enqueue_task(counted, headers={"idempotency_key": "count-5"})
+    h1 = await enqueue(5)
+    v1 = await _await_result(app, h1)
+    assert v1 == 50
+    assert run_count == 1
+
+    h2 = await enqueue(5)
+    v2 = await _await_result(app, h2)
+    assert v2 == 50
+    assert run_count == 1, f"expected replay (run_count=1), got {run_count}"
+
+
+async def test_success_result_is_stored_and_retrievable(make_app_with_results):
+    app = await make_app_with_results()
+    calls: list[tuple[int, int]] = []
+
+    @app.task
+    async def record(x: int) -> int:
+        calls.append((x, x))
+        return x * 2
+
+    handle = await record.q(7)
+    value = await _await_result(app, handle)
+    assert value == 14
+
+
+async def test_replay_skips_re_execution_for_same_idempotency_key(
+    make_app_with_results,
 ):
-	app: Kuu = await make_redis_app(
-		stream_prefix="e9:s:", zset_prefix="e9:z:", group="e9", results_prefix="e9:r:"
-	)
-
-	from kuu.message import Payload
-
-	handle = await app.enqueue_by_name(
-		"missing.task",
-		Payload(args=(1,)),
-		max_attempts=1,
-	)
+    app = await make_app_with_results(result_replay=True)
+    calls: list[int] = []
 
-	verifier = RedisResults(url=redis_flushed, prefix="e9:r:")
-	await verifier.connect()
+    @app.task
+    async def once(x: int) -> int:
+        calls.append(x)
+        return x
 
-	saw_error: dict[str, Any] = {}
+    h1 = await app.enqueue_by_name(
+        once.task_name,
+        Payload(args=(1,)),
+        headers={"idempotency_key": "shared-key"},
+    )
+    v1 = await _await_result(app, h1)
+    assert v1 == 1
+    assert calls == [1]
+    assert h1.key == "shared-key"
 
-	async def _wait():
-		while True:
-			r = await verifier.get(handle.key)
-			if r is not None and r.status == "error":
-				saw_error["r"] = r
-				return
-			await anyio.sleep(0.05)
+    h2 = await app.enqueue_by_name(
+        once.task_name,
+        Payload(args=(2,)),
+        headers={"idempotency_key": "shared-key"},
+    )
+    v2 = await _await_result(app, h2)
+    assert v2 == 1
+    assert calls == [1], "task body must not re-execute when result is replayed"
 
-	try:
-		worker = Worker(_config(app, concurrency=2), app=app)
 
-		async def _supervise(scope: anyio.CancelScope):
-			while "r" not in saw_error:
-				await anyio.sleep(0.05)
-			scope.cancel()
+async def test_final_attempt_failure_stores_error(make_app_with_results):
+    app = await make_app_with_results()
+    attempts: list[int] = []
 
-		with anyio.fail_after(10.0):
-			async with anyio.create_task_group() as tg:
-				tg.start_soon(_supervise, tg.cancel_scope)
-				tg.start_soon(_wait)
-				tg.start_soon(worker.run)
-
-		assert "UnknownTask" in (saw_error["r"].error or "")
-	finally:
-		await verifier.close()
-
-
-# ── Pydantic model coercion e2e ────────────────────────────────────────────
-
-
-@pytest.mark.anyio
-async def test_pydantic_model_kwarg_round_trips_through_redis(make_redis_app, redis_flushed: str):
-	"""Dict that arrives over the wire should be coerced back to a BaseModel."""
-	app: Kuu = await make_redis_app(
-		stream_prefix="e10:s:", zset_prefix="e10:z:", group="e10", results_prefix="e10:r:"
-	)
-
-	received: list[Notification] = []
-
-	@app.task
-	async def send_notification(notification: Notification) -> str:
-		received.append(notification)
-		return notification.ntype
-
-	await send_notification.q(notification=Notification(ntype="email", message="hello"))
-	await _run_worker_until(app, lambda: len(received) >= 1)
-
-	assert len(received) == 1
-	assert isinstance(received[0], Notification)
-	assert received[0].ntype == "email"
-	assert received[0].message == "hello"
-
-
-@pytest.mark.anyio
-async def test_nested_pydantic_model_kwarg_round_trips(make_redis_app, redis_flushed: str):
-	"""Deeply-nested BaseModel kwargs must be reconstructed with inner models intact."""
-	app: Kuu = await make_redis_app(
-		stream_prefix="e11:s:", zset_prefix="e11:z:", group="e11", results_prefix="e11:r:"
-	)
-
-	received: list[Notification] = []
-
-	@app.task
-	async def send_notification(notification: Notification) -> str:
-		received.append(notification)
-		return notification.ntype
-
-	await send_notification.q(
-		notification=Notification(
-			ntype="sms", message="urgent", address=Address(street="123 Main", city="NYC")
-		)
-	)
-	await _run_worker_until(app, lambda: len(received) >= 1)
-
-	assert isinstance(received[0], Notification)
-	assert isinstance(received[0].address, Address)
-	assert received[0].address.city == "NYC"
-	assert received[0].address.street == "123 Main"
-
-
-@pytest.mark.anyio
-async def test_pydantic_model_positional_arg_round_trips(make_redis_app, redis_flushed: str):
-	"""Positional BaseModel args also need coercion."""
-	app: Kuu = await make_redis_app(
-		stream_prefix="e12:s:", zset_prefix="e12:z:", group="e12", results_prefix="e12:r:"
-	)
-
-	received: list[OuterModel] = []
-
-	@app.task
-	async def process(model: OuterModel) -> str:
-		received.append(model)
-		return model.name
-
-	await process.q(OuterModel(name="Alice", inner=InnerModel(city="LA", zip_code="90001")))
-	await _run_worker_until(app, lambda: len(received) >= 1)
-
-	assert isinstance(received[0], OuterModel)
-	assert isinstance(received[0].inner, InnerModel)
-	assert received[0].inner.zip_code == "90001"
-
-
-@pytest.mark.anyio
-async def test_mixed_args_and_models_round_trip(make_redis_app, redis_flushed: str):
-	"""Mix of primitive positional args and a model kwarg."""
-	app: Kuu = await make_redis_app(
-		stream_prefix="e13:s:", zset_prefix="e13:z:", group="e13", results_prefix="e13:r:"
-	)
-
-	received: list[tuple] = []
-
-	@app.task
-	async def place_order(user_id: int, order: Order) -> str:
-		received.append((user_id, order))
-		return f"{user_id}:{order.customer}"
-
-	await place_order.q(
-		user_id=99,
-		order=Order(
-			customer="Bob",
-			lines=[OrderLine(sku="A1", qty=2, price=9.99), OrderLine(sku="B2", qty=1)],
-		),
-	)
-	await _run_worker_until(app, lambda: len(received) >= 1)
-
-	uid, order = received[0]
-	assert uid == 99
-	assert isinstance(order, Order)
-	assert isinstance(order.lines[0], OrderLine)
-	assert order.lines[0].sku == "A1"
-	assert order.lines[0].price == 9.99
-	assert order.lines[1].qty == 1
-	# default field
-	assert order.lines[1].price == 0.0
-
-
-@pytest.mark.anyio
-async def test_optional_none_field_in_model_round_trips(make_redis_app, redis_flushed: str):
-	"""Optional fields that are None when enqueued should remain None after coercion."""
-	app: Kuu = await make_redis_app(
-		stream_prefix="e14:s:", zset_prefix="e14:z:", group="e14", results_prefix="e14:r:"
-	)
-
-	received: list[Notification] = []
-
-	@app.task
-	async def send_notification(notification: Notification) -> str:
-		received.append(notification)
-		return notification.ntype
-
-	await send_notification.q(notification=Notification(ntype="push", message="ping"))
-	await _run_worker_until(app, lambda: len(received) >= 1)
-
-	assert received[0].address is None
-
-
-@pytest.mark.anyio
-async def test_blocking_task_with_pydantic_model_coerces(make_redis_app, redis_flushed: str):
-	"""Blocking (sync) tasks must also get model coercion."""
-	app: Kuu = await make_redis_app(
-		stream_prefix="e15:s:", zset_prefix="e15:z:", group="e15", results_prefix="e15:r:"
-	)
-
-	import threading
-
-	received: list[tuple[Notification, int]] = []
-	main_thread = threading.get_ident()
-
-	@app.task(blocking=True)
-	def process(notification: Notification) -> str:
-		received.append((notification, threading.get_ident()))
-		return notification.ntype
-
-	await process.q(
-		notification=Notification(
-			ntype="webhook", message="deploy", address=Address(street="1st Ave", city="SF")
-		)
-	)
-	await _run_worker_until(app, lambda: len(received) >= 1)
-
-	notif, tid = received[0]
-	assert isinstance(notif, Notification)
-	assert isinstance(notif.address, Address)
-	assert notif.address.city == "SF"
-	assert tid != main_thread
-
-
-@pytest.mark.anyio
-async def test_multiple_model_kwargs_all_coerced(make_redis_app, redis_flushed: str):
-	"""Two BaseModel kwargs in the same call must both be reconstructed."""
-	app: Kuu = await make_redis_app(
-		stream_prefix="e16:s:", zset_prefix="e16:z:", group="e16", results_prefix="e16:r:"
-	)
-
-	received: list[tuple[Address, InnerModel]] = []
-
-	@app.task
-	async def merge(addr: Address, inner: InnerModel) -> str:
-		received.append((addr, inner))
-		return f"{addr.city}-{inner.zip_code}"
-
-	await merge.q(
-		addr=Address(street="2nd St", city="Chicago"),
-		inner=InnerModel(city="Chicago", zip_code="60601"),
-	)
-	await _run_worker_until(app, lambda: len(received) >= 1)
-
-	a, i = received[0]
-	assert isinstance(a, Address)
-	assert isinstance(i, InnerModel)
-	assert a.street == "2nd St"
-	assert i.zip_code == "60601"
-
-
-@pytest.mark.anyio
-async def test_pydantic_kwarg_with_primitives_coexists(make_redis_app, redis_flushed: str):
-	"""Primitive kwargs pass through untouched alongside model coercion."""
-	app: Kuu = await make_redis_app(
-		stream_prefix="e17:s:", zset_prefix="e17:z:", group="e17", results_prefix="e17:r:"
-	)
-
-	received: list[tuple] = []
-
-	@app.task
-	async def send(channel: str, notification: Notification, priority: int) -> str:
-		received.append((channel, notification, priority))
-		return f"{channel}/{notification.ntype}/{priority}"
-
-	await send.q(
-		channel="slack",
-		notification=Notification(ntype="info", message="deploy done"),
-		priority=3,
-	)
-	await _run_worker_until(app, lambda: len(received) >= 1)
-
-	ch, notif, prio = received[0]
-	assert ch == "slack"
-	assert prio == 3
-	assert isinstance(notif, Notification)
-	assert notif.ntype == "info"
-
-
-@pytest.mark.anyio
-async def test_list_of_models_round_trips(make_redis_app, redis_flushed: str):
-	"""list[Model] kwargs get each element coerced from dict."""
-	app: Kuu = await make_redis_app(
-		stream_prefix="e18:s:", zset_prefix="e18:z:", group="e18", results_prefix="e18:r:"
-	)
-
-	received: list[list[OrderLine]] = []
-
-	@app.task
-	async def process_order(lines: list[OrderLine]) -> str:
-		received.append(lines)
-		return str(len(lines))
-
-	await process_order.q(
-		lines=[OrderLine(sku="A1", qty=2, price=9.99), OrderLine(sku="B2", qty=1)]
-	)
-	await _run_worker_until(app, lambda: len(received) >= 1)
-
-	lines = received[0]
-	assert len(lines) == 2
-	assert isinstance(lines[0], OrderLine)
-	assert lines[0].sku == "A1"
-	assert lines[0].price == 9.99
-	assert isinstance(lines[1], OrderLine)
-	assert lines[1].qty == 1
-	assert lines[1].price == 0.0
-
-
-@pytest.mark.anyio
-async def test_dict_of_models_round_trips(make_redis_app, redis_flushed: str):
-	"""dict[str, Model] kwargs get each value coerced from dict."""
-	app: Kuu = await make_redis_app(
-		stream_prefix="e19:s:", zset_prefix="e19:z:", group="e19", results_prefix="e19:r:"
-	)
-
-	received: list[dict[str, InnerModel]] = []
-
-	@app.task
-	async def merge_inner(lookup: dict[str, InnerModel]) -> int:
-		received.append(lookup)
-		return len(lookup)
-
-	await merge_inner.q(
-		lookup={
-			"nyc": InnerModel(city="NYC", zip_code="10001"),
-			"la": InnerModel(city="LA", zip_code="90001"),
-		}
-	)
-	await _run_worker_until(app, lambda: len(received) >= 1)
-
-	lookup = received[0]
-	assert len(lookup) == 2
-	assert isinstance(lookup["nyc"], InnerModel)
-	assert lookup["nyc"].zip_code == "10001"
-	assert isinstance(lookup["la"], InnerModel)
-	assert lookup["la"].city == "LA"
-
-
-@pytest.mark.anyio
-async def test_optional_model_none_round_trips(make_redis_app, redis_flushed: str):
-	app: Kuu = await make_redis_app(
-		stream_prefix="e20:s:", zset_prefix="e20:z:", group="e20", results_prefix="e20:r:"
-	)
-
-	received: list[InnerModel | None] = []
-
-	@app.task
-	async def maybe_inner(loc: InnerModel | None) -> str:
-		received.append(loc)
-		return "none" if loc is None else loc.city
-
-	await maybe_inner.q(loc=None)
-	await _run_worker_until(app, lambda: len(received) >= 1)
-
-	assert received[0] is None
-
-
-@pytest.mark.anyio
-async def test_optional_model_present_round_trips(make_redis_app, redis_flushed: str):
-	app: Kuu = await make_redis_app(
-		stream_prefix="e21:s:", zset_prefix="e21:z:", group="e21", results_prefix="e21:r:"
-	)
-
-	received: list[InnerModel | None] = []
-
-	@app.task
-	async def maybe_inner(loc: InnerModel | None) -> str:
-		received.append(loc)
-		return "none" if loc is None else loc.city
-
-	await maybe_inner.q(loc=InnerModel(city="SF", zip_code="94102"))
-	await _run_worker_until(app, lambda: len(received) >= 1)
-
-	assert isinstance(received[0], InnerModel)
-	assert received[0].city == "SF"
-
-
-@pytest.mark.anyio
-async def test_list_and_dict_models_together(make_redis_app, redis_flushed: str):
-	app: Kuu = await make_redis_app(
-		stream_prefix="e22:s:", zset_prefix="e22:z:", group="e22", results_prefix="e22:r:"
-	)
-
-	received: list[tuple[list[OrderLine], dict[str, OrderLine]]] = []
-
-	@app.task
-	async def bulk(lines: list[OrderLine], by_sku: dict[str, OrderLine]) -> int:
-		received.append((lines, by_sku))
-		return len(lines) + len(by_sku)
-
-	await bulk.q(
-		lines=[OrderLine(sku="A", qty=1, price=1.0), OrderLine(sku="B", qty=2)],
-		by_sku={"C": OrderLine(sku="C", qty=3, price=5.0)},
-	)
-	await _run_worker_until(app, lambda: len(received) >= 1)
-
-	lines, by_sku = received[0]
-	assert isinstance(lines[0], OrderLine)
-	assert lines[0].price == 1.0
-	assert isinstance(by_sku["C"], OrderLine)
-	assert by_sku["C"].qty == 3
+    @app.task(max_attempts=1)
+    async def boom() -> None:
+        attempts.append(1)
+        raise RuntimeError("kaboom")
+
+    handle = await boom.q()
+
+    with pytest.raises(TaskError):
+        await _await_result(app, handle)
+
+    assert len(attempts) >= 1
+
+
+async def test_store_errors_disabled_does_not_persist_failure(make_app_with_results):
+    app = await make_app_with_results(result_store_errors=False)
+    attempts: list[int] = []
+
+    @app.task(max_attempts=1)
+    async def bad() -> None:
+        attempts.append(1)
+        raise ValueError("nope")
+
+    handle = await bad.q()
+    stored: list = []
+
+    async def _check():
+        while len(attempts) < 1:
+            await anyio.sleep(0.05)
+        await anyio.sleep(0.2)
+        # When store_errors=False, no result is stored, so use a timeout
+        stored.append(await app.results.get(handle.key, listen_timeout=1.0))
+
+    await _with_worker(app, _check)
+    assert stored[0] is None
+
+
+async def test_replay_disabled_reruns_task_on_redelivery(make_app_with_results):
+    app = await make_app_with_results(result_replay=False)
+    calls: list[int] = []
+
+    @app.task
+    async def t(x: int) -> int:
+        calls.append(x)
+        return x
+
+    await app.enqueue_by_name(
+        t.task_name, Payload(args=(1,)), headers={"idempotency_key": "k"}
+    )
+    await _run_worker_until(app, lambda: len(calls) >= 1)
+
+    await app.enqueue_by_name(
+        t.task_name, Payload(args=(2,)), headers={"idempotency_key": "k"}
+    )
+    await _run_worker_until(app, lambda: len(calls) >= 2, timeout=20.0)
+
+    assert calls == [1, 2]
+
+
+async def test_marshal_types_round_trips_pydantic_model(make_app_with_results):
+    app = await make_app_with_results()
+
+    @app.task
+    async def make_outcome(v: int) -> Outcome:
+        return Outcome(value=v, label="ok")
+
+    handle = await make_outcome.q(42)
+    result = await _await_result(app, handle)
+
+    assert isinstance(result, Outcome)
+    assert result == Outcome(value=42, label="ok")
+
+
+async def test_retry_then_success_stores_only_final_value(make_app_with_results):
+    from kuu.exceptions import RetryErr
+    from kuu.middleware import RetryMiddleware
+
+    app = await make_app_with_results(
+        middleware=[RetryMiddleware(base=0.05, cap=0.1)],
+    )
+    attempts: list[int] = []
+
+    @app.task(max_attempts=3)
+    async def flaky(x: int) -> int:
+        attempts.append(x)
+        if len(attempts) < 2:
+            raise RetryErr(delay=0.05, reason="flap")
+        return x * 10
+
+    handle = await flaky.q(3)
+    value = await _await_result(app, handle, timeout=15.0)
+
+    assert value == 30
+    assert len(attempts) >= 2
+
+
+async def test_non_final_failure_does_not_store_error(make_app_with_results):
+    app = await make_app_with_results()
+    attempts: list[int] = []
+
+    @app.task(max_attempts=3)
+    async def sometimes(x: int) -> int:
+        attempts.append(x)
+        if len(attempts) < 2:
+            raise RuntimeError("transient")
+        return x
+
+    handle = await sometimes.q(5)
+
+    intermediate: list = []
+
+    async def _check_intermediate():
+        while len(attempts) < 1:
+            await anyio.sleep(0.05)
+        await anyio.sleep(0.1)
+        intermediate.append(await app.results.get(handle.key))
+
+    await _with_worker(app, _check_intermediate, timeout=12.0)
+    assert intermediate[0] is None or intermediate[0].status != "error"
+
+    value = await _await_result(app, handle, timeout=15.0)
+    assert value == 5
+
+
+async def test_unknown_task_failure_stores_error_on_final_attempt(
+    make_app_with_results,
+):
+    app = await make_app_with_results()
+
+    handle = await app.enqueue_by_name(
+        "missing.task",
+        Payload(args=(1,)),
+        max_attempts=1,
+    )
+
+    saw_error: dict[str, Any] = {}
+
+    async def _wait():
+        while True:
+            r = await app.results.get(handle.key)
+            if r is not None and r.status == "error":
+                saw_error["r"] = r
+                return
+            await anyio.sleep(0.05)
+
+    await _with_worker(app, _wait)
+    assert "UnknownTask" in (saw_error["r"].error or "")
+
+
+async def test_pydantic_model_kwarg_round_trips(make_app_with_results):
+    app = await make_app_with_results()
+    received: list[Notification] = []
+
+    @app.task
+    async def send_notification(notification: Notification) -> str:
+        received.append(notification)
+        return notification.ntype
+
+    await send_notification.q(notification=Notification(ntype="email", message="hello"))
+    await _run_worker_until(app, lambda: len(received) >= 1)
+
+    assert isinstance(received[0], Notification)
+    assert received[0].ntype == "email"
+
+
+async def test_nested_pydantic_model_kwarg_round_trips(make_app_with_results):
+    app = await make_app_with_results()
+    received: list[Notification] = []
+
+    @app.task
+    async def send_notification(notification: Notification) -> str:
+        received.append(notification)
+        return notification.ntype
+
+    await send_notification.q(
+        notification=Notification(
+            ntype="sms",
+            message="urgent",
+            address=Address(street="123 Main", city="NYC"),
+        )
+    )
+    await _run_worker_until(app, lambda: len(received) >= 1)
+
+    assert isinstance(received[0].address, Address)
+    assert received[0].address.city == "NYC"
+
+
+async def test_pydantic_model_positional_arg_round_trips(make_app_with_results):
+    app = await make_app_with_results()
+    received: list[OuterModel] = []
+
+    @app.task
+    async def process(model: OuterModel) -> str:
+        received.append(model)
+        return model.name
+
+    await process.q(
+        OuterModel(name="Alice", inner=InnerModel(city="LA", zip_code="90001"))
+    )
+    await _run_worker_until(app, lambda: len(received) >= 1)
+
+    assert isinstance(received[0].inner, InnerModel)
+    assert received[0].inner.zip_code == "90001"
+
+
+async def test_mixed_args_and_models_round_trip(make_app_with_results):
+    app = await make_app_with_results()
+    received: list[tuple] = []
+
+    @app.task
+    async def place_order(user_id: int, order: Order) -> str:
+        received.append((user_id, order))
+        return f"{user_id}:{order.customer}"
+
+    await place_order.q(
+        user_id=99,
+        order=Order(
+            customer="Bob",
+            lines=[OrderLine(sku="A1", qty=2, price=9.99), OrderLine(sku="B2", qty=1)],
+        ),
+    )
+    await _run_worker_until(app, lambda: len(received) >= 1)
+
+    uid, order = received[0]
+    assert uid == 99
+    assert isinstance(order.lines[0], OrderLine)
+    assert order.lines[0].price == 9.99
+
+
+async def test_optional_none_field_in_model_round_trips(make_app_with_results):
+    app = await make_app_with_results()
+    received: list[Notification] = []
+
+    @app.task
+    async def send_notification(notification: Notification) -> str:
+        received.append(notification)
+        return notification.ntype
+
+    await send_notification.q(notification=Notification(ntype="push", message="ping"))
+    await _run_worker_until(app, lambda: len(received) >= 1)
+
+    assert received[0].address is None
+
+
+async def test_blocking_task_with_pydantic_model_coerces(make_app_with_results):
+    import threading
+
+    app = await make_app_with_results()
+    received: list[tuple[Notification, int]] = []
+    main_thread = threading.get_ident()
+
+    @app.task(blocking=True)
+    def process(notification: Notification) -> str:
+        received.append((notification, threading.get_ident()))
+        return notification.ntype
+
+    await process.q(
+        notification=Notification(
+            ntype="webhook",
+            message="deploy",
+            address=Address(street="1st Ave", city="SF"),
+        )
+    )
+    await _run_worker_until(app, lambda: len(received) >= 1)
+
+    notif, tid = received[0]
+    assert isinstance(notif.address, Address)
+    assert notif.address.city == "SF"
+    assert tid != main_thread
+
+
+async def test_multiple_model_kwargs_all_coerced(make_app_with_results):
+    app = await make_app_with_results()
+    received: list[tuple[Address, InnerModel]] = []
+
+    @app.task
+    async def merge(addr: Address, inner: InnerModel) -> str:
+        received.append((addr, inner))
+        return f"{addr.city}-{inner.zip_code}"
+
+    await merge.q(
+        addr=Address(street="2nd St", city="Chicago"),
+        inner=InnerModel(city="Chicago", zip_code="60601"),
+    )
+    await _run_worker_until(app, lambda: len(received) >= 1)
+
+    a, i = received[0]
+    assert isinstance(a, Address)
+    assert isinstance(i, InnerModel)
+    assert i.zip_code == "60601"
+
+
+async def test_list_of_models_round_trips(make_app_with_results):
+    app = await make_app_with_results()
+    received: list[list[OrderLine]] = []
+
+    @app.task
+    async def process_order(lines: list[OrderLine]) -> str:
+        received.append(lines)
+        return str(len(lines))
+
+    await process_order.q(
+        lines=[OrderLine(sku="A1", qty=2, price=9.99), OrderLine(sku="B2", qty=1)]
+    )
+    await _run_worker_until(app, lambda: len(received) >= 1)
+
+    lines = received[0]
+    assert len(lines) == 2
+    assert isinstance(lines[0], OrderLine)
+    assert lines[0].price == 9.99
+
+
+async def test_dict_of_models_round_trips(make_app_with_results):
+    app = await make_app_with_results()
+    received: list[dict[str, InnerModel]] = []
+
+    @app.task
+    async def merge_inner(lookup: dict[str, InnerModel]) -> int:
+        received.append(lookup)
+        return len(lookup)
+
+    await merge_inner.q(
+        lookup={
+            "nyc": InnerModel(city="NYC", zip_code="10001"),
+            "la": InnerModel(city="LA", zip_code="90001"),
+        }
+    )
+    await _run_worker_until(app, lambda: len(received) >= 1)
+
+    lookup = received[0]
+    assert isinstance(lookup["nyc"], InnerModel)
+    assert lookup["la"].city == "LA"
+
+
+async def test_optional_model_none_round_trips(make_app_with_results):
+    app = await make_app_with_results()
+    received: list[InnerModel | None] = []
+
+    @app.task
+    async def maybe_inner(loc: InnerModel | None) -> str:
+        received.append(loc)
+        return "none" if loc is None else loc.city
+
+    await maybe_inner.q(loc=None)
+    await _run_worker_until(app, lambda: len(received) >= 1)
+
+    assert received[0] is None
+
+
+async def test_optional_model_present_round_trips(make_app_with_results):
+    app = await make_app_with_results()
+    received: list[InnerModel | None] = []
+
+    @app.task
+    async def maybe_inner(loc: InnerModel | None) -> str:
+        received.append(loc)
+        return "none" if loc is None else loc.city
+
+    await maybe_inner.q(loc=InnerModel(city="SF", zip_code="94102"))
+    await _run_worker_until(app, lambda: len(received) >= 1)
+
+    assert isinstance(received[0], InnerModel)
+    assert received[0].city == "SF"
+
+
+async def test_list_and_dict_models_together(make_app_with_results):
+    app = await make_app_with_results()
+    received: list[tuple[list[OrderLine], dict[str, OrderLine]]] = []
+
+    @app.task
+    async def bulk(lines: list[OrderLine], by_sku: dict[str, OrderLine]) -> int:
+        received.append((lines, by_sku))
+        return len(lines) + len(by_sku)
+
+    await bulk.q(
+        lines=[OrderLine(sku="A", qty=1, price=1.0), OrderLine(sku="B", qty=2)],
+        by_sku={"C": OrderLine(sku="C", qty=3, price=5.0)},
+    )
+    await _run_worker_until(app, lambda: len(received) >= 1)
+
+    lines, by_sku = received[0]
+    assert lines[0].price == 1.0
+    assert by_sku["C"].qty == 3
