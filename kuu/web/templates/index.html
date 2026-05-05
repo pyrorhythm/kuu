@@ -3,7 +3,7 @@
 {% block content %}
 
 <!-- stats strip, polled every 2s -->
-<div hx-get="/fragments/stats" hx-trigger="load, every 2s" hx-swap="innerHTML">
+<div hx-get="fragments/stats" hx-trigger="load, every 2s" hx-swap="innerHTML">
 	<div class="stat-strip">
 		<div class="stat-cell">
 			<div class="stat-num dim">—</div>
@@ -42,14 +42,14 @@
 <div class="col2">
 	<div class="surface">
 		<div class="surface-head"><span class="surface-title">tasks</span></div>
-		<div class="surface-body flush" hx-get="/fragments/tasks" hx-trigger="load, every 5s" hx-swap="innerHTML">
+		<div class="surface-body flush" hx-get="fragments/tasks" hx-trigger="load, every 5s" hx-swap="innerHTML">
 			<p class="placeholder">loading…</p>
 		</div>
 	</div>
 
 	<div class="surface">
 		<div class="surface-head"><span class="surface-title">scheduler</span></div>
-		<div id="scheduler-frag" class="surface-body flush" hx-get="/fragments/scheduler" hx-trigger="load, every 5s" hx-swap="innerHTML">
+		<div id="scheduler-frag" class="surface-body flush" hx-get="fragments/scheduler" hx-trigger="load, every 5s" hx-swap="innerHTML">
 			<p class="placeholder">loading…</p>
 		</div>
 	</div>
@@ -59,7 +59,7 @@
 <!-- workers -->
 <div class="surface">
 	<div class="surface-head"><span class="surface-title">workers</span></div>
-	<div class="surface-body flush" hx-get="/fragments/workers" hx-trigger="load, every 3s" hx-swap="innerHTML">
+	<div class="surface-body flush" hx-get="fragments/workers" hx-trigger="load, every 3s" hx-swap="innerHTML">
 		<p class="placeholder">loading…</p>
 	</div>
 </div>
@@ -148,7 +148,7 @@
 
 		async function refresh() {
 			try {
-				const r = await fetch('/api/activity');
+				const r = await fetch('api/activity');
 				const d = await r.json();
 				chart.setOption({
 					xAxis: { data: d.times.map(t => new Date(t * 1000).toLocaleTimeString()) },

@@ -3,8 +3,8 @@ from dataclasses import dataclass
 
 try:
 	import asyncpg
-	from asyncpg.connect_utils import _ClientConfiguration
 	import asyncpg.protocol
+	from asyncpg.connect_utils import _ClientConfiguration
 except ImportError:
 	raise
 
@@ -46,8 +46,8 @@ class PostgresParams(PostgresConfig):
 	@property
 	def conn_config(self) -> _ClientConfiguration:
 		return _ClientConfiguration(
-				statement_cache_size=self.statement_cache_size,
-				max_cached_statement_lifetime=self.max_cached_statement_lifetime,
-				max_cacheable_statement_size=self.max_cacheable_statement_size,
-				command_timeout=self.command_timeout,
+			statement_cache_size=self.statement_cache_size,
+			max_cached_statement_lifetime=self.max_cached_statement_lifetime,
+			max_cacheable_statement_size=self.max_cacheable_statement_size,
+			command_timeout=self.command_timeout,
 		)
