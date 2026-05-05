@@ -4,7 +4,8 @@ from starlette.responses import HTMLResponse
 
 from kuu.app import Kuu
 from kuu.brokers.redis import RedisBroker
-from kuu.orchestrator.main import Orchestrator
+from kuu.observability import InstanceRegistry
+from kuu.orchestrator.main import PresetSupervisor
 from kuu.scheduler.scheduler import Scheduler
 from kuu.web.stats import StatsCollector
 
@@ -13,7 +14,8 @@ class DashboardFragmentsMixin:
 	app: Kuu
 	title: str = "kuu dashboard"
 	scheduler: Scheduler | None = None
-	orchestrator: Orchestrator | None = None
+	orchestrator: PresetSupervisor | None = None
+	registry: InstanceRegistry | None = None
 	stats: StatsCollector
 	jinja: Environment
 

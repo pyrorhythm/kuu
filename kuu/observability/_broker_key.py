@@ -7,14 +7,27 @@ from urllib.parse import urlsplit, urlunsplit
 import orjson
 
 
-def broker_key(transport: Any) -> str:
-	identity = _identity(transport)
+def broker_key(obj: Any) -> str:
+	identity = _identity(_unwrap_broker(obj))
 	canonical = orjson.dumps(identity, option=orjson.OPT_SORT_KEYS)
 	return hashlib.sha256(canonical).hexdigest()
 
 
+def _unwrap_broker(obj: Any) -> Any:
+	cls = type(obj).__name__
+	if cls == "RedisBroker":
+		return obj._redis
+	if cls == "NatsBroker":
+		return obj.t
+	if cls == "PostgresBroker":
+		return getattr(obj, "_pg", None) or getattr(obj, "t", obj)
+	return obj
+
+
 def _identity(obj: Any) -> dict[str, Any]:
 	cls = type(obj).__name__
+	if cls == "MemoryBroker":
+		return {"type": "memory", "id": id(obj)}
 
 	if cls in {"RedisTransport", "StandaloneConfig", "ClusterConfig", "SentinelConfig"}:
 		return _redis_identity(obj)

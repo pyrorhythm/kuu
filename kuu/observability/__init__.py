@@ -1,4 +1,5 @@
 from kuu.observability._broker_key import broker_key
+from kuu.observability._local import InMemoryRegistry, MpQueueSink, MpQueueSource
 from kuu.observability._protocol import (
 	PROTOCOL_VERSION,
 	Body,
@@ -37,5 +38,8 @@ __all__ = [
 	"EventsSink",
 	"EventsSource",
 	"InstanceRegistry",
+	"InMemoryRegistry",
+	"MpQueueSink",
+	"MpQueueSource",
 	"broker_key",
 ]

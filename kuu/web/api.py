@@ -7,7 +7,7 @@ from starlette.responses import JSONResponse
 
 from kuu.app import Kuu
 from kuu.message import Payload
-from kuu.orchestrator import Orchestrator
+from kuu.orchestrator import PresetSupervisor
 from kuu.scheduler import Scheduler
 from kuu.web.stats import StatsCollector
 
@@ -81,7 +81,7 @@ def _validate_payload(fn: typing.Any, args: list, kwargs: dict) -> str | None:
 class DashbordAPIMixin:
 	app: Kuu
 	scheduler: Scheduler | None = None
-	orchestrator: Orchestrator | None = None
+	orchestrator: PresetSupervisor | None = None
 	stats: StatsCollector
 
 	async def _api_activity(self, request: Request) -> JSONResponse:

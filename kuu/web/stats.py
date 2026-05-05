@@ -18,16 +18,30 @@ class EventRecord:
 
 
 class StatsCollector:
-	def __init__(self, app: Kuu, max_events: int = 20000) -> None:
+	def __init__(
+		self,
+		app: Kuu,
+		max_events: int = 20000,
+		*,
+		connect_app_events: bool = True,
+	) -> None:
+		"""collects task lifecycle events for the dashboard
+
+		when ``connect_app_events`` is true, hooks into the local
+		``app.events`` signals (leaf / single-process mode); when false,
+		stats are fed exclusively via :meth:`ingest` (control-plane mode
+		where events arrive from subprocesses via the envelope stream)
+		"""
 		self.app = app
 		self.events_log: deque[EventRecord] = deque(maxlen=max_events)
 		self.totals = Counter()
 
-		app.events.task_enqueued.connect(self._on_enqueued)
-		app.events.task_succeeded.connect(self._on_succeeded)
-		app.events.task_failed.connect(self._on_failed)
-		app.events.task_retried.connect(self._on_retried)
-		app.events.task_dead.connect(self._on_dead)
+		if connect_app_events:
+			app.events.task_enqueued.connect(self._on_enqueued)
+			app.events.task_succeeded.connect(self._on_succeeded)
+			app.events.task_failed.connect(self._on_failed)
+			app.events.task_retried.connect(self._on_retried)
+			app.events.task_dead.connect(self._on_dead)
 
 	def _bump(self, event: str, msg: Message) -> None:
 		self.totals[event] += 1

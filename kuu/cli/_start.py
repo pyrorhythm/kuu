@@ -9,7 +9,11 @@ app = Typer()
 
 @app.command(
 	name="start",
-	help="launch kuu's orchestrator instance",
+	help=(
+		"launch kuu. without --preset, starts the control plane and forks "
+		"one supervisor per preset; with --preset, runs a single leaf "
+		"supervisor as before"
+	),
 )
 def worker(
 	config: Annotated[
@@ -25,7 +29,7 @@ def worker(
 		Option(
 			"--preset",
 			"-p",
-			help="conn_config preset, `default` if unspecified",
+			help="run only this preset as a single leaf supervisor (legacy mode)",
 		),
 	] = None,
 	override: Annotated[
@@ -40,12 +44,34 @@ def worker(
 	import anyio
 
 	from kuu.config import Kuunfig
-	from kuu.orchestrator.main import Orchestrator
 
 	kuucfg = Kuunfig.load(config)
-	cfg = kuucfg.resolve(preset)
+
+	if preset is not None:
+		from kuu.orchestrator.main import PresetSupervisor
+
+		cfg = kuucfg.resolve(preset)
+		if override:
+			cfg = cfg.with_overrides(override)
+		anyio.run(PresetSupervisor(cfg, preset=preset).start)
+		return
 
 	if override:
-		cfg = cfg.with_overrides(override)
+		kuucfg = _apply_overrides(kuucfg, override)
 
-	anyio.run(Orchestrator(cfg).start)
+	from kuu.orchestrator import ControlPlane
+
+	anyio.run(ControlPlane(kuucfg).start)
+
+
+def _apply_overrides(kuucfg, overrides):
+	"""apply CLI overrides to default + every preset uniformly"""
+	from kuu.config import Kuunfig
+
+	new_default = kuucfg.default.with_overrides(overrides)
+	new_presets = {}
+	for name in kuucfg.presets:
+		resolved = kuucfg.resolve(name).with_overrides(overrides)
+		new_presets[name] = resolved.model_dump()
+	data = {"default": new_default.model_dump(), "presets": new_presets}
+	return Kuunfig.model_validate(data)

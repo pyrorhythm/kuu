@@ -9,7 +9,8 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from kuu.app import Kuu
-from kuu.orchestrator.main import Orchestrator
+from kuu.observability import InstanceRegistry
+from kuu.orchestrator.main import PresetSupervisor
 from kuu.scheduler.scheduler import Scheduler
 from kuu.web.api import DashbordAPIMixin
 from kuu.web.fragments import DashboardFragmentsMixin
@@ -21,14 +22,22 @@ class Dashboard(DashboardFragmentsMixin, DashbordAPIMixin):
 		self,
 		app: Kuu,
 		scheduler: Scheduler | None = None,
-		orchestrator: Orchestrator | None = None,
+		orchestrator: PresetSupervisor | None = None,
+		registry: InstanceRegistry | None = None,
 		title: str = "kuu dashboard",
 	) -> None:
+		"""
+		``orchestrator`` is the legacy single-process supervisor whose
+		``_wp._processes`` provides the workers fragment. ``registry``
+		is the control-plane roster; when present, fragments prefer it
+		and aggregate workers across all live instances.
+		"""
 		self.app = app
 		self.scheduler = scheduler
 		self.orchestrator = orchestrator
+		self.registry = registry
 		self.title = title
-		self.stats = StatsCollector(app)
+		self.stats = StatsCollector(app, connect_app_events=registry is None)
 		here = Path(__file__).parent
 		self.jinja = Environment(
 			loader=FileSystemLoader(str(here / "templates")),
