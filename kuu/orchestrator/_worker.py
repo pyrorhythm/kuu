@@ -5,6 +5,7 @@ import multiprocessing as mp
 import time
 import traceback as _traceback_module
 from dataclasses import dataclass
+from multiprocessing.context import SpawnProcess
 from typing import TYPE_CHECKING, Any, Literal
 
 import anyio
@@ -86,11 +87,12 @@ class WorkerEvent:
 class WorkerPool:
 	_config: Settings
 	_stop_event: anyio.Event
-	_processes: list[mp.Process]
+	_processes: list[SpawnProcess]
 	events_queue: mp.Queue
 
 	def __init__(self, config: Settings) -> None:
 		self._config = config
+		self._mp_ctx = mp.get_context("spawn")
 		self._processes = []
 		self.events_queue = mp.Queue()
 
@@ -120,7 +122,7 @@ class WorkerPool:
 			if self._stop_event.is_set():
 				break
 			log.info("starting worker process %d/%d", i + 1, self._config.processes)
-			p = mp.Process(
+			p = self._mp_ctx.Process(
 				target=_run_worker,
 				args=(self._config, self.events_queue),
 				daemon=False,
@@ -138,7 +140,7 @@ class WorkerPool:
 
 		await anyio.to_thread.run_sync(self._terminate_and_wait, processes)
 
-	def _terminate_and_wait(self, processes: list[mp.Process]) -> None:
+	def _terminate_and_wait(self, processes: list[SpawnProcess]) -> None:
 		for p in processes:
 			if p.is_alive():
 				p.terminate()
@@ -270,10 +272,6 @@ def _install_event_forwarder(app: Kuu, q: mp.Queue) -> None:
 	ev.task_succeeded.connect(
 		lambda msg, elapsed: _put("succeeded", msg.task, msg.queue, elapsed=elapsed, msg=msg)
 	)
-	ev.task_failed.connect(
-		lambda msg, exc: _put("failed", msg.task, msg.queue, msg=msg, exc=exc)
-	)
-	ev.task_retried.connect(
-		lambda msg, delay: _put("retried", msg.task, msg.queue, msg=msg)
-	)
+	ev.task_failed.connect(lambda msg, exc: _put("failed", msg.task, msg.queue, msg=msg, exc=exc))
+	ev.task_retried.connect(lambda msg, delay: _put("retried", msg.task, msg.queue, msg=msg))
 	ev.task_dead.connect(lambda msg: _put("dead", msg.task, msg.queue, msg=msg))

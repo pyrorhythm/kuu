@@ -8,6 +8,7 @@ import signal
 import threading
 import typing
 import uuid
+from multiprocessing.context import SpawnProcess
 
 import anyio
 import anyio.to_thread
@@ -74,7 +75,7 @@ class ControlPlane:
 	_events_queue: mp.Queue[Envelope]
 	_source: MpQueueSource
 	_registry: InMemoryRegistry
-	_procs: list[tuple[str, mp.Process]]
+	_procs: list[tuple[str, SpawnProcess]]
 	_dashboard: Dashboard | None
 
 	_cmd_responses: mp.Queue[CmdResponse]
@@ -89,6 +90,7 @@ class ControlPlane:
 
 	def __init__(self, kuunfig: Kuunfig) -> None:
 		self.kuunfig = kuunfig
+		self._mp_ctx = mp.get_context("spawn")
 		self._events_queue = mp.Queue()
 		self._source = MpQueueSource(self._events_queue)
 		self._registry = InMemoryRegistry()
@@ -140,7 +142,7 @@ class ControlPlane:
 			instance_id = str(uuid.uuid4())
 			cmd_in: mp.Queue[Cmd] = mp.Queue()
 			self._cmd_in_per_instance[instance_id] = cmd_in
-			p = mp.Process(
+			p = self._mp_ctx.Process(
 				target=_run_supervisor_child,
 				args=(cfg, preset, self._events_queue, instance_id, cmd_in, self._cmd_responses),
 				name=f"kuu-supervisor-{preset}",

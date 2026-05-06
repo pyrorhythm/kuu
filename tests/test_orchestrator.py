@@ -14,13 +14,13 @@ from kuu.orchestrator._worker import WorkerPool
 
 def _config(**overrides: Any) -> Settings:
 	defaults: dict[str, Any] = dict(
-			app="fake.module:app",
-			task_modules=["fake.tasks"],
-			queues=["default"],
-			processes=2,
-			concurrency=4,
-			prefetch=2,
-			shutdown_timeout=1.0,
+		app="fake.module:app",
+		task_modules=["fake.tasks"],
+		queues=["default"],
+		processes=2,
+		concurrency=4,
+		prefetch=2,
+		shutdown_timeout=1.0,
 	)
 	defaults.update(overrides)
 	return Settings(**defaults)
@@ -35,39 +35,45 @@ def _fake_awatch_factory(batches: list[set[tuple[Change, str]]]):
 
 
 class TestWorkerPool:
-	@patch("kuu.orchestrator._worker.mp.Process")
-	def test_start_workers_spawns_n_processes(self, mock_proc_cls: MagicMock) -> None:
+	@patch("kuu.orchestrator._worker.mp.get_context")
+	def test_start_workers_spawns_n_processes(self, mock_get_ctx: MagicMock) -> None:
+		mock_ctx = MagicMock()
+		mock_get_ctx.return_value = mock_ctx
 		pool = WorkerPool(_config(processes=3))
 		pool._stop_event = anyio.Event()
 
 		anyio.run(pool._start_workers)
 
-		assert mock_proc_cls.call_count == 3
-		for call in mock_proc_cls.call_args_list:
+		assert mock_ctx.Process.call_count == 3
+		for call in mock_ctx.Process.call_args_list:
 			assert call.kwargs["daemon"] is False
 			# args must be a tuple; the buggy `args=(cfg)` form passed a Settings instead
 			args = call.kwargs["args"]
 			assert isinstance(args, tuple) and len(args) == 2
 			assert args[0] is pool._config
 
-	@patch("kuu.orchestrator._worker.mp.Process")
-	def test_start_workers_short_circuits_when_stop_set(self, mock_proc_cls: MagicMock) -> None:
+	@patch("kuu.orchestrator._worker.mp.get_context")
+	def test_start_workers_short_circuits_when_stop_set(self, mock_get_ctx: MagicMock) -> None:
+		mock_ctx = MagicMock()
+		mock_get_ctx.return_value = mock_ctx
 		pool = WorkerPool(_config(processes=4))
 		pool._stop_event = anyio.Event()
 		pool._stop_event.set()
 
 		anyio.run(pool._start_workers)
 
-		assert mock_proc_cls.call_count == 0
+		assert mock_ctx.Process.call_count == 0
 		assert pool._processes == []
 
-	@patch("kuu.orchestrator._worker.mp.Process")
-	def test_stop_workers_terminates_and_joins_alive(self, mock_proc_cls: MagicMock) -> None:
+	@patch("kuu.orchestrator._worker.mp.get_context")
+	def test_stop_workers_terminates_and_joins_alive(self, mock_get_ctx: MagicMock) -> None:
 		procs = [MagicMock(), MagicMock()]
 		# alive on first poll (terminate gets called), dead on second (no kill)
 		for p in procs:
 			p.is_alive.side_effect = [True, False]
-		mock_proc_cls.side_effect = procs
+		mock_ctx = MagicMock()
+		mock_ctx.Process.side_effect = procs
+		mock_get_ctx.return_value = mock_ctx
 
 		async def run() -> None:
 			pool = WorkerPool(_config(processes=2))
@@ -82,12 +88,14 @@ class TestWorkerPool:
 			p.join.assert_called_once()
 			p.kill.assert_not_called()
 
-	@patch("kuu.orchestrator._worker.mp.Process")
-	def test_stop_workers_kills_stragglers(self, mock_proc_cls: MagicMock) -> None:
+	@patch("kuu.orchestrator._worker.mp.get_context")
+	def test_stop_workers_kills_stragglers(self, mock_get_ctx: MagicMock) -> None:
 		procs = [MagicMock(), MagicMock()]
 		for p in procs:
 			p.is_alive.return_value = True
-		mock_proc_cls.side_effect = procs
+		mock_ctx = MagicMock()
+		mock_ctx.Process.side_effect = procs
+		mock_get_ctx.return_value = mock_ctx
 
 		async def run() -> None:
 			pool = WorkerPool(_config(processes=2))
@@ -102,18 +110,22 @@ class TestWorkerPool:
 			# join called twice: once with deadline, once after kill
 			assert p.join.call_count == 2
 
-	@patch("kuu.orchestrator._worker.mp.Process")
-	def test_stop_workers_is_noop_when_empty(self, mock_proc_cls: MagicMock) -> None:
+	@patch("kuu.orchestrator._worker.mp.get_context")
+	def test_stop_workers_is_noop_when_empty(self, mock_get_ctx: MagicMock) -> None:
+		mock_ctx = MagicMock()
+		mock_get_ctx.return_value = mock_ctx
 		pool = WorkerPool(_config(processes=2))
 		pool._stop_event = anyio.Event()
 		anyio.run(pool._stop_workers)
-		mock_proc_cls.assert_not_called()
+		mock_ctx.Process.assert_not_called()
 
-	@patch("kuu.orchestrator._worker.mp.Process")
-	def test_run_spawns_then_stops_on_event(self, mock_proc_cls: MagicMock) -> None:
+	@patch("kuu.orchestrator._worker.mp.get_context")
+	def test_run_spawns_then_stops_on_event(self, mock_get_ctx: MagicMock) -> None:
 		procs = [MagicMock()]
 		procs[0].is_alive.side_effect = [True, False]
-		mock_proc_cls.side_effect = procs
+		mock_ctx = MagicMock()
+		mock_ctx.Process.side_effect = procs
+		mock_get_ctx.return_value = mock_ctx
 
 		async def run() -> None:
 			pool = WorkerPool(_config(processes=1))
@@ -126,16 +138,18 @@ class TestWorkerPool:
 		anyio.run(run)
 
 		# spawned and torn down via run() finally
-		assert mock_proc_cls.call_count == 1
+		assert mock_ctx.Process.call_count == 1
 		procs[0].terminate.assert_called_once()
 
-	@patch("kuu.orchestrator._worker.mp.Process")
-	def test_on_change_callback_restarts_pool(self, mock_proc_cls: MagicMock) -> None:
+	@patch("kuu.orchestrator._worker.mp.get_context")
+	def test_on_change_callback_restarts_pool(self, mock_get_ctx: MagicMock) -> None:
 		gen1 = [MagicMock(), MagicMock()]
 		gen2 = [MagicMock(), MagicMock()]
 		for p in gen1 + gen2:
 			p.is_alive.side_effect = [True, False]
-		mock_proc_cls.side_effect = gen1 + gen2
+		mock_ctx = MagicMock()
+		mock_ctx.Process.side_effect = gen1 + gen2
+		mock_get_ctx.return_value = mock_ctx
 
 		async def run() -> None:
 			pool = WorkerPool(_config(processes=2))
@@ -145,7 +159,7 @@ class TestWorkerPool:
 
 		anyio.run(run)
 
-		assert mock_proc_cls.call_count == 4
+		assert mock_ctx.Process.call_count == 4
 		for p in gen1:
 			p.terminate.assert_called_once()
 
@@ -172,10 +186,12 @@ class TestWatcher:
 
 	@patch("kuu.orchestrator._watcher.watchfiles.awatch")
 	def test_invokes_callback_per_batch(self, mock_awatch: MagicMock) -> None:
-		mock_awatch.side_effect = _fake_awatch_factory([
-			{(Change.modified, "/x/a.py")},
-			{(Change.added, "/x/b.py")},
-		])
+		mock_awatch.side_effect = _fake_awatch_factory(
+			[
+				{(Change.modified, "/x/a.py")},
+				{(Change.added, "/x/b.py")},
+			]
+		)
 		seen: list[Any] = []
 
 		async def cb(changes: Any) -> None:
@@ -198,9 +214,9 @@ class TestWatcher:
 		from kuu.config import WatchSettings
 
 		cfg = _config(
-				watch=WatchSettings(
-						enable=True, root=Path("/tmp"), reload_delay=0.05, reload_debounce=0.5
-				)
+			watch=WatchSettings(
+				enable=True, root=Path("/tmp"), reload_delay=0.05, reload_debounce=0.5
+			)
 		)
 		anyio.run(Watcher(cfg, cb).run, anyio.Event())
 
@@ -228,12 +244,12 @@ class TestWatcher:
 
 		root = Path("/tmp/proj").resolve()
 		cfg = _config(
-				watch=WatchSettings(
-						enable=True,
-						root=root,
-						respect_gitignore=False,
-						exclude=[Path("*.log"), Path("build") / "**"],
-				)
+			watch=WatchSettings(
+				enable=True,
+				root=root,
+				respect_gitignore=False,
+				exclude=[Path("*.log"), Path("build") / "**"],
+			)
 		)
 		anyio.run(Watcher(cfg, cb).run, anyio.Event())
 
