@@ -57,21 +57,20 @@ class TestCodec:
 
 	def test_decoder_rejects_unknown_tag(self) -> None:
 		import orjson
+		from msgspec import ValidationError
 
 		data = orjson.dumps(
-				{"v": 1, "t": "garbage", "instance": "x", "ts": 0, "body": {}}
+				{"v": 1, "instance": "x", "ts": 0, "body": {"type": "garbage"}}
 		)
-		with pytest.raises(ValueError, match="unknown envelope tag"):
+		with pytest.raises(ValidationError):
 			envelope_from_bytes(data)
 
 	def test_encoder_rejects_unknown_body(self) -> None:
-		from kuu.observability._protocol import Body
-
-		class Custom(Body):
+		class NotABody:
 			pass
 
-		env = Envelope(v=1, instance="x", ts=0, body=Custom())
-		with pytest.raises(TypeError, match="unsupported body type"):
+		env = Envelope(v=1, instance="x", ts=0, body=NotABody())  # type: ignore[arg-type]
+		with pytest.raises(TypeError):
 			envelope_to_bytes(env)
 
 

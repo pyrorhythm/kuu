@@ -20,23 +20,16 @@ class EventRecord:
 class StatsCollector:
 	def __init__(
 		self,
-		app: Kuu,
+		app: Kuu | None = None,
 		max_events: int = 20000,
 		*,
 		connect_app_events: bool = True,
 	) -> None:
-		"""collects task lifecycle events for the dashboard
-
-		when ``connect_app_events`` is true, hooks into the local
-		``app.events`` signals (leaf / single-process mode); when false,
-		stats are fed exclusively via :meth:`ingest` (control-plane mode
-		where events arrive from subprocesses via the envelope stream)
-		"""
 		self.app = app
 		self.events_log: deque[EventRecord] = deque(maxlen=max_events)
 		self.totals = Counter()
 
-		if connect_app_events:
+		if connect_app_events and app is not None:
 			app.events.task_enqueued.connect(self._on_enqueued)
 			app.events.task_succeeded.connect(self._on_succeeded)
 			app.events.task_failed.connect(self._on_failed)
@@ -63,11 +56,8 @@ class StatsCollector:
 		self._bump("dead", msg)
 
 	def ingest(self, event: str, task: str, ts: float) -> None:
-		"""Accept a pre-built event record (e.g. forwarded from a worker subprocess)."""
-		print(f"ingest {event=}")
 		self.totals[event] += 1
 		self.events_log.append(EventRecord(ts, task, event))
-		print(f"log={self.events_log}")
 
 	def activity_series(self, buckets: int = 60, bucket_sec: int = 5) -> dict:
 		out: dict = {

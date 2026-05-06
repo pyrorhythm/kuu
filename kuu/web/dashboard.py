@@ -33,7 +33,7 @@ if typing.TYPE_CHECKING:
 class Dashboard(DashboardFragmentsMixin, DashbordAPIMixin):
 	def __init__(
 		self,
-		app: Kuu,
+		app: Kuu | None = None,
 		scheduler: Scheduler | None = None,
 		orchestrator: PresetSupervisor | None = None,
 		registry: InstanceRegistry | None = None,
@@ -48,7 +48,7 @@ class Dashboard(DashboardFragmentsMixin, DashbordAPIMixin):
 		self.control = control
 		self.title = title
 		self._ingest_token = ingest_token
-		self.stats = StatsCollector(app, connect_app_events=registry is None)
+		self.stats = StatsCollector(app, connect_app_events=registry is None and app is not None)
 		here = Path(__file__).parent
 		self.jinja = Environment(
 			loader=FileSystemLoader(str(here / "templates")),
@@ -65,7 +65,7 @@ class Dashboard(DashboardFragmentsMixin, DashbordAPIMixin):
 				Route("/fragments/stats", self._frag_stats),
 				Route("/fragments/tasks", self._frag_tasks),
 				Route("/fragments/scheduler", self._frag_scheduler),
-				Route("/fragments/workers", self._frag_workers),
+				Route("/fragments/presets", self._frag_presets),
 				Route("/fragments/queues", self._frag_queues),
 				Route("/api/activity", self._api_activity),
 				Route("/api/task-params", self._api_task_params),
@@ -78,11 +78,6 @@ class Dashboard(DashboardFragmentsMixin, DashbordAPIMixin):
 		)
 
 	def ingest_envelope(self, env: Envelope) -> None:
-		"""feed a remote envelope into the dashboard's registry + stats
-
-		called by the ``/_ingest`` ws endpoint and may be called directly
-		by an in-process source for testing
-		"""
 		if self.registry is not None:
 			self.registry.ingest(env)
 		match env.body:
@@ -95,7 +90,7 @@ class Dashboard(DashboardFragmentsMixin, DashbordAPIMixin):
 
 	async def _ws_ingest(self, websocket: WebSocket) -> None:
 		if not self._authorized(websocket):
-			await websocket.close(code=4401)  # rfc-style "unauthorized"
+			await websocket.close(code=4401)
 			return
 		await websocket.accept()
 		try:

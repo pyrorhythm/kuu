@@ -2,7 +2,6 @@
 {% block title %}kuu dashboard{% endblock %}
 {% block content %}
 
-<!-- stats strip, polled every 2s -->
 <div hx-get="fragments/stats" hx-trigger="load, every 2s" hx-swap="innerHTML">
 	<div class="stat-strip">
 		<div class="stat-cell">
@@ -28,7 +27,6 @@
 	</div>
 </div>
 
-<!-- activity chart -->
 <div class="surface">
 	<div class="surface-head">
 		<span class="surface-title">activity</span>
@@ -38,7 +36,13 @@
 	</div>
 </div>
 
-<!-- tasks + scheduler -->
+<div class="surface">
+	<div class="surface-head"><span class="surface-title">presets</span></div>
+	<div class="surface-body flush" hx-get="fragments/presets" hx-trigger="load, every 3s" hx-swap="innerHTML">
+		<p class="placeholder">loading…</p>
+	</div>
+</div>
+
 <div class="col2">
 	<div class="surface">
 		<div class="surface-head"><span class="surface-title">tasks</span></div>
@@ -55,20 +59,10 @@
 	</div>
 </div>
 
-<!-- workers + queues -->
-<div class="col2">
-	<div class="surface">
-		<div class="surface-head"><span class="surface-title">workers</span></div>
-		<div class="surface-body flush" hx-get="fragments/workers" hx-trigger="load, every 3s" hx-swap="innerHTML">
-			<p class="placeholder">loading…</p>
-		</div>
-	</div>
-
-	<div class="surface">
-		<div class="surface-head"><span class="surface-title">queues</span></div>
-		<div class="surface-body flush" hx-get="fragments/queues" hx-trigger="load, every 3s" hx-swap="innerHTML">
-			<p class="placeholder">loading…</p>
-		</div>
+<div class="surface">
+	<div class="surface-head"><span class="surface-title">queues</span></div>
+	<div class="surface-body flush" hx-get="fragments/queues" hx-trigger="load, every 3s" hx-swap="innerHTML">
+		<p class="placeholder">loading…</p>
 	</div>
 </div>
 
@@ -78,80 +72,73 @@
 		const el = document.getElementById('activity-chart');
 		const chart = echarts.init(el, null, { renderer: 'svg' });
 
-		const INK = '#0A0A0A';
-		const INK2 = 'rgba(10,10,10,.62)';
-		const INK3 = 'rgba(10,10,10,.40)';
-		const HAIR = 'rgba(10,10,10,.08)';
-		const PAPER = '#FAFAF7';
-		const GOOD = '#1F5E3A';
-		const BAD = '#B5371A';
-		const BAD_DARK = '#6B1F0E';
+		function tokens() {
+			const cs = getComputedStyle(document.documentElement);
+			return {
+				INK: cs.getPropertyValue('--ink').trim(),
+				INK2: cs.getPropertyValue('--ink-2').trim(),
+				INK3: cs.getPropertyValue('--ink-3').trim(),
+				HAIR: cs.getPropertyValue('--hair').trim(),
+				PAPER: cs.getPropertyValue('--paper').trim(),
+				GOOD: cs.getPropertyValue('--good').trim(),
+				BAD: cs.getPropertyValue('--bad').trim(),
+				BAD_DARK: cs.getPropertyValue('--bad-dark').trim(),
+			};
+		}
 
-		const BASE = {
-			backgroundColor: 'transparent',
-			animation: false,
-			tooltip: {
-				trigger: 'axis',
-				backgroundColor: PAPER,
-				borderColor: 'rgba(10,10,10,.12)',
-				borderWidth: 1,
-				textStyle: { color: INK, fontSize: 11, fontFamily: "'Geist Mono', monospace" },
-				axisPointer: { lineStyle: { color: HAIR } }
-			},
-			legend: {
-				data: ['enqueued', 'succeeded', 'failed', 'retried', 'dead'],
-				right: 0,
-				top: 0,
-				itemWidth: 12,
-				itemHeight: 2,
-				textStyle: { fontSize: 10, fontFamily: "'Geist Mono', monospace", color: INK3 }
-			},
-			grid: { left: 32, right: 8, top: 28, bottom: 20, containLabel: false },
-			xAxis: {
-				type: 'category',
-				boundaryGap: false,
-				axisLine: { lineStyle: { color: HAIR } },
-				axisTick: { show: false },
-				axisLabel: {
-					color: INK3, fontSize: 10,
-					fontFamily: "'Geist Mono', monospace",
-					interval: 11
+		function buildBase() {
+			const t = tokens();
+			return {
+				backgroundColor: 'transparent',
+				animation: false,
+				tooltip: {
+					trigger: 'axis',
+					backgroundColor: t.PAPER,
+					borderColor: t.HAIR,
+					borderWidth: 1,
+					textStyle: { color: t.INK, fontSize: 11, fontFamily: "'Geist Mono', monospace" },
+					axisPointer: { lineStyle: { color: t.HAIR } }
 				},
-				splitLine: { show: false }
-			},
-			yAxis: {
-				type: 'value',
-				minInterval: 1,
-				axisLine: { show: false },
-				axisTick: { show: false },
-				axisLabel: { color: INK3, fontSize: 10, fontFamily: "'Geist Mono', monospace" },
-				splitLine: { lineStyle: { color: HAIR } }
-			},
-			series: [
-				{
-					name: 'enqueued', type: 'line', smooth: false, showSymbol: false,
-					lineStyle: { color: INK, width: 1.5 }, itemStyle: { color: INK }
+				legend: {
+					data: ['enqueued', 'succeeded', 'failed', 'retried', 'dead'],
+					right: 0,
+					top: 0,
+					itemWidth: 12,
+					itemHeight: 2,
+					textStyle: { fontSize: 10, fontFamily: "'Geist Mono', monospace", color: t.INK3 }
 				},
-				{
-					name: 'succeeded', type: 'line', smooth: false, showSymbol: false,
-					lineStyle: { color: GOOD, width: 1.5 }, itemStyle: { color: GOOD }
+				grid: { left: 32, right: 8, top: 28, bottom: 20, containLabel: false },
+				xAxis: {
+					type: 'category',
+					boundaryGap: false,
+					axisLine: { lineStyle: { color: t.HAIR } },
+					axisTick: { show: false },
+					axisLabel: {
+						color: t.INK3, fontSize: 10,
+						fontFamily: "'Geist Mono', monospace",
+						interval: 11
+					},
+					splitLine: { show: false }
 				},
-				{
-					name: 'failed', type: 'line', smooth: false, showSymbol: false,
-					lineStyle: { color: BAD, width: 1.5 }, itemStyle: { color: BAD }
+				yAxis: {
+					type: 'value',
+					minInterval: 1,
+					axisLine: { show: false },
+					axisTick: { show: false },
+					axisLabel: { color: t.INK3, fontSize: 10, fontFamily: "'Geist Mono', monospace" },
+					splitLine: { lineStyle: { color: t.HAIR } }
 				},
-				{
-					name: 'retried', type: 'line', smooth: false, showSymbol: false,
-					lineStyle: { color: INK3, width: 1.5 }, itemStyle: { color: INK3 }
-				},
-				{
-					name: 'dead', type: 'line', smooth: false, showSymbol: false,
-					lineStyle: { color: BAD_DARK, width: 1.5 }, itemStyle: { color: BAD_DARK }
-				},
-			]
-		};
+				series: [
+					{ name: 'enqueued', type: 'line', smooth: false, showSymbol: false, lineStyle: { color: t.INK, width: 1.5 }, itemStyle: { color: t.INK } },
+					{ name: 'succeeded', type: 'line', smooth: false, showSymbol: false, lineStyle: { color: t.GOOD, width: 1.5 }, itemStyle: { color: t.GOOD } },
+					{ name: 'failed', type: 'line', smooth: false, showSymbol: false, lineStyle: { color: t.BAD, width: 1.5 }, itemStyle: { color: t.BAD } },
+					{ name: 'retried', type: 'line', smooth: false, showSymbol: false, lineStyle: { color: t.INK3, width: 1.5 }, itemStyle: { color: t.INK3 } },
+					{ name: 'dead', type: 'line', smooth: false, showSymbol: false, lineStyle: { color: t.BAD_DARK, width: 1.5 }, itemStyle: { color: t.BAD_DARK } },
+				]
+			};
+		}
 
-		chart.setOption(BASE);
+		chart.setOption(buildBase());
 
 		async function refresh() {
 			try {
@@ -173,6 +160,11 @@
 		refresh();
 		setInterval(refresh, 3000);
 		window.addEventListener('resize', () => chart.resize());
+
+		window.addEventListener('kuu-theme-change', () => {
+			chart.setOption(buildBase(), true);
+			refresh();
+		});
 	}());
 </script>
 

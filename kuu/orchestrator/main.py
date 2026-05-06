@@ -35,6 +35,8 @@ from kuu.observability import (
 	QueueSnapshot,
 	RemoveJobCmd,
 	State,
+	TaskInfo,
+	TaskParam,
 	TriggerJobCmd,
 	WorkerSnapshot,
 	broker_key,
@@ -304,7 +306,49 @@ class PresetSupervisor:
 			broker=self._build_broker_info(),
 			scheduler_enabled=self.config.scheduler.enable,
 			processes=self.config.processes,
+			concurrency=self.config.concurrency,
+			tasks=self._build_tasks(),
 		)
+
+	def _build_tasks(self) -> list[TaskInfo]:
+		app = self._ensure_app()
+		if app is None:
+			return []
+		try:
+			from kuu._sig import sig_params
+
+			out: list[TaskInfo] = []
+			for name in sorted(app.registry.names()):
+				task = app.registry.get(name)
+				if task is None:
+					continue
+				try:
+					raw_params, has_varargs = sig_params(task.original_func)
+				except Exception:
+					raw_params, has_varargs = [], False
+				params = [
+					TaskParam(
+						name=p["name"],
+						annotation=p["annotation"],
+						default=p["default"],
+						required=p["required"],
+					)
+					for p in raw_params
+				]
+				out.append(
+					TaskInfo(
+						name=task.task_name,
+						queue=task.task_queue,
+						max_attempts=task.max_attempts,
+						timeout=task.timeout,
+						params=params,
+						has_varargs=has_varargs,
+					)
+				)
+			return out
+		except Exception:
+			log.exception("could not build tasks for hello")
+			return []
 
 	def _ensure_app(self) -> typing.Any:
 		"""lazy-load and cache the app for introspection (broker, scheduler.jobs)"""
@@ -313,7 +357,7 @@ class PresetSupervisor:
 		try:
 			from kuu._import import import_object, import_tasks
 
-			self._app = import_object(self.config.app)
+			self._app = import_object(self.config.app)  # type:ignore
 			import_tasks(self.config.task_modules, pattern=(), fs_discover=False)
 		except Exception:
 			log.exception("could not import app")
@@ -426,6 +470,3 @@ class PresetSupervisor:
 		if self._metrics_dir:
 			shutil.rmtree(self._metrics_dir, ignore_errors=True)
 			self._metrics_dir = None
-
-
-

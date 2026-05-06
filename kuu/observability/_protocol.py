@@ -1,73 +1,55 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
+
+from msgspec import Struct, field
 
 PROTOCOL_VERSION = 1
-
 
 EventKind = Literal["enqueued", "succeeded", "failed", "retried", "dead"]
 ByeReason = Literal["sigterm", "sigint", "crash", "manual"]
 
 
-@dataclass(frozen=True, slots=True)
-class BrokerInfo:
-	"""broker identity as advertised by a producer
-
-	``key`` is a stable fingerprint computed via
-	:func:`kuu.observability.broker_key`; two producers with the same
-	connection identity share the same key, allowing the dashboard to
-	dedup shared buses
-	"""
-
+class BrokerInfo(Struct, frozen=True):
 	type: str
 	key: str
 
 
-@dataclass(frozen=True, slots=True)
-class WorkerSnapshot:
+class WorkerSnapshot(Struct, frozen=True):
 	pid: int
 	alive: bool
 	current_task: str | None = None
 
 
-@dataclass(frozen=True, slots=True)
-class JobSnapshot:
+class JobSnapshot(Struct, frozen=True):
 	id: str
 	task: str
 	next_run: float
 
 
-@dataclass(frozen=True, slots=True)
-class QueueSnapshot:
-	"""per-queue state
-
-	``depth`` is ``None`` when the supervisor cannot cheaply query the
-	broker; ``in_flight`` is always known locally (count of messages
-	currently being processed by this instance's workers)
-	"""
-
+class QueueSnapshot(Struct, frozen=True):
 	in_flight: int
 	depth: int | None = None
 
 
-# === body sum type
+class TaskParam(Struct, frozen=True):
+	name: str
+	annotation: str | None = None
+	default: Any = None
+	required: bool = True
 
 
-@dataclass(frozen=True, slots=True)
-class Body:
-	"""sealed base for envelope bodies: use ``match`` to dispatch"""
+class TaskInfo(Struct, frozen=True):
+	name: str
+	queue: str
+	max_attempts: int = 5
+	timeout: float | None = None
+	params: list[TaskParam] = field(default_factory=list)
+	has_varargs: bool = False
 
 
-@dataclass(frozen=True, slots=True)
-class Hello(Body):
-	"""first envelope from any producer; identifies the instance.
-
-	re-sent on reconnect with the same ``instance_id`` of the originating
-	envelope, so the consumer treats it as the same logical instance
-	"""
-
+class Hello(Struct, frozen=True, tag="hello"):
 	preset: str
 	host: str
 	pid: int
@@ -76,12 +58,11 @@ class Hello(Body):
 	broker: BrokerInfo
 	scheduler_enabled: bool
 	processes: int
+	concurrency: int = 1
+	tasks: list[TaskInfo] = field(default_factory=list)
 
 
-@dataclass(frozen=True, slots=True)
-class Event(Body):
-	"""single task lifecycle event"""
-
+class Event(Struct, frozen=True, tag="event"):
 	kind: EventKind
 	task: str
 	queue: str
@@ -89,43 +70,24 @@ class Event(Body):
 	elapsed: float | None = None
 
 
-@dataclass(frozen=True, slots=True)
-class State(Body):
-	"""periodic snapshot; sent every ``state_interval`` seconds
-
-	a consumer treats an instance as dead after
-	``2 * state_interval`` seconds without a fresh ``State``
-	"""
-
+class State(Struct, frozen=True, tag="state"):
 	workers: list[WorkerSnapshot] = field(default_factory=list)
 	jobs: list[JobSnapshot] = field(default_factory=list)
 	queues: dict[str, QueueSnapshot] = field(default_factory=dict)
 
 
-@dataclass(frozen=True, slots=True)
-class Bye(Body):
-	"""graceful shutdown notification"""
-
+class Bye(Struct, frozen=True, tag="bye"):
 	reason: ByeReason
 
 
-# === envelope
+Body = Hello | Event | State | Bye
 
 
-@dataclass(frozen=True, slots=True)
-class Envelope:
-	"""wire-level frame
-
-	the body type is the tag; ``match envelope.body`` to dispatch
-	"""
-
+class Envelope(Struct, frozen=True):
 	v: int
 	instance: str
 	ts: float
 	body: Body
-
-
-# === consumer / producer interfaces
 
 
 class EventsSink(Protocol):
@@ -136,8 +98,7 @@ class EventsSource(Protocol):
 	def __aiter__(self) -> AsyncIterator[Envelope]: ...
 
 
-@dataclass(frozen=True, slots=True)
-class InstanceInfo:
+class InstanceInfo(Struct, frozen=True):
 	instance_id: str
 	hello: Hello
 	last_state: State | None
@@ -145,9 +106,31 @@ class InstanceInfo:
 
 
 class InstanceRegistry(Protocol):
-	def ingest(self, envelope: Envelope) -> None:
-		"""Update the roster from any envelope."""
+	def ingest(self, envelope: Envelope) -> None: ...
 
 	def get(self, instance_id: str) -> InstanceInfo | None: ...
 
 	def all(self) -> list[InstanceInfo]: ...
+
+
+__all__ = [
+	"PROTOCOL_VERSION",
+	"EventKind",
+	"ByeReason",
+	"BrokerInfo",
+	"WorkerSnapshot",
+	"JobSnapshot",
+	"QueueSnapshot",
+	"TaskParam",
+	"TaskInfo",
+	"Hello",
+	"Event",
+	"State",
+	"Bye",
+	"Body",
+	"Envelope",
+	"EventsSink",
+	"EventsSource",
+	"InstanceInfo",
+	"InstanceRegistry",
+]

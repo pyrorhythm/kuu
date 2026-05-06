@@ -40,7 +40,7 @@ class DashboardRunner:
 			log.exception("dashboard dependencies missing; install kuu[dashboard]")
 			return
 
-		kuu = import_object(self._config.app)
+		kuu = import_object(self._config.app)  # type:ignore
 		import_tasks(self._config.task_modules, pattern=(), fs_discover=False)
 		dashboard = Dashboard(app=kuu, orchestrator=self._orch)
 		asgi_app = dashboard.build_app()

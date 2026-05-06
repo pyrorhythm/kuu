@@ -124,7 +124,7 @@ class WorkerPool:
 
 def _run_worker(config: Settings, events_queue: mp.Queue | None = None) -> None:
 	log.info("worker process starting")
-	app = import_object(config.app)
+	app = import_object(config.app)  # type:ignore
 	import_tasks(config.task_modules, "", False)
 
 	if config.metrics.enable:
@@ -147,9 +147,16 @@ def _install_event_forwarder(app: Kuu, q: mp.Queue) -> None:
 
 	def _put(kind: WorkerEventKind, task: str, queue: str, elapsed: float | None = None) -> None:
 		try:
-			q.put_nowait(WorkerEvent(
-				kind=kind, task=task, queue=queue, ts=time.time(), pid=pid, elapsed=elapsed,
-			))
+			q.put_nowait(
+				WorkerEvent(
+					kind=kind,
+					task=task,
+					queue=queue,
+					ts=time.time(),
+					pid=pid,
+					elapsed=elapsed,
+				)
+			)
 		except Exception:
 			pass
 

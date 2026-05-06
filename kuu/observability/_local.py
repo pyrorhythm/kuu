@@ -8,7 +8,6 @@ from queue import Empty as _QueueEmpty
 import anyio
 
 from kuu.observability._protocol import (
-	Body,
 	Bye,
 	Envelope,
 	Hello,
@@ -20,11 +19,6 @@ _STALE_AFTER = 5.0
 
 
 class MpQueueSink:
-	"""``EventsSink`` backed by a multiprocessing queue
-
-	intended to be picklable so it can be passed to ``mp.Process`` targets
-	"""
-
 	__slots__ = ("_q",)
 
 	def __init__(self, queue: "mp.Queue[Envelope]") -> None:
@@ -38,8 +32,6 @@ class MpQueueSink:
 
 
 class MpQueueSource:
-	"""async ``EventsSource`` that drains a multiprocessing queue"""
-
 	__slots__ = ("_q", "_poll_interval", "_closed")
 
 	def __init__(self, queue: "mp.Queue[Envelope]", poll_interval: float = 0.1) -> None:
@@ -61,20 +53,13 @@ class MpQueueSource:
 
 
 class InMemoryRegistry:
-	"""``InstanceRegistry`` impl with lazy stale eviction
-
-	an entry is considered stale if no envelope of any kind has been
-	observed for it within ``stale_after`` seconds; eviction happens on
-	read (``get`` / ``all``)
-	"""
-
 	def __init__(self, stale_after: float = _STALE_AFTER) -> None:
 		self._entries: dict[str, _Entry] = {}
 		self._stale_after = stale_after
 
 	def ingest(self, envelope: Envelope) -> None:
 		entry = self._entries.get(envelope.instance)
-		body: Body = envelope.body
+		body = envelope.body
 
 		match body:
 			case Hello():
@@ -111,8 +96,6 @@ class InMemoryRegistry:
 
 
 class _Entry:
-	"""mutable storage for an instance's latest hello / state / last_seen"""
-
 	__slots__ = ("instance_id", "hello", "last_state", "last_seen")
 
 	def __init__(

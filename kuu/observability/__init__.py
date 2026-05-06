@@ -25,6 +25,8 @@ from kuu.observability._protocol import (
 	JobSnapshot,
 	QueueSnapshot,
 	State,
+	TaskInfo,
+	TaskParam,
 	WorkerSnapshot,
 )
 from kuu.observability._ws import WsUplink
@@ -43,6 +45,8 @@ __all__ = [
 	"WorkerSnapshot",
 	"JobSnapshot",
 	"QueueSnapshot",
+	"TaskInfo",
+	"TaskParam",
 	"InstanceInfo",
 	"EventsSink",
 	"EventsSource",

@@ -70,7 +70,7 @@ class Settings(Struct, frozen=True, forbid_unknown_fields=True):
 			pattern=_APP_PATTERN,
 			description="path to the location of `Kuu` instance formatted as `dotted.python_module[:instance]`",
 		),
-	]
+	] | None = None
 	task_modules: list[Annotated[str, Meta(pattern=_MODULE_PATTERN)]] = field(default_factory=list)
 	queues: list[str] = field(default_factory=list)
 	processes: Annotated[int, Meta(ge=1)] = 1
@@ -171,11 +171,16 @@ class Kuunfig(Struct, frozen=True, forbid_unknown_fields=True):
 
 	def resolve(self, name: str | None = None) -> Settings:
 		if name is None:
-			return self.default
-		preset = self.presets.get(name)
-		if preset is None:
-			raise KeyError(f"preset {name!r} not found; available: {sorted(self.presets)}")
-		data = _msgspec_to_builtins(self.default, enc_hook=_enc_hook)
-		preset_data = {k: v for k, v in preset.items() if v is not None}
-		data.update(preset_data)
-		return convert(data, Settings, dec_hook=_dec_hook)
+			merged = self.default
+		else:
+			preset = self.presets.get(name)
+			if preset is None:
+				raise KeyError(f"preset {name!r} not found; available: {sorted(self.presets)}")
+			data = _msgspec_to_builtins(self.default, enc_hook=_enc_hook)
+			preset_data = {k: v for k, v in preset.items() if v is not None}
+			data.update(preset_data)
+			merged = convert(data, Settings, dec_hook=_dec_hook)
+		if merged.app is None:
+			where = f"preset {name!r}" if name else "default"
+			raise ValueError(f"{where}: 'app' is required after resolve")
+		return merged

@@ -1,28 +1,40 @@
-{% if tasks %}
-<table class="kuu-table">
-	<thead>
-		<tr>
-			<th>task</th>
-			<th>queue</th>
-			<th>attempts</th>
-			<th>timeout</th>
-			<th></th>
-		</tr>
-	</thead>
-	<tbody>
-		{% for t in tasks %}
-		<tr>
-			<td class="mono-cell">{{ t.task_name }}</td>
-			<td class="mono-cell">{{ t.task_queue }}</td>
-			<td>{{ t.max_attempts }}</td>
-			<td class="dim">{{ "%.1fs"|format(t.timeout) if t.timeout else "—" }}</td>
-			<td class="action-cell">
-				<button class="btn" onclick="kuuRunTask({{ t.task_name|tojson }})">run</button>
-			</td>
-		</tr>
-		{% endfor %}
-	</tbody>
-</table>
+{% if groups %}
+{% for g in groups %}
+<div class="task-group">
+	<div class="task-group-head">
+		<span class="task-group-preset">{{ g.preset }}</span>
+		<span class="task-group-count">{{ g.tasks|length }} task{% if g.tasks|length != 1 %}s{% endif %}</span>
+	</div>
+	{% if g.tasks %}
+	<table class="kuu-table">
+		<thead>
+			<tr>
+				<th>task</th>
+				<th>queue</th>
+				<th>attempts</th>
+				<th>timeout</th>
+				<th></th>
+			</tr>
+		</thead>
+		<tbody>
+			{% for t in g.tasks %}
+			<tr>
+				<td class="mono-cell">{{ t.name }}</td>
+				<td class="mono-cell">{{ t.queue }}</td>
+				<td>{{ t.max_attempts }}</td>
+				<td class="dim">{{ "%.1fs"|format(t.timeout) if t.timeout else "—" }}</td>
+				<td class="action-cell">
+					<button class="btn" onclick="kuuRunTask({{ t.name|tojson }}, {{ (g.instance or '')|tojson }})">run</button>
+				</td>
+			</tr>
+			{% endfor %}
+		</tbody>
+	</table>
+	{% else %}
+	<p class="placeholder">no tasks registered</p>
+	{% endif %}
+</div>
+{% endfor %}
 {% else %}
 <p class="placeholder">no tasks registered</p>
 {% endif %}

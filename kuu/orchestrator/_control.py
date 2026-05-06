@@ -271,35 +271,19 @@ class ControlPlane:
 	# === dashboard
 
 	def _build_dashboard(self) -> None:
-		"""build the aggregating dashboard if enabled in default settings
-
-		uses ``kuunfig.default.app`` for registry / broker introspection;
-		stats are fed exclusively from the envelope stream
-		(``connect_app_events=False``); workers / scheduler fragments
-		read from the ``InstanceRegistry``
-		"""
 		dash_cfg = self.kuunfig.default.dashboard
 		if not dash_cfg.enable:
 			return
 		try:
-			from kuu._import import import_object, import_tasks
 			from kuu.web.dashboard import Dashboard
 		except ImportError:
 			log.exception("dashboard dependencies missing; install kuu[dashboard]")
-			return
-
-		try:
-			app = import_object(self.kuunfig.default.app)
-			import_tasks(self.kuunfig.default.task_modules, pattern=(), fs_discover=False)
-		except Exception:
-			log.exception("failed to import app for dashboard")
 			return
 
 		import os as _os
 
 		token = _os.environ.get("KUU_DASHBOARD_TOKEN")
 		self._dashboard = Dashboard(
-			app=app,
 			registry=self._registry,
 			control=self,
 			ingest_token=token,

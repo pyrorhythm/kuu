@@ -1,42 +1,31 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import Any
 
+from msgspec import Struct, field
 
-class Cmd: ...
+
+class Cmd(Struct, frozen=True): ...
 
 
-@dataclass(frozen=True, slots=True)
-class EnqueueCmd(Cmd):
-	"""enqueue a task on the target supervisor's broker"""
-
+class EnqueueCmd(Cmd, frozen=True, tag="enqueue"):
 	request_id: str
 	task: str
 	args: list[Any] = field(default_factory=list)
 	kwargs: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(frozen=True, slots=True)
-class TriggerJobCmd(Cmd):
-	"""enqueue a scheduled job once, by id"""
-
+class TriggerJobCmd(Cmd, frozen=True, tag="trigger_job"):
 	request_id: str
 	job_id: str
 
 
-@dataclass(frozen=True, slots=True)
-class RemoveJobCmd(Cmd):
-	"""remove a scheduled job by id from the target supervisor's scheduler"""
-
+class RemoveJobCmd(Cmd, frozen=True, tag="remove_job"):
 	request_id: str
 	job_id: str
 
 
-@dataclass(frozen=True, slots=True)
-class CmdResponse:
-	"""response paired to a command by ``request_id``"""
-
+class CmdResponse(Struct, frozen=True):
 	request_id: str
 	ok: bool
 	error: str | None = None

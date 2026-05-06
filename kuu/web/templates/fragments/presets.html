@@ -1,0 +1,37 @@
+{% if presets %}
+<table class="kuu-table">
+  <thead>
+    <tr>
+      <th>preset</th>
+      <th>instances</th>
+      <th>workers</th>
+      <th>capacity</th>
+      <th>in&nbsp;flight</th>
+      <th>load</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for p in presets %}
+    <tr>
+      <td class="mono-cell">{{ p.preset }}</td>
+      <td class="mono-cell">{{ p.instances }}</td>
+      <td>
+        <span class="chip {% if p.workers_alive == p.workers_total and p.workers_total > 0 %}alive{% elif p.workers_alive == 0 %}dead{% endif %}">
+          <span class="dot"></span>{{ p.workers_alive }}/{{ p.workers_total }}
+        </span>
+      </td>
+      <td class="mono-cell dim">{{ p.capacity }}</td>
+      <td class="mono-cell">{{ p.in_flight }}</td>
+      <td>
+        <div class="load-bar" title="{{ p.load_pct }}%">
+          <div class="load-bar-fill" style="width: {{ p.load_pct }}%"></div>
+          <span class="load-bar-pct">{{ p.load_pct }}%</span>
+        </div>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="placeholder">no presets registered</p>
+{% endif %}
