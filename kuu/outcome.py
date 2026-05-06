@@ -4,21 +4,21 @@ from dataclasses import dataclass
 class Outcome: ...
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class Ok(Outcome):
 	time_elapsed: float
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class Retry(Outcome):
 	delay_seconds: float
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class Reject(Outcome):
 	requeue: bool
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class Fail(Outcome):
 	exc: BaseException

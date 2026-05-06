@@ -51,8 +51,12 @@ async def _serve_collector(kuucfg, host: str, port: int, path: str) -> None:
 	app = import_object(kuucfg.default.app)
 	import_tasks(kuucfg.default.task_modules, pattern=(), fs_discover=False)
 
+	import os as _os
+
 	registry = InMemoryRegistry()
-	dash = Dashboard(app=app, registry=registry)
+	dash = Dashboard(
+		app=app, registry=registry, ingest_token=_os.environ.get("KUU_DASHBOARD_TOKEN"),
+	)
 	asgi = dash.build_app()
 	if path and path != "/":
 		asgi = Starlette(routes=[Mount(path, app=asgi)])

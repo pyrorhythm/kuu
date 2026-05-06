@@ -1,15 +1,3 @@
-"""control plane: forks one PresetSupervisor per preset and aggregates events
-
-each child runs an independent supervisor in its own subprocess; all
-children share a single ``mp.Queue`` that the parent drains as an
-``EventsSource``, feeding an ``InstanceRegistry``
-
-prometheus aggregation is owned by the control plane (one server, one
-multiprocess dir inherited by every child via env)
-
-dashboard is not yet wired here; that lands in step 3b
-"""
-
 from __future__ import annotations
 
 import logging
@@ -54,12 +42,12 @@ def _request_id_of(cmd: Cmd) -> str:
 
 
 def _run_supervisor_child(
-		config: Settings,
-		preset: str,
-		queue: mp.Queue[Envelope],
-		instance_id: str,
-		cmd_in: mp.Queue[Cmd],
-		cmd_out: mp.Queue[CmdResponse],
+	config: Settings,
+	preset: str,
+	queue: mp.Queue[Envelope],
+	instance_id: str,
+	cmd_in: mp.Queue[Cmd],
+	cmd_out: mp.Queue[CmdResponse],
 ) -> None:
 	"""child entrypoint: build a sink-driven supervisor and run it"""
 	import anyio as _anyio
@@ -68,13 +56,13 @@ def _run_supervisor_child(
 
 	sink = MpQueueSink(queue)
 	sup = PresetSupervisor(
-			config,
-			preset=preset,
-			events_sink=sink,
-			instance_id=instance_id,
-			manage_metrics=False,
-			cmd_in=cmd_in,
-			cmd_out=cmd_out,
+		config,
+		preset=preset,
+		events_sink=sink,
+		instance_id=instance_id,
+		manage_metrics=False,
+		cmd_in=cmd_in,
+		cmd_out=cmd_out,
 	)
 	_anyio.run(sup.start)
 
@@ -115,8 +103,8 @@ class ControlPlane:
 	async def start(self) -> None:
 		instances = self._instances()
 		log.info(
-				"starting control plane presets=%s",
-				[name for name, _ in instances],
+			"starting control plane presets=%s",
+			[name for name, _ in instances],
 		)
 		try:
 			await self._start_metrics_server(instances)
@@ -155,10 +143,10 @@ class ControlPlane:
 			cmd_in: mp.Queue[Cmd] = mp.Queue()
 			self._cmd_in_per_instance[instance_id] = cmd_in
 			p = mp.Process(
-					target=_run_supervisor_child,
-					args=(cfg, preset, self._events_queue, instance_id, cmd_in, self._cmd_responses),
-					name=f"kuu-supervisor-{preset}",
-					daemon=False,
+				target=_run_supervisor_child,
+				args=(cfg, preset, self._events_queue, instance_id, cmd_in, self._cmd_responses),
+				name=f"kuu-supervisor-{preset}",
+				daemon=False,
 			)
 			p.start()
 			self._procs.append((preset, p))
@@ -178,9 +166,14 @@ class ControlPlane:
 			self._registry.ingest(env)
 			match env.body:
 				case Hello() as h:
-					log.info("hello instance=%s preset=%s broker=%s/%s pid=%d",
-					         env.instance, h.preset, h.broker.type,
-					         h.broker.key[:12], h.pid)
+					log.info(
+						"hello instance=%s preset=%s broker=%s/%s pid=%d",
+						env.instance,
+						h.preset,
+						h.broker.type,
+						h.broker.key[:12],
+						h.pid,
+					)
 				case Bye() as b:
 					log.info("bye   instance=%s reason=%s", env.instance, b.reason)
 				case Event() as e:
@@ -197,12 +190,12 @@ class ControlPlane:
 			roster = self._registry.all()
 			if roster:
 				log.debug(
-						"roster: %s",
-						", ".join(
-								f"{e.hello.preset}/{e.instance_id[:8]}"
-								f"({len(e.last_state.workers) if e.last_state else 0}w)"
-								for e in roster
-						),
+					"roster: %s",
+					", ".join(
+						f"{e.hello.preset}/{e.instance_id[:8]}"
+						f"({len(e.last_state.workers) if e.last_state else 0}w)"
+						for e in roster
+					),
 				)
 			with anyio.move_on_after(2.0):
 				await self._stop_event.wait()
@@ -302,7 +295,15 @@ class ControlPlane:
 			log.exception("failed to import app for dashboard")
 			return
 
-		self._dashboard = Dashboard(app=app, registry=self._registry, control=self)
+		import os as _os
+
+		token = _os.environ.get("KUU_DASHBOARD_TOKEN")
+		self._dashboard = Dashboard(
+			app=app,
+			registry=self._registry,
+			control=self,
+			ingest_token=token,
+		)
 
 	async def _serve_dashboard(self) -> None:
 		dash = self._dashboard
@@ -319,17 +320,17 @@ class ControlPlane:
 			asgi_app = Starlette(routes=[Mount(dash_cfg.path, app=asgi_app)])
 
 		cfg = uvicorn.Config(
-				asgi_app,
-				host=dash_cfg.host,
-				port=dash_cfg.port,
-				log_level="warning",
+			asgi_app,
+			host=dash_cfg.host,
+			port=dash_cfg.port,
+			log_level="warning",
 		)
 		server = uvicorn.Server(cfg)
 		log.info(
-				"dashboard serving on http://%s:%d%s",
-				dash_cfg.host,
-				dash_cfg.port,
-				dash_cfg.path,
+			"dashboard serving on http://%s:%d%s",
+			dash_cfg.host,
+			dash_cfg.port,
+			dash_cfg.path,
 		)
 		try:
 			async with anyio.create_task_group() as tg:
@@ -351,8 +352,8 @@ class ControlPlane:
 		inherit ``PROMETHEUS_MULTIPROC_DIR`` from the parent env
 		"""
 		metrics_cfg = next(
-				(cfg.metrics for _, cfg in instances if cfg.metrics.enable),
-				None,
+			(cfg.metrics for _, cfg in instances if cfg.metrics.enable),
+			None,
 		)
 		if metrics_cfg is None:
 			return
@@ -362,15 +363,15 @@ class ControlPlane:
 		self._metrics_dir = await anyio.mkdtemp(prefix="kuu-prom-")
 		os.environ["PROMETHEUS_MULTIPROC_DIR"] = self._metrics_dir
 		self._metrics_server, _ = serve(
-				host=metrics_cfg.host,
-				port=metrics_cfg.port,
-				multiprocess_dir=self._metrics_dir,
+			host=metrics_cfg.host,
+			port=metrics_cfg.port,
+			multiprocess_dir=self._metrics_dir,
 		)
 		log.info(
-				"prometheus aggregator on %s:%d (dir=%s)",
-				metrics_cfg.host,
-				metrics_cfg.port,
-				self._metrics_dir,
+			"prometheus aggregator on %s:%d (dir=%s)",
+			metrics_cfg.host,
+			metrics_cfg.port,
+			self._metrics_dir,
 		)
 
 	def _stop_metrics_server(self) -> None:

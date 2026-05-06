@@ -52,8 +52,29 @@ class DashboardFragmentsMixin:
 		rows = self._workers_rows()
 		return HTMLResponse(self._render("fragments/workers.html", processes=rows))
 
+	async def _frag_queues(self, _: Request) -> HTMLResponse:
+		rows = self._queues_rows()
+		return HTMLResponse(self._render("fragments/queues.html", queues=rows))
+
+	def _queues_rows(self) -> list[dict]:
+		if self.registry is None:
+			return []
+		agg: dict[str, dict] = {}
+		for entry in self.registry.all():
+			if entry.last_state is None:
+				continue
+			for qname, qs in entry.last_state.queues.items():
+				row = agg.setdefault(
+					qname,
+					{"name": qname, "in_flight": 0, "depth": None, "instances": 0},
+				)
+				row["in_flight"] += qs.in_flight
+				row["instances"] += 1
+				if qs.depth is not None:
+					row["depth"] = qs.depth
+		return sorted(agg.values(), key=lambda r: r["name"])
+
 	def _workers_rows(self) -> list[dict]:
-		"""normalize workers list across leaf (orchestrator) and control-plane (registry) modes"""
 		if self.registry is not None:
 			rows: list[dict] = []
 			for entry in self.registry.all():
@@ -61,12 +82,14 @@ class DashboardFragmentsMixin:
 				if entry.last_state is None:
 					continue
 				for w in entry.last_state.workers:
-					rows.append({
-						"pid": w.pid,
-						"alive": w.alive,
-						"preset": preset,
-						"instance": entry.instance_id[:8],
-					})
+					rows.append(
+						{
+							"pid": w.pid,
+							"alive": w.alive,
+							"preset": preset,
+							"instance": entry.instance_id[:8],
+						}
+					)
 			return rows
 		if self.orchestrator and self.orchestrator._wp:
 			return [
@@ -82,13 +105,17 @@ class DashboardFragmentsMixin:
 				if entry.last_state is None:
 					continue
 				for j in entry.last_state.jobs:
-					jobs.append({
-						"id": j.id,
-						"task": j.task,
-						"next_run": j.next_run,
-						"instance": entry.instance_id,
-					})
-			return HTMLResponse(self._render("fragments/scheduler.html", jobs=jobs, aggregated=True))
+					jobs.append(
+						{
+							"id": j.id,
+							"task": j.task,
+							"next_run": j.next_run,
+							"instance": entry.instance_id,
+						}
+					)
+			return HTMLResponse(
+				self._render("fragments/scheduler.html", jobs=jobs, aggregated=True)
+			)
 		jobs = self.scheduler.jobs if self.scheduler else []
 		return HTMLResponse(self._render("fragments/scheduler.html", jobs=jobs, aggregated=False))
 

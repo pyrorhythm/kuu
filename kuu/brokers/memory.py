@@ -9,10 +9,11 @@ from typing import NamedTuple
 
 import anyio
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
+from msgspec import structs
 
-from .base import Broker, Delivery
 from ..exceptions import InvalidReceiptType
 from ..message import Message
+from .base import Broker, Delivery
 
 
 class MemoryReceipt(NamedTuple):
@@ -119,10 +120,6 @@ class MemoryBroker(Broker[MemoryReceipt]):
 			async for delivery in self._queues[q].recv.clone():
 				await send.send(delivery)
 
-		# Use asyncio.create_task instead of anyio task group to avoid
-		# cancel-scope "entered in different task" errors when the async
-		# generator is closed from a different task than the one that
-		# started iterating it.
 		pump_task = asyncio.create_task(self._pump_scheduled())
 		forward_tasks = [asyncio.create_task(_forward(q)) for q in queues]
 
@@ -168,7 +165,7 @@ class MemoryBroker(Broker[MemoryReceipt]):
 		self._pending.pop(key, None)
 		if not requeue:
 			return
-		msg = delivery.message.model_copy(update={"attempt": delivery.message.attempt + 1})
+		msg = structs.replace(delivery.message, attempt=delivery.message.attempt + 1)
 		if delay and delay > 0:
 			when = datetime.fromtimestamp(self._now() + delay, tz=timezone.utc)
 			await self.schedule(msg, when)

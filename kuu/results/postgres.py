@@ -94,6 +94,7 @@ class PostgresResults(ResultBackend):
 
         self._sf: WeakValueDictionary[str, anyio.Event] = WeakValueDictionary()
         self._listen_ready = asyncio.Event()
+        self._background_tasks: list[asyncio.Task] = []
 
     async def connect(self) -> None:
         async with self._connect_lock:
@@ -147,7 +148,6 @@ class PostgresResults(ResultBackend):
                 log.warning("pg cleanup tick failed", exc_info=True)
 
     async def _listen_loop(self) -> None:
-        import asyncio
         log.debug("LISTEN_LOOP: starting")
 
         def _on_notify(_conn, _pid, _chan, payload) -> None:

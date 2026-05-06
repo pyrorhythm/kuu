@@ -108,14 +108,12 @@ def get_type_fqn(arg: Any) -> str | None:
 
 
 def get_type_from_fqn(_result: str | bytes | None) -> Any:
-	_imported_type = None
 	if _result is None:
-		return _imported_type
+		return None
 
 	_decoded_result = _result.decode() if isinstance(_result, bytes) else _result
 	try:
-		_imported_type = import_object(_decoded_result)
+		return import_object(_decoded_result)
 	except Exception as exc:
-		logger.warning("{}", exc)
-
-	return _imported_type
+		logger.warning("get_type_from_fqn: import failed for %r: %s", _decoded_result, exc)
+		return None

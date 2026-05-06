@@ -3,7 +3,8 @@ from __future__ import annotations
 import logging
 import multiprocessing as mp
 import time
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal
 
 import anyio
 import anyio.to_thread
@@ -17,6 +18,25 @@ if TYPE_CHECKING:
 	from kuu.orchestrator._watcher import Changes
 
 log = logging.getLogger("kuu.orchestrator.worker_pool")
+
+
+WorkerEventKind = Literal["started", "succeeded", "failed", "retried", "dead"]
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerEvent:
+	"""ipc record pushed by a worker subprocess onto the shared mp.Queue
+
+	the supervisor consumes these to update in-flight counters, current-task
+	tracking, and to build outgoing :class:`kuu.observability.Event` envelopes
+	"""
+
+	kind: WorkerEventKind
+	task: str
+	queue: str
+	ts: float
+	pid: int
+	elapsed: float | None = None
 
 
 class WorkerPool:
@@ -102,7 +122,7 @@ class WorkerPool:
 						log.exception("mark_worker_dead failed for pid=%s", p.pid)
 
 
-def _run_worker(config: Settings, events_queue: mp.Queue | None = None) -> None:  # type: ignore[type-arg]
+def _run_worker(config: Settings, events_queue: mp.Queue | None = None) -> None:
 	log.info("worker process starting")
 	app = import_object(config.app)
 	import_tasks(config.task_modules, "", False)
@@ -119,21 +139,23 @@ def _run_worker(config: Settings, events_queue: mp.Queue | None = None) -> None:
 	log.info("worker process exiting")
 
 
-def _install_event_forwarder(app: Kuu, q: mp.Queue) -> None:  # type: ignore[type-arg]
-	"""push (event, task, queue, ts, pid) records onto the inter-process queue"""
+def _install_event_forwarder(app: Kuu, q: mp.Queue) -> None:
+	"""push :class:`WorkerEvent` records onto the inter-process queue"""
 	import os
 
 	pid = os.getpid()
 
-	def _put(event: str, task: str, queue: str) -> None:
+	def _put(kind: WorkerEventKind, task: str, queue: str, elapsed: float | None = None) -> None:
 		try:
-			q.put_nowait((event, task, queue, time.time(), pid))
+			q.put_nowait(WorkerEvent(
+				kind=kind, task=task, queue=queue, ts=time.time(), pid=pid, elapsed=elapsed,
+			))
 		except Exception:
 			pass
 
 	ev = app.events
 	ev.task_started.connect(lambda msg: _put("started", msg.task, msg.queue))
-	ev.task_succeeded.connect(lambda msg, elapsed: _put("succeeded", msg.task, msg.queue))
+	ev.task_succeeded.connect(lambda msg, elapsed: _put("succeeded", msg.task, msg.queue, elapsed))
 	ev.task_failed.connect(lambda msg, exc: _put("failed", msg.task, msg.queue))
 	ev.task_retried.connect(lambda msg, delay: _put("retried", msg.task, msg.queue))
 	ev.task_dead.connect(lambda msg: _put("dead", msg.task, msg.queue))

@@ -42,7 +42,7 @@ from kuu.observability import (
 from kuu.orchestrator._dashboard import DashboardRunner
 from kuu.orchestrator._scheduler import SchedulerRunner
 from kuu.orchestrator._watcher import Watcher
-from kuu.orchestrator._worker import WorkerPool
+from kuu.orchestrator._worker import WorkerEvent, WorkerPool
 
 if typing.TYPE_CHECKING:
 	from wsgiref.simple_server import WSGIServer
@@ -54,17 +54,6 @@ STATE_INTERVAL = 2.0
 
 
 class PresetSupervisor:
-	"""runs one preset's workers + scheduler + watcher under a single task group
-
-	when ``events_sink`` is provided, emits hello/state/bye envelopes and
-	forwards worker task events to the sink; the embedded dashboard is
-	disabled in that mode (caller owns the dashboard)
-
-	when ``events_sink`` is ``None``, behaves as the legacy single-process
-	orchestrator with an embedded dashboard that drains the worker queue
-	directly
-	"""
-
 	config: Settings
 	preset: str
 	instance_id: str
@@ -105,6 +94,7 @@ class PresetSupervisor:
 		self._manage_metrics = manage_metrics
 		self._app: typing.Any = None
 		self._inflight: Counter[str] = Counter()
+		self._current_task: dict[int, str] = {}
 		self._cmd_in = cmd_in
 		self._cmd_out = cmd_out
 
@@ -187,24 +177,26 @@ class PresetSupervisor:
 				await self._stop_event.wait()
 
 	async def _forward_worker_events(self) -> None:
-		"""drain worker mp.Queue tuples; track in_flight; emit Event envelopes for finishing kinds"""
+		"""drain :class:`WorkerEvent` from the worker pool; track in_flight +
+		per-pid current_task; emit Event envelopes for finishing kinds"""
 		q = self._wp.events_queue
 		while not self._stop_event.is_set():
 			try:
 				while True:
-					event, task, queue, ts, pid = q.get_nowait()
-					if event == "started":
-						self._inflight[queue] += 1
+					we: WorkerEvent = q.get_nowait()
+					if we.kind == "started":
+						self._inflight[we.queue] += 1
+						self._current_task[we.pid] = we.task
 						continue
-					if event in ("succeeded", "failed", "retried", "dead"):
-						if self._inflight[queue] > 0:
-							self._inflight[queue] -= 1
-					self._emit_event(event, task, queue, pid, ts)
+					if self._inflight[we.queue] > 0:
+						self._inflight[we.queue] -= 1
+					self._current_task.pop(we.pid, None)
+					self._emit_event(we)
 			except _QueueEmpty:
 				pass
 			await anyio.sleep(0.1)
 
-	def _emit_event(self, kind: str, task: str, queue: str, worker_pid: int, ts: float) -> None:
+	def _emit_event(self, we: WorkerEvent) -> None:
 		sink = self._events_sink
 		if sink is None:
 			return
@@ -213,12 +205,13 @@ class PresetSupervisor:
 				Envelope(
 					v=PROTOCOL_VERSION,
 					instance=self.instance_id,
-					ts=ts,
+					ts=we.ts,
 					body=Event(
-						kind=typing.cast(EventKind, kind),
-						task=task,
-						queue=queue,
-						worker_pid=worker_pid,
+						kind=typing.cast(EventKind, we.kind),
+						task=we.task,
+						queue=we.queue,
+						worker_pid=we.pid,
+						elapsed=we.elapsed,
 					),
 				)
 			)
@@ -339,7 +332,11 @@ class PresetSupervisor:
 
 	async def _build_state_async(self) -> State:
 		workers = [
-			WorkerSnapshot(pid=p.pid or -1, alive=p.is_alive(), current_task=None)
+			WorkerSnapshot(
+				pid=p.pid or -1,
+				alive=p.is_alive(),
+				current_task=self._current_task.get(p.pid) if p.pid else None,
+			)
 			for p in self._wp._processes
 		]
 		jobs = self._build_jobs()
@@ -354,7 +351,7 @@ class PresetSupervisor:
 			try:
 				known_queues |= set(app.registry.queues() or [app.default_queue])
 			except Exception:
-				pass
+				log.warning("_build_queues: failed to read queues from registry")
 
 		out: dict[str, QueueSnapshot] = {}
 		for q in known_queues:
@@ -373,6 +370,7 @@ class PresetSupervisor:
 		try:
 			return await probe(queue)
 		except Exception:
+			log.debug("_probe_depth: probe failed for queue %r", queue)
 			return None
 
 	def _build_jobs(self) -> list[JobSnapshot]:
@@ -430,4 +428,4 @@ class PresetSupervisor:
 			self._metrics_dir = None
 
 
-Orchestrator = PresetSupervisor  # legacy alias; will be removed when ControlPlane lands
+

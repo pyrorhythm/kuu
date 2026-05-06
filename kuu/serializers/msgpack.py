@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any, Literal, overload
 
 from msgspec import msgpack
-from pydantic import BaseModel
 
 from .base import Serializer
 
@@ -12,8 +11,6 @@ class MsgpackSerializer(Serializer):
 	def marshal(self, data: Any) -> bytes:
 		if data is None:
 			return b""
-		if isinstance(data, BaseModel):
-			return msgpack.encode(data.model_dump(mode="json"))
 		return msgpack.encode(data)
 
 	@overload

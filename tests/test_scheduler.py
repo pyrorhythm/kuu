@@ -233,7 +233,7 @@ def test_scheduler_runner_is_noop_when_disabled():
     from kuu.config import Settings
     from kuu.orchestrator._scheduler import SchedulerRunner
 
-    cfg = Settings.model_construct(app="x:y", task_modules=[])
+    cfg = Settings(app="x:y", task_modules=[])
     # scheduler.enable defaults to False
     runner = SchedulerRunner(cfg)
     # returns immediately without trying to import x:y

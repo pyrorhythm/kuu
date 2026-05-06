@@ -1,14 +1,3 @@
-"""websocket uplink for remote leaf → dashboard collector
-
-producer side: ``WsUplink`` exposes a synchronous ``EventsSink`` that
-buffers envelopes in an anyio memory stream; ``run`` task drains the
-buffer to a persistent ws connection with exponential backoff and
-re-emits the most recent ``Hello`` after every reconnect
-
-frame format: one envelope per text frame, json-encoded via
-:func:`kuu.observability.envelope_to_bytes`
-"""
-
 from __future__ import annotations
 
 import logging
@@ -33,11 +22,12 @@ _BACKOFF_MAX = 30.0
 
 class WsUplink:
 	def __init__(
-			self,
-			url: str | None = None,
-			asgi_app: ASGIApp | None = None,
-			path: str = "/_ingest",
-			max_buffer: int = 1000,
+		self,
+		url: str | None = None,
+		asgi_app: ASGIApp | None = None,
+		path: str = "/_ingest",
+		max_buffer: int = 1000,
+		token: str | None = None,
 	):
 		if url and asgi_app:
 			raise ValueError("Cannot provide both url and asgi_app")
@@ -47,6 +37,11 @@ class WsUplink:
 		self._url = url
 		self._asgi_app = asgi_app
 		self._path = path
+		self._token = token
+		self._last_hello: bytes | None = None
+
+	def _auth_headers(self) -> list[tuple[str, str]]:
+		return [("Authorization", f"Bearer {self._token}")] if self._token else []
 
 	async def run(self, stop_event: anyio.Event, *, task_status: TaskStatus | None = None) -> None:
 		async with create_task_group() as tg:
@@ -69,10 +64,13 @@ class WsUplink:
 
 		backoff = _BACKOFF_INITIAL
 
+		extra_headers = dict(self._auth_headers())
 		while not stop_event.is_set():
 			async with async_asgi_testclient.TestClient(self._asgi_app) as client:
 				try:
-					async with client.websocket_connect(path=self._path) as ws:
+					async with client.websocket_connect(
+						path=self._path, headers=extra_headers
+					) as ws:
 						if self._last_hello is not None:
 							await ws.send_bytes(self._last_hello)
 						async for frame in self._recv:
@@ -103,15 +101,15 @@ class WsUplink:
 			self._last_hello = data
 		try:
 			self._send.send_nowait(data)
-			print(f"_enqueue: OK; {env=}")
 		except anyio.WouldBlock:
-			print(f"_enqueue: WouldBlock; {env=}")
 			pass  # drop on backpressure
 		except Exception:
 			log.exception("uplink enqueue failed")
 
 	async def _run_ws(self, stop_event: anyio.Event) -> None:
 		"""maintain the ws connection until ``stop_event`` fires"""
+		assert self._url
+
 		try:
 			from websockets.asyncio.client import connect as ws_connect
 		except ImportError:
@@ -119,10 +117,15 @@ class WsUplink:
 			return
 
 		backoff = _BACKOFF_INITIAL
+		headers = self._auth_headers()
 		while not stop_event.is_set():
 			try:
 				log.info("uplink connecting to %s", self._url)
-				async with ws_connect(self._url, max_size=2**20) as ws:  # type:ignore
+				async with ws_connect(
+					self._url,
+					max_size=2**20,
+					additional_headers=headers,
+				) as ws:
 					backoff = _BACKOFF_INITIAL
 					if self._last_hello is not None:
 						await ws.send(self._last_hello)

@@ -134,10 +134,10 @@ class Worker:
 				if notnil_task.blocking:
 
 					def _call() -> Any:
-						return notnil_task.original_func(*payload.args, **payload.kwargs)  # type:ignore
+						return notnil_task.original_func(*payload.args, **payload.kwargs)
 
 					return await anyio.to_thread.run_sync(_call, abandon_on_cancel=True)
-				r = notnil_task.original_func(*payload.args, **payload.kwargs)  # type:ignore
+				r = notnil_task.original_func(*payload.args, **payload.kwargs)
 				if inspect.isawaitable(r):
 					r = await r
 				return r

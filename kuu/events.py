@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 import logging
-from collections import defaultdict
+
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -46,7 +46,7 @@ class Signal:
 
 class Events:
 	def __init__(self) -> None:
-		self._signals: dict[str, Signal] = defaultdict(lambda: None)  # type: ignore[arg-type]
+		self._signals: dict[str, Signal] = {}
 		for n in (
 			"task_enqueued",
 			"task_received",

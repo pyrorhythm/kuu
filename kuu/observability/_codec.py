@@ -1,10 +1,3 @@
-"""json (de)serialization for envelopes
-
-the python ``Envelope`` uses the body subclass as its discriminator;
-the wire format restores an explicit ``t`` tag (``"hello"``, ``"event"``,
-``"state"``, ``"bye"``) so receivers can dispatch without isinstance
-"""
-
 from __future__ import annotations
 
 from dataclasses import asdict
@@ -37,13 +30,13 @@ def envelope_to_bytes(env: Envelope) -> bytes:
 	if tag is None:
 		raise TypeError(f"unsupported body type: {type(env.body).__name__}")
 	return orjson.dumps(
-			{
-				"v": env.v,
-				"t": tag,
-				"instance": env.instance,
-				"ts": env.ts,
-				"body": asdict(env.body),
-			}
+		{
+			"v": env.v,
+			"t": tag,
+			"instance": env.instance,
+			"ts": env.ts,
+			"body": asdict(env.body),
+		}
 	)
 
 
@@ -54,24 +47,30 @@ def envelope_from_bytes(data: bytes | str) -> Envelope:
 	body: Body
 	match tag:
 		case "hello":
-			body = Hello(preset=body_d["preset"],
-			             host=body_d["host"],
-			             pid=body_d["pid"],
-			             version=body_d["version"],
-			             started_at=body_d["started_at"],
-			             broker=BrokerInfo(**body_d["broker"]),
-			             scheduler_enabled=body_d["scheduler_enabled"],
-			             processes=body_d["processes"])
+			body = Hello(
+				preset=body_d["preset"],
+				host=body_d["host"],
+				pid=body_d["pid"],
+				version=body_d["version"],
+				started_at=body_d["started_at"],
+				broker=BrokerInfo(**body_d["broker"]),
+				scheduler_enabled=body_d["scheduler_enabled"],
+				processes=body_d["processes"],
+			)
 		case "event":
-			body = Event(kind=body_d["kind"],
-			             task=body_d["task"],
-			             queue=body_d["queue"],
-			             worker_pid=body_d["worker_pid"],
-			             elapsed=body_d.get("elapsed"))
+			body = Event(
+				kind=body_d["kind"],
+				task=body_d["task"],
+				queue=body_d["queue"],
+				worker_pid=body_d["worker_pid"],
+				elapsed=body_d.get("elapsed"),
+			)
 		case "state":
-			body = State(workers=[WorkerSnapshot(**w) for w in body_d.get("workers", [])],
-			             jobs=[JobSnapshot(**j) for j in body_d.get("jobs", [])],
-			             queues={k: QueueSnapshot(**v) for k, v in body_d.get("queues", {}).items()})
+			body = State(
+				workers=[WorkerSnapshot(**w) for w in body_d.get("workers", [])],
+				jobs=[JobSnapshot(**j) for j in body_d.get("jobs", [])],
+				queues={k: QueueSnapshot(**v) for k, v in body_d.get("queues", {}).items()},
+			)
 		case "bye":
 			body = Bye(reason=body_d["reason"])
 		case _:

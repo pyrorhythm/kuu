@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 
 import anyio
+from msgspec import structs
 from nats.aio.msg import Msg
 from nats.js import JetStreamContext
 from nats.js.api import ConsumerConfig, RetentionPolicy, StreamConfig
@@ -98,6 +99,17 @@ class NatsBroker(Broker[NatsReceipt]):
 		if self._owns_transport:
 			await self.t.close()
 
+	async def queue_depth(self, queue: str) -> int | None:
+		if not self.t.is_connected:
+			return None
+		try:
+			info = await self.t.js.consumer_info(self.stream, self._durable(queue))
+			pending = int(getattr(info, "num_pending", 0))
+			scheduled = sum(1 for _, msg in self._scheduled if msg.queue == queue)
+			return pending + scheduled
+		except Exception:
+			return None
+
 	@_ensure_connected
 	async def declare(self, queue: str) -> None:
 		if queue in self._declared:
@@ -156,10 +168,6 @@ class NatsBroker(Broker[NatsReceipt]):
 			q: await self.js.pull_subscribe(self._subject(q), durable=self._durable(q))
 			for q in queues
 		}
-
-		# Use asyncio.create_task instead of anyio task group to avoid
-		# cancel-scope "entered in different task" errors when the async
-		# generator is closed from a different task.
 		pump_task = asyncio.create_task(self._pump_scheduled())
 
 		try:
@@ -175,9 +183,8 @@ class NatsBroker(Broker[NatsReceipt]):
 
 					for m in msgs:
 						msg = self.serializer.unmarshal(m.data, into=Message)
-						# Sync attempt with NATS delivery count (num_delivered is 1-indexed)
 						if m.metadata is not None and m.metadata.num_delivered > 1:
-							msg = msg.model_copy(update={"attempt": m.metadata.num_delivered - 1})
+							msg = structs.replace(msg, attempt=m.metadata.num_delivered - 1)
 						yield Delivery(message=msg, receipt=m, queue=q)
 		finally:
 			pump_task.cancel()
@@ -186,9 +193,6 @@ class NatsBroker(Broker[NatsReceipt]):
 			except asyncio.CancelledError:
 				pass
 			self._sched_event.set()
-			# Tear down pull subscriptions so the next consume() on the same
-			# transport doesn't share a durable with orphaned inboxes — that
-			# leaves pending pulls on the server that swallow new deliveries.
 			for sub in subs.values():
 				try:
 					await sub.unsubscribe()

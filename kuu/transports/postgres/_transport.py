@@ -5,7 +5,6 @@ from typing import AsyncGenerator
 from asyncpg import Connection, create_pool
 
 from kuu import NotConnected
-from kuu._types import _ensure_connected_cm
 from ._config import PostgresConfig, PostgresDSN, PostgresParams
 
 try:
@@ -44,10 +43,12 @@ class PostgresTransport:
 			case PostgresParams():
 				self._pool = create_pool(**asdict(config))
 				self._conn_config = config.conn_config
+			case _:
+				raise ValueError("PostgresTransport requires `config` or `pool`")
 
 	@asynccontextmanager
-	@_ensure_connected_cm
 	async def acq(self) -> AsyncGenerator[Connection]:
+		await self.connect()
 		if not hasattr(self, "_pool") or self._pool is None:
 			raise NotConnected
 		async with self._pool.acquire() as conn:

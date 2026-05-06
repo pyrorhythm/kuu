@@ -32,55 +32,49 @@ if typing.TYPE_CHECKING:
 
 class Dashboard(DashboardFragmentsMixin, DashbordAPIMixin):
 	def __init__(
-			self,
-			app: Kuu,
-			scheduler: Scheduler | None = None,
-			orchestrator: PresetSupervisor | None = None,
-			registry: InstanceRegistry | None = None,
-			control: "ControlPlane | None" = None,
-			title: str = "kuu dashboard",
+		self,
+		app: Kuu,
+		scheduler: Scheduler | None = None,
+		orchestrator: PresetSupervisor | None = None,
+		registry: InstanceRegistry | None = None,
+		control: "ControlPlane | None" = None,
+		title: str = "kuu dashboard",
+		ingest_token: str | None = None,
 	) -> None:
-		"""
-		``orchestrator`` is the legacy single-process supervisor whose
-		``_wp._processes`` provides the workers fragment. ``registry``
-		is the control-plane roster; when present, fragments prefer it
-		and aggregate workers across all live instances. ``control``
-		is the control-plane handle used to route per-instance commands
-		(enqueue / trigger / remove); when set, run-task and scheduler
-		actions are dispatched via RPC to the target supervisor.
-		"""
 		self.app = app
 		self.scheduler = scheduler
 		self.orchestrator = orchestrator
 		self.registry = registry
 		self.control = control
 		self.title = title
+		self._ingest_token = ingest_token
 		self.stats = StatsCollector(app, connect_app_events=registry is None)
 		here = Path(__file__).parent
 		self.jinja = Environment(
-				loader=FileSystemLoader(str(here / "templates")),
-				autoescape=select_autoescape(["html", "xml"]),
+			loader=FileSystemLoader(str(here / "templates")),
+			autoescape=select_autoescape(["html", "xml"]),
 		)
 		self.jinja.filters["tojson"] = lambda v: orjson.dumps(v).decode()
 
 	def build_app(self) -> Starlette:
 		static_dir = Path(__file__).parent / "static"
 		return Starlette(
-				debug=True,
-				routes=[
-					Route("/", self._index),
-					Route("/fragments/stats", self._frag_stats),
-					Route("/fragments/tasks", self._frag_tasks),
-					Route("/fragments/scheduler", self._frag_scheduler),
-					Route("/fragments/workers", self._frag_workers),
-					Route("/api/activity", self._api_activity),
-					Route("/api/task-params", self._api_task_params),
-					Route("/api/run-task", self._api_run_task, methods=["POST"]),
-					Route("/api/trigger-job", self._api_trigger_job, methods=["POST"]),
-					Route("/api/remove-job", self._api_remove_job, methods=["POST"]),
-					WebSocketRoute("/_ingest", self._ws_ingest),
-					Mount("/static", StaticFiles(directory=str(static_dir)), name="static"),
-				],
+			debug=True,
+			routes=[
+				Route("/", self._index),
+				Route("/fragments/stats", self._frag_stats),
+				Route("/fragments/tasks", self._frag_tasks),
+				Route("/fragments/scheduler", self._frag_scheduler),
+				Route("/fragments/workers", self._frag_workers),
+				Route("/fragments/queues", self._frag_queues),
+				Route("/api/activity", self._api_activity),
+				Route("/api/task-params", self._api_task_params),
+				Route("/api/run-task", self._api_run_task, methods=["POST"]),
+				Route("/api/trigger-job", self._api_trigger_job, methods=["POST"]),
+				Route("/api/remove-job", self._api_remove_job, methods=["POST"]),
+				WebSocketRoute("/_ingest", self._ws_ingest),
+				Mount("/static", StaticFiles(directory=str(static_dir)), name="static"),
+			],
 		)
 
 	def ingest_envelope(self, env: Envelope) -> None:
@@ -93,7 +87,6 @@ class Dashboard(DashboardFragmentsMixin, DashbordAPIMixin):
 			self.registry.ingest(env)
 		match env.body:
 			case Event() as e:
-				print(f"ingest {e=}")
 				self.stats.ingest(e.kind, e.task, env.ts)
 			case Hello() | State() | Bye():
 				pass
@@ -101,17 +94,15 @@ class Dashboard(DashboardFragmentsMixin, DashbordAPIMixin):
 				pass
 
 	async def _ws_ingest(self, websocket: WebSocket) -> None:
-		print("harro everynyan")
+		if not self._authorized(websocket):
+			await websocket.close(code=4401)  # rfc-style "unauthorized"
+			return
 		await websocket.accept()
-		print("accepted")
 		try:
 			while True:
-				print(f"WEBSOCKET try to recv state={websocket.client_state}")
 				data = await websocket.receive_bytes()
-				print(f"WEBSOCKET recv {data=}")
 				try:
 					env = envelope_from_bytes(data)
-					print(f"WEBSOCKET envelope {env=}")
 				except Exception:
 					continue
 				self.ingest_envelope(env)
@@ -122,6 +113,13 @@ class Dashboard(DashboardFragmentsMixin, DashbordAPIMixin):
 				await websocket.close()
 			except Exception:
 				pass
+
+	def _authorized(self, websocket: WebSocket) -> bool:
+		if self._ingest_token is None:
+			return True
+		auth = websocket.headers.get("authorization", "")
+		expected = f"Bearer {self._ingest_token}"
+		return auth == expected
 
 	def serve(self, host: str = "0.0.0.0", port: int = 8000) -> None:
 		import uvicorn

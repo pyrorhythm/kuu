@@ -1,21 +1,10 @@
-"""control-plane -> supervisor RPC
-
-separate from the observability envelope stream which is one-way; commands
-travel via dedicated mp.Queue pairs (one inbound queue per supervisor,
-one shared response queue back to the parent)
-
-dispatch via ``match`` on the :class:`Command` sum type; responses are
-correlated via ``request_id``
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
 
 
-class Cmd:
-	"""sealed base for cross-process RPC commands"""
+class Cmd: ...
 
 
 @dataclass(frozen=True, slots=True)

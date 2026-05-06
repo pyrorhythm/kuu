@@ -83,7 +83,8 @@ async def _run_leaf(cfg, preset: str, uplink_url: str | None) -> None:
 
 	from kuu.observability import WsUplink
 
-	uplink = WsUplink(uplink_url)
+	token = os.environ.get("KUU_DASHBOARD_TOKEN")
+	uplink = WsUplink(uplink_url, token=token)
 	sup = PresetSupervisor(cfg, preset=preset, events_sink=uplink.sink)
 	async with _anyio.create_task_group() as tg:
 		tg.start_soon(uplink.run, sup._stop_event)
@@ -92,12 +93,14 @@ async def _run_leaf(cfg, preset: str, uplink_url: str | None) -> None:
 
 def _apply_overrides(kuucfg, overrides):
 	"""apply CLI overrides to default + every preset uniformly"""
-	from kuu.config import Kuunfig
+	from msgspec import convert
+
+	from kuu.config import Kuunfig, _dec_hook
 
 	new_default = kuucfg.default.with_overrides(overrides)
 	new_presets = {}
 	for name in kuucfg.presets:
 		resolved = kuucfg.resolve(name).with_overrides(overrides)
-		new_presets[name] = resolved.model_dump()
-	data = {"default": new_default.model_dump(), "presets": new_presets}
-	return Kuunfig.model_validate(data)
+		new_presets[name] = resolved.to_dict()
+	data = {"default": new_default.to_dict(), "presets": new_presets}
+	return convert(data, Kuunfig, dec_hook=_dec_hook)

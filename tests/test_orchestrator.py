@@ -14,16 +14,16 @@ from kuu.orchestrator._worker import WorkerPool
 
 def _config(**overrides: Any) -> Settings:
 	defaults: dict[str, Any] = dict(
-		app="fake.module:app",
-		task_modules=["fake.tasks"],
-		queues=["default"],
-		processes=2,
-		concurrency=4,
-		prefetch=2,
-		shutdown_timeout=1.0,
+			app="fake.module:app",
+			task_modules=["fake.tasks"],
+			queues=["default"],
+			processes=2,
+			concurrency=4,
+			prefetch=2,
+			shutdown_timeout=1.0,
 	)
 	defaults.update(overrides)
-	return Settings.model_construct(**defaults)
+	return Settings(**defaults)
 
 
 def _fake_awatch_factory(batches: list[set[tuple[Change, str]]]):
@@ -198,9 +198,9 @@ class TestWatcher:
 		from kuu.config import WatchSettings
 
 		cfg = _config(
-			watch=WatchSettings(
-				enable=True, root=Path("/tmp"), reload_delay=0.05, reload_debounce=0.5
-			)
+				watch=WatchSettings(
+						enable=True, root=Path("/tmp"), reload_delay=0.05, reload_debounce=0.5
+				)
 		)
 		anyio.run(Watcher(cfg, cb).run, anyio.Event())
 
@@ -228,12 +228,12 @@ class TestWatcher:
 
 		root = Path("/tmp/proj").resolve()
 		cfg = _config(
-			watch=WatchSettings(
-				enable=True,
-				root=root,
-				respect_gitignore=False,
-				exclude=[Path("*.log"), Path("build") / "**"],
-			)
+				watch=WatchSettings(
+						enable=True,
+						root=root,
+						respect_gitignore=False,
+						exclude=[Path("*.log"), Path("build") / "**"],
+				)
 		)
 		anyio.run(Watcher(cfg, cb).run, anyio.Event())
 

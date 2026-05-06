@@ -1,12 +1,12 @@
-from typing import Annotated, Literal
+from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Literal
+
+from msgspec import Struct
 
 
-class Result(BaseModel):
-	model_config = ConfigDict(frozen=True)
-
+class Result(Struct, frozen=True):
 	status: Literal["ok", "error"]
-	value: Annotated[bytes | None, Field(default=None)]
-	error: Annotated[str | None, Field(default=None)]
-	type: Annotated[str | None, Field(default=None)]
+	value: bytes | None = None
+	error: str | None = None
+	type: str | None = None

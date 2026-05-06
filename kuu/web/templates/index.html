@@ -55,15 +55,22 @@
 	</div>
 </div>
 
-{% if orchestrator %}
-<!-- workers -->
-<div class="surface">
-	<div class="surface-head"><span class="surface-title">workers</span></div>
-	<div class="surface-body flush" hx-get="fragments/workers" hx-trigger="load, every 3s" hx-swap="innerHTML">
-		<p class="placeholder">loading…</p>
+<!-- workers + queues -->
+<div class="col2">
+	<div class="surface">
+		<div class="surface-head"><span class="surface-title">workers</span></div>
+		<div class="surface-body flush" hx-get="fragments/workers" hx-trigger="load, every 3s" hx-swap="innerHTML">
+			<p class="placeholder">loading…</p>
+		</div>
+	</div>
+
+	<div class="surface">
+		<div class="surface-head"><span class="surface-title">queues</span></div>
+		<div class="surface-body flush" hx-get="fragments/queues" hx-trigger="load, every 3s" hx-swap="innerHTML">
+			<p class="placeholder">loading…</p>
+		</div>
 	</div>
 </div>
-{% endif %}
 
 <script src="https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js"></script>
 <script>
