@@ -91,12 +91,12 @@ class ControlPlane:
 	def __init__(self, kuunfig: Kuunfig) -> None:
 		self.kuunfig = kuunfig
 		self._mp_ctx = mp.get_context("spawn")
-		self._events_queue = mp.Queue()
+		self._events_queue = self._mp_ctx.Queue()
 		self._source = MpQueueSource(self._events_queue)
 		self._registry = InMemoryRegistry()
 		self._procs = []
 		self._dashboard = None
-		self._cmd_responses = mp.Queue()
+		self._cmd_responses = self._mp_ctx.Queue()
 		self._cmd_in_per_instance = {}
 		self._cmd_pending = {}
 		self._cmd_results = {}
@@ -140,7 +140,7 @@ class ControlPlane:
 	def _spawn_all(self, instances: list[tuple[str, Settings]]) -> None:
 		for preset, cfg in instances:
 			instance_id = str(uuid.uuid4())
-			cmd_in: mp.Queue[Cmd] = mp.Queue()
+			cmd_in: mp.Queue[Cmd] = self._mp_ctx.Queue()
 			self._cmd_in_per_instance[instance_id] = cmd_in
 			p = self._mp_ctx.Process(
 				target=_run_supervisor_child,

@@ -94,7 +94,7 @@ class WorkerPool:
 		self._config = config
 		self._mp_ctx = mp.get_context("spawn")
 		self._processes = []
-		self.events_queue = mp.Queue()
+		self.events_queue = self._mp_ctx.Queue()
 
 	async def run(self, stop_event: anyio.Event) -> None:
 		self._stop_event = stop_event
