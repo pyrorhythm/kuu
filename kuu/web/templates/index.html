@@ -43,6 +43,16 @@
 	</div>
 </div>
 
+<div class="surface">
+	<div class="surface-head">
+		<span class="surface-title">task runs</span>
+	</div>
+	<div class="surface-body flush" id="task-runs-frag"
+		hx-get="fragments/task-runs" hx-trigger="load" hx-swap="innerHTML">
+		<p class="placeholder">loading…</p>
+	</div>
+</div>
+
 <div class="col2">
 	<div class="surface">
 		<div class="surface-head"><span class="surface-title">tasks</span></div>

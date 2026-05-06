@@ -515,3 +515,138 @@ html[data-theme="dark"] .theme-icon-moon { display: none; }
   line-height: 12px;
   z-index: 1;
 }
+
+/* ── Tasks ────────────────────────────────────────────────────── */
+.tasks-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--s-3) var(--s-4);
+  border-top: 1px solid var(--hair);
+}
+.tasks-page-info {
+  font-family: 'Geist Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.filter-select {
+  font-family: 'Geist Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+  background: var(--paper);
+  border: 1px solid var(--hair);
+  padding: 2px 8px;
+  outline: none;
+  line-height: 1.6;
+}
+.filter-select:focus { border-color: var(--hair); background: var(--hair-2); }
+
+.filter-input {
+  font-family: 'Geist Mono', monospace;
+  font-size: 10px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--hair);
+  padding: 2px 8px;
+  outline: none;
+  line-height: 1.6;
+}
+.filter-input:focus { border-color: var(--hair); background: var(--hair-2); }
+
+/* status badges */
+.status-badge {
+  font-family: 'Geist Mono', monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border: 1px solid var(--hair);
+  white-space: nowrap;
+}
+.status-badge.sb-ok { color: var(--good); border-color: var(--good-bd); background: var(--good-bg); }
+.status-badge.sb-err { color: var(--bad); border-color: var(--bad-bd); background: var(--bad-bg); }
+.status-badge.sb-retry { color: var(--ink-2); border-color: var(--hair); }
+
+.task-run-row:hover { background: var(--hair-2); }
+
+/* detail */
+.detail-meta {
+  display: flex;
+  gap: var(--s-5);
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--hair);
+  font-size: 12px;
+}
+.detail-meta strong { font-weight: 500; }
+
+.detail-extra-body {
+  padding: var(--s-3) var(--s-4);
+  background: var(--hair-2);
+  border-top: 1px solid var(--hair);
+}
+
+.detail-section { margin-bottom: var(--s-3); }
+.detail-section:last-child { margin-bottom: 0; }
+
+.detail-label {
+  font-family: 'Geist Mono', monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: var(--s-1);
+}
+
+.detail-pre {
+  font-family: 'Geist Mono', monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--hair);
+  background: var(--paper);
+}
+.detail-pre.traceback { color: var(--bad); }
+
+.btn-tiny {
+  font-size: 9px;
+  padding: 1px 6px;
+}
+
+/* log stream */
+.log-line {
+  display: flex;
+  gap: var(--s-3);
+  padding: 2px var(--s-4);
+  font-family: 'Geist Mono', monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  border-bottom: 1px solid var(--hair-2);
+  white-space: nowrap;
+}
+.log-line:hover { background: var(--hair-2); }
+
+.log-ts   { color: var(--ink-3); min-width: 160px; flex-shrink: 0; }
+.log-lvl  { min-width: 32px; flex-shrink: 0; font-weight: 500; }
+.log-logger { color: var(--ink-3); min-width: 80px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; }
+.log-msg  { color: var(--ink); flex: 1; overflow: hidden; text-overflow: ellipsis; }
+
+.log-lvl-10 .log-lvl { color: var(--ink-3); }
+.log-lvl-20 .log-lvl { color: var(--ink-2); }
+.log-lvl-30 .log-lvl { color: var(--bad-dark); }
+.log-lvl-40 .log-lvl { color: var(--bad); }
+.log-lvl-50 .log-lvl { color: var(--bad); font-weight: 700; }
+
+.attempt-row:hover { background: var(--hair-2); }
+
+.mono { font-family: 'Geist Mono', monospace; }
+.dim  { color: var(--ink-3); }
+.mono-cell { font-family: 'Geist Mono', monospace; font-size: 11px; color: var(--ink-2); }
