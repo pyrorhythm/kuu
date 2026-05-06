@@ -463,24 +463,48 @@ dialog.kuu-dialog::backdrop {
 html[data-theme="dark"] .theme-icon-sun { display: block; }
 html[data-theme="dark"] .theme-icon-moon { display: none; }
 
-/* ── Task groups (per preset) ─────────────────────────────────── */
+/* ── Task groups (per broker) ─────────────────────────────────── */
 .task-group + .task-group { border-top: 1px solid var(--hair); }
 .task-group-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: var(--s-3);
   padding: var(--s-2) var(--s-4);
   background: var(--hair-2);
   border-bottom: 1px solid var(--hair);
 }
-.task-group-preset {
+.task-group-broker {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--s-2);
+}
+.broker-type {
   font-family: 'Geist Mono', monospace;
   font-size: 11px;
   font-weight: 500;
   letter-spacing: 0.02em;
+  color: var(--ink-1);
+}
+.broker-key {
+  font-size: 10px;
+}
+.task-group-presets {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  flex-wrap: wrap;
+}
+.preset-chip {
+  font-family: 'Geist Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  padding: 1px 6px;
+  border: 1px solid var(--hair);
   color: var(--ink-2);
+  background: var(--paper);
 }
 .task-group-count {
+  margin-left: auto;
   font-family: 'Geist Mono', monospace;
   font-size: 10px;
   letter-spacing: 0.04em;
@@ -569,6 +593,16 @@ html[data-theme="dark"] .theme-icon-moon { display: none; }
 .status-badge.sb-ok { color: var(--good); border-color: var(--good-bd); background: var(--good-bg); }
 .status-badge.sb-err { color: var(--bad); border-color: var(--bad-bd); background: var(--bad-bg); }
 .status-badge.sb-retry { color: var(--ink-2); border-color: var(--hair); }
+.status-badge.sb-running { color: var(--ink-2); border-color: var(--hair); background: var(--hair-2); }
+
+/* exc column truncation */
+.exc-col { max-width: 180px; }
+.exc-cell {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .task-run-row:hover { background: var(--hair-2); }
 

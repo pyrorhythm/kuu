@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import threading
 from typing import Any
 
 import anyio
@@ -35,25 +36,27 @@ class SqliteBackend(PersistenceBackend):
 		validate_table_name(cfg.runs_table)
 		validate_table_name(cfg.logs_table)
 		self._conn: sqlite3.Connection | None = None
+		self._lock = threading.Lock()
 
 	async def connect(self) -> None:
 		await anyio.to_thread.run_sync(self._connect_sync)
 
 	def _connect_sync(self) -> None:
-		conn = sqlite3.connect(self._path, check_same_thread=False)
-		conn.execute("PRAGMA journal_mode=WAL")
-		conn.execute("PRAGMA synchronous=NORMAL")
-		conn.execute("PRAGMA temp_store=MEMORY")
-		conn.execute("PRAGMA foreign_keys=ON")
-		self._conn = conn
+		with self._lock:
+			conn = sqlite3.connect(self._path, check_same_thread=False)
+			conn.execute("PRAGMA journal_mode=WAL")
+			conn.execute("PRAGMA synchronous=NORMAL")
+			conn.execute("PRAGMA temp_store=MEMORY")
+			self._conn = conn
 
 	async def close(self) -> None:
 		await anyio.to_thread.run_sync(self._close_sync)
 
 	def _close_sync(self) -> None:
-		if self._conn is not None:
-			self._conn.close()
-			self._conn = None
+		with self._lock:
+			if self._conn is not None:
+				self._conn.close()
+				self._conn = None
 
 	async def init_schema(self) -> None:
 		await anyio.to_thread.run_sync(self._init_schema_sync)
@@ -62,7 +65,8 @@ class SqliteBackend(PersistenceBackend):
 		assert self._conn is not None
 		rt = self._cfg.runs_table
 		lt = self._cfg.logs_table
-		self._conn.executescript(f"""
+		with self._lock:
+			self._conn.executescript(f"""
 			CREATE TABLE IF NOT EXISTS "{rt}" (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				message_id TEXT NOT NULL,
@@ -88,23 +92,23 @@ class SqliteBackend(PersistenceBackend):
 			);
 			CREATE TABLE IF NOT EXISTS "{lt}" (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				run_id INTEGER NOT NULL,
+				message_id TEXT NOT NULL,
+				attempt INTEGER NOT NULL DEFAULT 0,
 				ts REAL NOT NULL DEFAULT 0.0,
 				level INTEGER NOT NULL DEFAULT 0,
 				logger TEXT NOT NULL DEFAULT '',
-			  message TEXT NOT NULL DEFAULT '',
-				FOREIGN KEY (run_id) REFERENCES "{rt}"(id) ON DELETE CASCADE
+			  message TEXT NOT NULL DEFAULT ''
 			);
-			CREATE INDEX IF NOT EXISTS "{rt}_message_id_idx"
+			CREATE UNIQUE INDEX IF NOT EXISTS "{rt}_message_id_attempt_uniq"
 				ON "{rt}"(message_id, attempt);
 			CREATE INDEX IF NOT EXISTS "{rt}_finished_at_idx"
 				ON "{rt}"(finished_at DESC);
 			CREATE INDEX IF NOT EXISTS "{rt}_task_status_idx"
 				ON "{rt}"(task, status, finished_at DESC);
-			CREATE INDEX IF NOT EXISTS "{lt}_run_id_ts_idx"
-				ON "{lt}"(run_id, ts);
+			CREATE INDEX IF NOT EXISTS "{lt}_message_id_attempt_ts_idx"
+				ON "{lt}"(message_id, attempt, ts);
 		""")
-		self._conn.commit()
+			self._conn.commit()
 
 	async def write_runs(self, runs: list[RunRow]) -> None:
 		if not runs:
@@ -135,19 +139,27 @@ class SqliteBackend(PersistenceBackend):
 					r.traceback,
 				)
 			)
-		self._conn.executemany(
-			f"""
-				INSERT INTO "{rt}" (
-					message_id, attempt, task, queue, instance_id, worker_pid,
-					args_repr, kwargs_repr, started_at, finished_at,
-					time_elapsed, status, exc_type, exc_message, traceback
-				) VALUES (
-					?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-				)
-			""",
-			rows,
-		)
-		self._conn.commit()
+		with self._lock:
+			self._conn.executemany(
+				f"""
+					INSERT INTO "{rt}" (
+						message_id, attempt, task, queue, instance_id, worker_pid,
+						args_repr, kwargs_repr, started_at, finished_at,
+						time_elapsed, status, exc_type, exc_message, traceback
+					) VALUES (
+						?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+					)
+					ON CONFLICT(message_id, attempt) DO UPDATE SET
+						finished_at = excluded.finished_at,
+						time_elapsed = excluded.time_elapsed,
+						status = excluded.status,
+						exc_type = excluded.exc_type,
+						exc_message = excluded.exc_message,
+						traceback = excluded.traceback
+				""",
+				rows,
+			)
+			self._conn.commit()
 
 	async def write_logs(self, logs: list[LogRow]) -> None:
 		if not logs:
@@ -159,18 +171,19 @@ class SqliteBackend(PersistenceBackend):
 		lt = self._cfg.logs_table
 		rows: list[tuple[Any, ...]] = []
 		for lr in logs:
-			rows.append((lr.run_id, lr.ts, lr.level, lr.logger, lr.message))
-		self._conn.executemany(
-			f"""
-				INSERT INTO "{lt}" (
-					run_id, ts, level, logger, message
-				) VALUES (
-					?, ?, ?, ?, ?
-				)
-			""",
-			rows,
-		)
-		self._conn.commit()
+			rows.append((lr.message_id, lr.attempt, lr.ts, lr.level, lr.logger, lr.message))
+		with self._lock:
+			self._conn.executemany(
+				f"""
+					INSERT INTO "{lt}" (
+						message_id, attempt, ts, level, logger, message
+					) VALUES (
+						?, ?, ?, ?, ?, ?
+					)
+				""",
+				rows,
+			)
+			self._conn.commit()
 
 	async def query_runs(
 		self,
@@ -213,19 +226,20 @@ class SqliteBackend(PersistenceBackend):
 			params.append(after)
 		clause = " AND ".join(where) if where else "1=1"
 		params.extend([limit, offset])
-		cursor = self._conn.execute(
-			f"""
-					SELECT
-						id, message_id, attempt, task, queue, instance_id,
-						worker_pid, args_repr, kwargs_repr, started_at, finished_at,
-						time_elapsed, status, exc_type, exc_message, traceback
-					FROM "{rt}" WHERE {clause}
-					ORDER BY finished_at DESC
-					LIMIT ? OFFSET ?
-			""",
-			params,
-		)
-		return [_row_to_run(row) for row in cursor.fetchall()]
+		with self._lock:
+			cursor = self._conn.execute(
+				f"""
+						SELECT
+							id, message_id, attempt, task, queue, instance_id,
+							worker_pid, args_repr, kwargs_repr, started_at, finished_at,
+							time_elapsed, status, exc_type, exc_message, traceback
+						FROM "{rt}" WHERE {clause}
+						ORDER BY finished_at DESC
+						LIMIT ? OFFSET ?
+				""",
+				params,
+			)
+			return [_row_to_run(row) for row in cursor.fetchall()]
 
 	async def query_run_attempts(self, message_id: str) -> list[RunRow]:
 		return await anyio.to_thread.run_sync(self._query_run_attempts_sync, message_id)
@@ -233,37 +247,50 @@ class SqliteBackend(PersistenceBackend):
 	def _query_run_attempts_sync(self, message_id: str) -> list[RunRow]:
 		assert self._conn is not None
 		rt = self._cfg.runs_table
-		cursor = self._conn.execute(
-			f"""
-				SELECT
-					id, message_id, attempt, task, queue, instance_id,
-					worker_pid, args_repr, kwargs_repr, started_at, finished_at,
-					time_elapsed, status, exc_type, exc_message, traceback
-				FROM "{rt}" WHERE message_id = ?
-				ORDER BY attempt ASC
-			""",
-			(message_id,),
-		)
-		return [_row_to_run(row) for row in cursor.fetchall()]
+		with self._lock:
+			cursor = self._conn.execute(
+				f"""
+					SELECT
+						id, message_id, attempt, task, queue, instance_id,
+						worker_pid, args_repr, kwargs_repr, started_at, finished_at,
+						time_elapsed, status, exc_type, exc_message, traceback
+					FROM "{rt}" WHERE message_id = ?
+					ORDER BY attempt ASC
+				""",
+				(message_id,),
+			)
+			return [_row_to_run(row) for row in cursor.fetchall()]
 
 	async def query_logs(
-		self, run_id: int, *, limit: int = 500, after_ts: float = 0.0
+		self, message_id: str, attempt: int, *, limit: int = 500, after_ts: float = 0.0
 	) -> list[LogRow]:
-		return await anyio.to_thread.run_sync(self._query_logs_sync, run_id, limit, after_ts)
+		return await anyio.to_thread.run_sync(
+			self._query_logs_sync, message_id, attempt, limit, after_ts
+		)
 
-	def _query_logs_sync(self, run_id: int, limit: int, after_ts: float) -> list[LogRow]:
+	def _query_logs_sync(
+		self, message_id: str, attempt: int, limit: int, after_ts: float
+	) -> list[LogRow]:
 		assert self._conn is not None
 		lt = self._cfg.logs_table
-		cursor = self._conn.execute(
-			f"""SELECT run_id, ts, level, logger, message
-				FROM "{lt}" WHERE run_id = ? AND ts > ?
-				ORDER BY ts ASC LIMIT ?""",
-			(run_id, after_ts, limit),
-		)
-		return [
-			LogRow(run_id=row[0], ts=row[1], level=row[2], logger=row[3], message=row[4])
-			for row in cursor.fetchall()
-		]
+		with self._lock:
+			cursor = self._conn.execute(
+				f"""SELECT message_id, attempt, ts, level, logger, message
+					FROM "{lt}" WHERE message_id = ? AND attempt = ? AND ts > ?
+					ORDER BY ts ASC LIMIT ?""",
+				(message_id, attempt, after_ts, limit),
+			)
+			return [
+				LogRow(
+					message_id=row[0],
+					attempt=row[1],
+					ts=row[2],
+					level=row[3],
+					logger=row[4],
+					message=row[5],
+				)
+				for row in cursor.fetchall()
+			]
 
 	async def prune(self, before_ts: float) -> int:
 		return await anyio.to_thread.run_sync(self._prune_sync, before_ts)
@@ -272,16 +299,18 @@ class SqliteBackend(PersistenceBackend):
 		assert self._conn is not None
 		rt = self._cfg.runs_table
 		lt = self._cfg.logs_table
-		self._conn.execute(
-			f"""DELETE FROM "{lt}" WHERE run_id IN
-				(SELECT id FROM "{rt}" WHERE finished_at < ?)""",
-			(before_ts,),
-		)
-		cursor = self._conn.execute(f'DELETE FROM "{rt}" WHERE finished_at < ?', (before_ts,))
-		count = cursor.rowcount
-		self._conn.execute("PRAGMA optimize")
-		self._conn.commit()
-		return count
+		with self._lock:
+			self._conn.execute(
+				f"""DELETE FROM "{lt}"
+					WHERE (message_id, attempt) IN
+					(SELECT message_id, attempt FROM "{rt}" WHERE finished_at < ?)""",
+				(before_ts,),
+			)
+			cursor = self._conn.execute(f'DELETE FROM "{rt}" WHERE finished_at < ?', (before_ts,))
+			count = cursor.rowcount
+			self._conn.execute("PRAGMA optimize")
+			self._conn.commit()
+			return count
 
 
 def _row_to_run(row: tuple[Any, ...]) -> RunRow:

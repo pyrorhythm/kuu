@@ -2,7 +2,13 @@
 {% for g in groups %}
 <div class="task-group">
 	<div class="task-group-head">
-		<span class="task-group-preset">{{ g.preset }}</span>
+		<span class="task-group-broker">
+			<span class="broker-type">{{ g.broker_type }}</span>
+			{% if g.broker_key_short %}<span class="broker-key mono dim">{{ g.broker_key_short }}</span>{% endif %}
+		</span>
+		<span class="task-group-presets dim">
+			{% for p in g.presets %}<span class="preset-chip">{{ p }}</span>{% endfor %}
+		</span>
 		<span class="task-group-count">{{ g.tasks|length }} task{% if g.tasks|length != 1 %}s{% endif %}</span>
 	</div>
 	{% if g.tasks %}

@@ -58,6 +58,7 @@ postgres = ["asyncpg>=0.31.0"]
 dev = [
     "async-asgi-testclient>=1.4.11",
     "kuu",
+    "pydantic>=2.13.3",
     "pyrefly>=0.62,<0.65",
     "pytest>=9,<11",
     "pytest-asyncio>=1.3.0",

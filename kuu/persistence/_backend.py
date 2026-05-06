@@ -32,7 +32,7 @@ class PersistenceBackend(Protocol):
 	async def query_run_attempts(self, message_id: str) -> list[RunRow]: ...
 
 	async def query_logs(
-		self, run_id: int, *, limit: int = 500, after_ts: float = 0.0
+		self, message_id: str, attempt: int, *, limit: int = 500, after_ts: float = 0.0
 	) -> list[LogRow]: ...
 
 	async def prune(self, before_ts: float) -> int: ...
@@ -62,7 +62,7 @@ class NoopBackend:
 	async def query_run_attempts(self, message_id: str) -> list[RunRow]:
 		return []
 
-	async def query_logs(self, run_id: int, **kwargs) -> list[LogRow]:
+	async def query_logs(self, message_id: str, attempt: int, **kwargs) -> list[LogRow]:
 		return []
 
 	async def prune(self, before_ts: float) -> int:

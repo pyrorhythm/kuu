@@ -48,10 +48,25 @@ class PersistenceWorker:
 				await stop_event.wait()
 				tg.cancel_scope.cancel()
 		finally:
-			# drain remaining
 			with anyio.move_on_after(5.0):
+				self._drain_queue_nowait()
 				await self._flush(force=True)
 			await self._backend.close()
+
+	def _drain_queue_nowait(self) -> None:
+		"""pull every remaining item out of the queue and stage it for flush"""
+		while True:
+			try:
+				item = self._queue.get_nowait()
+			except asyncio.QueueEmpty:
+				return
+			if item is None:
+				continue
+			kind, payload = item
+			if kind == "event":
+				self._handle_event(*payload)
+			elif kind == "log_batch":
+				self._handle_log_batch(*payload)
 
 	def enqueue_event(self, instance_id: str, evt: Event) -> None:
 		try:
@@ -121,13 +136,13 @@ class PersistenceWorker:
 			except Exception:
 				log.exception("persistence: write_runs failed, dropped %d rows", len(rows))
 
-		# flush logs (batched after runs to ensure FK integrity)
 		log_batch = self._log_batch
 		self._log_batch = []
 		if log_batch:
 			rows = [
 				LogRow(
-					run_id=rec["run_id"],
+					message_id=rec["message_id"],
+					attempt=rec["attempt"],
 					ts=rec["ts"],
 					level=rec["level"],
 					logger=rec["logger"],
@@ -212,7 +227,8 @@ class PersistenceWorker:
 		for rec in lb.records:
 			self._log_batch.append(
 				{
-					"run_id": 0,
+					"message_id": rec.message_id,
+					"attempt": rec.attempt,
 					"ts": rec.ts,
 					"level": rec.level,
 					"logger": rec.logger,

@@ -52,7 +52,7 @@ class DashboardFragmentsMixin:
 		)
 
 	async def _frag_tasks(self, _: Request) -> HTMLResponse:
-		groups = self._tasks_by_preset()
+		groups = self._tasks_by_broker()
 		return HTMLResponse(self._render("fragments/tasks.html", groups=groups))
 
 	async def _frag_presets(self, _: Request) -> HTMLResponse:
@@ -63,27 +63,61 @@ class DashboardFragmentsMixin:
 		rows = self._queues_rows()
 		return HTMLResponse(self._render("fragments/queues.html", queues=rows))
 
-	def _tasks_by_preset(self) -> list[dict]:
+	def _tasks_by_broker(self) -> list[dict]:
+		"""group tasks by unique broker key — presets sharing a broker collapse
+		into one group, since they serve the same task registry"""
 		if self.registry is not None:
 			groups: dict[str, dict] = {}
 			for entry in self.registry.all():
+				broker = entry.hello.broker
+				key = broker.key or f"{broker.type}:?"
 				preset = entry.hello.preset
 				g = groups.setdefault(
-					preset,
-					{"preset": preset, "instance": entry.instance_id, "tasks": []},
+					key,
+					{
+						"broker_type": broker.type,
+						"broker_key": key,
+						"broker_key_short": (key[:12] + "…") if len(key) > 13 else key,
+						"presets": [],
+						"instance": entry.instance_id,
+						"tasks": [],
+						"_seen_task_names": set(),
+					},
 				)
-				if g["tasks"]:
-					continue
-				g["instance"] = entry.instance_id
-				g["tasks"] = list(entry.hello.tasks)
-			return sorted(groups.values(), key=lambda g: g["preset"])
+				if preset not in g["presets"]:
+					g["presets"].append(preset)
+				if not g["instance"]:
+					g["instance"] = entry.instance_id
+				for t in entry.hello.tasks:
+					if t.name in g["_seen_task_names"]:
+						continue
+					g["_seen_task_names"].add(t.name)
+					g["tasks"].append(t)
+			out = []
+			for g in groups.values():
+				g.pop("_seen_task_names", None)
+				g["presets"].sort()
+				g["tasks"].sort(key=lambda t: t.name)
+				out.append(g)
+			return sorted(out, key=lambda g: g["broker_type"] + g["broker_key"])
 		if self.app is not None:
 			tasks = []
 			for name in sorted(self.app.registry.names()):
 				t = self.app.registry.get(name)
 				if t is not None:
 					tasks.append(t)
-			return [{"preset": "default", "instance": None, "tasks": tasks}] if tasks else []
+			if not tasks:
+				return []
+			return [
+				{
+					"broker_type": type(self.app.broker).__name__,
+					"broker_key": "",
+					"broker_key_short": "",
+					"presets": ["default"],
+					"instance": None,
+					"tasks": tasks,
+				}
+			]
 		return []
 
 	def _presets_rows(self) -> list[dict]:

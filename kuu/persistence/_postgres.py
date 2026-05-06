@@ -94,7 +94,8 @@ class PostgresBackend(PersistenceBackend):
 
 				CREATE TABLE IF NOT EXISTS {lt} (
 					id BIGINT PRIMARY KEY GENERATED ALWAYS BY IDENTITY,
-					run_id BIGINT NOT NULL REFERENCES {rt} (id),
+					message_id TEXT NOT NULL,
+					attempt INTEGER NOT NULL DEFAULT 0,
 					ts DOUBLE PRECISION NOT NULL DEFAULT 0.0,
 					level INTEGER NOT NULL DEFAULT 0,
 					logger TEXT NOT NULL DEFAULT '',
@@ -102,17 +103,23 @@ class PostgresBackend(PersistenceBackend):
 				)
 			""")
 
+			runs_uniq = f'"{self._cfg.runs_table}_message_id_attempt_uniq"'
+			await conn.execute(
+				f"CREATE UNIQUE INDEX IF NOT EXISTS {runs_uniq} ON {rt}(message_id, attempt)"
+			)
 			idx_specs = [
-				(f"{self._cfg.runs_table}_message_id_idx", f"{rt}(message_id, attempt)"),
 				(f"{self._cfg.runs_table}_finished_at_idx", f"{rt}(finished_at DESC)"),
 				(
 					f"{self._cfg.runs_table}_task_status_idx",
 					f"{rt}(task, status, finished_at DESC)",
 				),
-				(f"{self._cfg.logs_table}_run_id_ts_idx", f"{lt}(run_id, ts)"),
+				(
+					f"{self._cfg.logs_table}_message_id_attempt_ts_idx",
+					f"{lt}(message_id, attempt, ts)",
+				),
 			]
 			for name, spec in idx_specs:
-				await conn.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {spec}")
+				await conn.execute(f'CREATE INDEX IF NOT EXISTS "{name}" ON {spec}')
 
 	_RUNS_COLS = (
 		"id, message_id, attempt, task, queue, instance_id, "
@@ -134,6 +141,13 @@ class PostgresBackend(PersistenceBackend):
 					) VALUES (
 					  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
 					)
+					ON CONFLICT (message_id, attempt) DO UPDATE SET
+						finished_at = EXCLUDED.finished_at,
+						time_elapsed = EXCLUDED.time_elapsed,
+						status = EXCLUDED.status,
+						exc_type = EXCLUDED.exc_type,
+						exc_message = EXCLUDED.exc_message,
+						traceback = EXCLUDED.traceback
 				""",
 				[
 					(
@@ -165,10 +179,13 @@ class PostgresBackend(PersistenceBackend):
 			await conn.executemany(
 				f"""
 				  INSERT INTO {self._qualified_logs}
-				  (run_id, ts, level, logger, message)
-					VALUES ($1, $2, $3, $4, $5)
+				  (message_id, attempt, ts, level, logger, message)
+					VALUES ($1, $2, $3, $4, $5, $6)
 				""",
-				[(lr.run_id, lr.ts, lr.level, lr.logger, lr.message) for lr in logs],
+				[
+					(lr.message_id, lr.attempt, lr.ts, lr.level, lr.logger, lr.message)
+					for lr in logs
+				],
 			)
 
 	async def query_runs(
@@ -232,24 +249,27 @@ class PostgresBackend(PersistenceBackend):
 		return [_pg_row_to_run(r) for r in rows]
 
 	async def query_logs(
-		self, run_id: int, *, limit: int = 500, after_ts: float = 0.0
+		self, message_id: str, attempt: int, *, limit: int = 500, after_ts: float = 0.0
 	) -> list[LogRow]:
 		assert self._pool is not None
 		lt = self._qualified_logs
 		async with self._pool.acquire() as conn:
 			rows = await conn.fetch(
 				f"""
-				  SELECT run_id, ts, level, logger, message
-					FROM {lt} WHERE run_id = $1 AND ts > $2
-					ORDER BY ts ASC LIMIT $3
+				  SELECT message_id, attempt, ts, level, logger, message
+					FROM {lt}
+					WHERE message_id = $1 AND attempt = $2 AND ts > $3
+					ORDER BY ts ASC LIMIT $4
 				""",
-				run_id,
+				message_id,
+				attempt,
 				after_ts,
 				limit,
 			)
 		return [
 			LogRow(
-				run_id=r["run_id"],
+				message_id=r["message_id"],
+				attempt=r["attempt"],
 				ts=r["ts"],
 				level=r["level"],
 				logger=r["logger"],
@@ -264,7 +284,9 @@ class PostgresBackend(PersistenceBackend):
 		lt = self._qualified_logs
 		async with self._pool.acquire() as conn:
 			await conn.execute(
-				f"DELETE FROM {lt} WHERE run_id IN (SELECT id FROM {rt} WHERE finished_at < $1)",
+				f"""DELETE FROM {lt}
+					WHERE (message_id, attempt) IN
+					(SELECT message_id, attempt FROM {rt} WHERE finished_at < $1)""",
 				before_ts,
 			)
 			result = await conn.execute(

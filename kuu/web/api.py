@@ -200,20 +200,25 @@ class DashbordAPIMixin:
 			return Err("persistence disabled", 503)
 
 		qp = request.query_params
-		run_id_str = qp.get("run_id")
-		if not run_id_str:
-			return Err("run_id required")
+		message_id = qp.get("message_id")
+		if not message_id:
+			return Err("message_id required")
+		try:
+			attempt = int(qp.get("attempt", "0"))
+		except ValueError:
+			return Err("attempt must be int")
 		limit = max(1, min(2000, int(qp.get("limit", "500"))))
 		after_ts = float(qp.get("after_ts", "0"))
 
 		try:
-			rows = await be.query_logs(int(run_id_str), limit=limit, after_ts=after_ts)
+			rows = await be.query_logs(message_id, attempt, limit=limit, after_ts=after_ts)
 		except Exception as exc:
 			return Err(str(exc), 500)
 
 		return Ok(
 			{
-				"run_id": int(run_id_str),
+				"message_id": message_id,
+				"attempt": attempt,
 				"logs": [_log_to_dict(r) for r in rows],
 			}
 		)
@@ -281,7 +286,8 @@ def _run_to_dict(r: typing.Any) -> dict:
 
 def _log_to_dict(r: typing.Any) -> dict:
 	return {
-		"run_id": r.run_id,
+		"message_id": r.message_id,
+		"attempt": r.attempt,
 		"ts": r.ts,
 		"level": r.level,
 		"logger": r.logger,

@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import contextvars
 import logging
 import multiprocessing as mp
-import threading
 import time
 import traceback as _traceback_module
 from dataclasses import dataclass
@@ -21,13 +19,6 @@ if TYPE_CHECKING:
 	from kuu.orchestrator._watcher import Changes
 
 log = logging.getLogger("kuu.orchestrator.worker_pool")
-
-_log_buffer: list[Any] = []
-_log_buffer_lock = threading.Lock()
-_log_queue: "mp.Queue[Any] | None" = None
-_current_msg_ctx: contextvars.ContextVar[Any] = contextvars.ContextVar(
-	"_current_msg_ctx", default=None
-)
 
 
 WorkerEventKind = Literal["started", "succeeded", "failed", "retried", "dead"]
@@ -175,51 +166,6 @@ class WorkerPool:
 						log.exception("mark_worker_dead failed for pid=%s", p.pid)
 
 
-class TaskLogHandler(logging.Handler):
-	"""capture log records with current message context during task execution"""
-
-	def __init__(self, level: int = logging.INFO) -> None:
-		super().__init__(level=level)
-
-	def emit(self, record: logging.LogRecord) -> None:
-		from kuu.observability._protocol import LogRecord as _LR
-
-		msg = _current_msg_ctx.get(None)
-		if msg is None:
-			return
-		with _log_buffer_lock:
-			_log_buffer.append(
-				_LR(
-					message_id=str(msg.id),
-					attempt=msg.attempt,
-					level=record.levelno,
-					logger=record.name,
-					message=self.format(record),
-					ts=record.created,
-				)
-			)
-			if len(_log_buffer) >= 100:
-				_flush_logs_now()
-
-
-def _flush_logs_now() -> None:
-	"""flush log buffer to the mp.Queue (thread-safe)"""
-	from kuu.observability._protocol import LogBatch
-
-	q = _log_queue
-	if q is None:
-		return
-	with _log_buffer_lock:
-		if not _log_buffer:
-			return
-		batch = list(_log_buffer)
-		_log_buffer.clear()
-	try:
-		q.put_nowait(LogBatch(records=batch))
-	except Exception:
-		pass
-
-
 def _run_worker(config: Settings, events_queue: mp.Queue | None = None) -> None:
 	log.info("worker process starting")
 	app = import_object(config.app)  # type:ignore
@@ -231,34 +177,29 @@ def _run_worker(config: Settings, events_queue: mp.Queue | None = None) -> None:
 		WorkerMetrics(app)
 
 	if events_queue is not None:
-		global _log_queue
-		_log_queue = events_queue
-		_install_event_forwarder(app, events_queue)
-		_install_log_forwarder()
+		from kuu.observability import _log_capture
 
-	anyio.run(Worker(config, app=app).run)
+		level = _resolve_log_level(config.persistence.log_level)
+		_log_capture.install(events_queue, level=level)
+		_install_event_forwarder(app, events_queue)
+
+	try:
+		anyio.run(Worker(config, app=app).run)
+	finally:
+		if events_queue is not None:
+			from kuu.observability import _log_capture
+
+			_log_capture.shutdown()
 	log.info("worker process exiting")
 
 
-def _install_log_forwarder() -> None:
-	"""install a logging handler that captures per-task logs and flushes to the mp.Queue
-
-	logs are flushed either when the buffer reaches 100 records, or via the
-	periodic flush task (every 200ms) running in the worker's asyncio event loop
-	"""
-	handler = TaskLogHandler(level=logging.INFO)
-	handler.setFormatter(logging.Formatter(
-		"%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-		datefmt="%Y-%m-%dT%H:%M:%S",
-	))
-	logging.getLogger().addHandler(handler)
-
-
-async def _run_log_flush_loop() -> None:
-	"""periodic flush for logs that haven't filled the buffer yet"""
-	while True:
-		await anyio.sleep(0.2)
-		_flush_logs_now()
+def _resolve_log_level(name: str) -> int:
+	"""coerce a level name to logging.* int; falls back to INFO"""
+	try:
+		val = logging.getLevelNamesMapping().get(name.upper())
+	except AttributeError:
+		val = getattr(logging, name.upper(), None)
+	return val if isinstance(val, int) else logging.INFO
 
 
 def _install_event_forwarder(app: Kuu, q: mp.Queue) -> None:
@@ -295,7 +236,11 @@ def _install_event_forwarder(app: Kuu, q: mp.Queue) -> None:
 			if len(exc_message_val) > _MAX_ARG_REPR:
 				exc_message_val = exc_message_val[:_MAX_ARG_REPR] + "...<truncated>"
 			exc_message = exc_message_val
-			tb = _traceback_module.format_exc()
+			tb_obj = exc.__traceback__
+			if tb_obj is not None:
+				tb = "".join(_traceback_module.format_exception(type(exc), exc, tb_obj))
+			else:
+				tb = f"{type(exc).__name__}: {exc}"
 			if len(tb) > _MAX_TRACEBACK:
 				tb = tb[:_MAX_TRACEBACK] + "...<truncated>"
 			traceback_str = tb

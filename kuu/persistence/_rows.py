@@ -36,7 +36,8 @@ class RunRow(Struct, frozen=True):
 
 
 class LogRow(Struct, frozen=True):
-	run_id: int = 0
+	message_id: str = ""
+	attempt: int = 0
 	ts: float = 0.0
 	level: int = 0
 	logger: str = ""

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from adaptix import Retort
 from msgspec import json as _json
 from msgspec import msgpack as _msgpack
 
@@ -15,6 +16,7 @@ class Marshal:
 		self._dec_table: dict[type, DecHook] = {}
 		self._json_enc: _json.Encoder | None = None
 		self._msgpack_enc: _msgpack.Encoder | None = None
+		self._retort: Any = None
 
 	def register(
 		self,
@@ -40,7 +42,15 @@ class Marshal:
 		for t, fn in self._enc_table:
 			if isinstance(obj, t):
 				return fn(obj)
-		raise TypeError(f"no encoder registered for {type(obj).__name__}")
+		retort = self._retort
+		if retort is None:
+			retort = self._retort = Retort()
+		try:
+			return retort.dump(obj)
+		except Exception as exc:
+			raise TypeError(
+				f"no encoder registered for {type(obj).__name__} and adaptix fallback failed: {exc}"
+			) from exc
 
 	def _dec_hook(self, typ: type, obj: Any) -> Any:
 		fn = self._dec_table.get(typ)
