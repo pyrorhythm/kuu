@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, overload
 
-from msgspec import msgpack
+from kuu.marshal import marshal as _m
 
 from .base import Serializer
 
@@ -11,7 +11,7 @@ class MsgpackSerializer(Serializer):
 	def marshal(self, data: Any) -> bytes:
 		if data is None:
 			return b""
-		return msgpack.encode(data)
+		return _m.msgpack_encode(data)
 
 	@overload
 	def unmarshal[T](self, data: bytes, into: type[T]) -> T: ...
@@ -22,4 +22,4 @@ class MsgpackSerializer(Serializer):
 			return None
 
 		target = into if into is not None else self._primary_type
-		return msgpack.decode(data, type=target)
+		return _m.msgpack_decode(data, type=target)

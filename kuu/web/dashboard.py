@@ -3,8 +3,9 @@ from __future__ import annotations
 import typing
 from pathlib import Path
 
-import orjson
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+from kuu.marshal import marshal as _marshal
 from starlette.applications import Starlette
 from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
@@ -54,7 +55,7 @@ class Dashboard(DashboardFragmentsMixin, DashbordAPIMixin):
 			loader=FileSystemLoader(str(here / "templates")),
 			autoescape=select_autoescape(["html", "xml"]),
 		)
-		self.jinja.filters["tojson"] = lambda v: orjson.dumps(v).decode()
+		self.jinja.filters["tojson"] = lambda v: _marshal.json_encode(v).decode()
 
 	def build_app(self) -> Starlette:
 		static_dir = Path(__file__).parent / "static"

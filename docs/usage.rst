@@ -399,8 +399,8 @@ Serializers
 -----------
 
 Brokers and result backends use a ``Serializer`` to marshal messages. The
-default is ``JSONSerializer``, using ``orjson`` (or ``msgspec.json`` with the
-``msgspec`` extra).
+default is ``JSONSerializer``, backed by ``msgspec.json``. Custom per-type
+encoders/decoders can be registered via :class:`kuu.marshal.Marshal`.
 
 Msgpack
 ~~~~~~~

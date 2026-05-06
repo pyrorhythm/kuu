@@ -4,13 +4,12 @@ import hashlib
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
-import orjson
+from kuu.marshal import canonical_json
 
 
 def broker_key(obj: Any) -> str:
 	identity = _identity(_unwrap_broker(obj))
-	canonical = orjson.dumps(identity, option=orjson.OPT_SORT_KEYS)
-	return hashlib.sha256(canonical).hexdigest()
+	return hashlib.sha256(canonical_json(identity)).hexdigest()
 
 
 def _unwrap_broker(obj: Any) -> Any:

@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-import json
 import pathlib
 import tomllib
 from pathlib import Path
 from typing import Annotated, Any, Self
 
-import orjson
 from msgspec import Meta, Struct, convert, field
 from msgspec import to_builtins as _msgspec_to_builtins
+from msgspec import json as _json
+from msgspec import DecodeError as _DecodeError
 
 
 def _enc_hook(obj: Any) -> Any:
@@ -92,8 +92,8 @@ class Settings(Struct, frozen=True, forbid_unknown_fields=True):
 			if not sep:
 				raise ValueError(f"override must be in form 'dotted.path=value', got: {raw!r}")
 			try:
-				parsed: Any = orjson.loads(value)
-			except json.JSONDecodeError:
+				parsed: Any = _json.decode(value)
+			except _DecodeError:
 				parsed = value
 			parts = key.split(".")
 			cursor = data

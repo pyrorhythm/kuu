@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-from msgspec import json as _msgjson
+from msgspec import json as _json
 
+from kuu.marshal import marshal as _m
 from kuu.observability._protocol import Envelope
 
-_encoder = _msgjson.Encoder()
-_decoder = _msgjson.Decoder(Envelope)
+_decoder = _json.Decoder(Envelope, dec_hook=_m._dec_hook)
 
 
 def envelope_to_bytes(env: Envelope) -> bytes:
-	return _encoder.encode(env)
+	return _m.json_encode(env)
 
 
 def envelope_from_bytes(data: bytes | str) -> Envelope:

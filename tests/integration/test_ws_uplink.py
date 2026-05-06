@@ -9,7 +9,7 @@ import anyio
 import pytest
 import uvicorn
 from async_asgi_testclient import TestClient
-from orjson import dumps
+from msgspec.json import encode as _json_encode
 
 from kuu._types import _FnAsync
 from kuu.app import Kuu
@@ -161,7 +161,7 @@ class TestWsUplink:
 			TestClient(app) as tc,
 			tc.websocket_connect(path="/_ingest") as ws
 		):
-			await ws.send_bytes(dumps({"v": 1, "t": "totally-bogus", "instance": "x", "ts": 0, "body": {}}))
+			await ws.send_bytes(_json_encode({"v": 1, "instance": "x", "ts": 0, "body": {"type": "totally-bogus"}}))
 			await ws.send_bytes(envelope_to_bytes(Envelope(v=1, instance="zzz", ts=time.time(), body=_hello())))
 
 		await _drain_until(lambda: any(e.instance_id == "zzz" for e in dash.registry.all()))

@@ -56,10 +56,9 @@ class TestCodec:
 		assert type(decoded.body) is type(env.body)
 
 	def test_decoder_rejects_unknown_tag(self) -> None:
-		import orjson
-		from msgspec import ValidationError
+		from msgspec import ValidationError, json as _json
 
-		data = orjson.dumps(
+		data = _json.encode(
 				{"v": 1, "instance": "x", "ts": 0, "body": {"type": "garbage"}}
 		)
 		with pytest.raises(ValidationError):

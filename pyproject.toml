@@ -39,7 +39,6 @@ dependencies = [
     "adaptix>=3.0.0b12",
     "anyio>=4.10,<5",
     "msgspec>=0.21",
-    "orjson>=3.11.8",
     "typer>=0.24.2",
     "uvloop>=0.22.1",
     "watchfiles>=1.1.1",
