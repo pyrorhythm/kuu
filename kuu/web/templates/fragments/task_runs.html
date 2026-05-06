@@ -1,8 +1,6 @@
-<!-- task-runs list fragment: loaded into #task-runs-frag via HTMX -->
 <div class="surface-head" style="border-bottom:1px solid var(--hair);margin:-1px">
-	<span class="surface-title">task runs</span>
 	<div style="margin-left:auto;display:flex;gap:var(--s-2)">
-		<select id="tr-filter-status" class="filter-select" hx-get="/fragments/task-runs" hx-trigger="change" hx-target="#task-runs-frag" hx-swap="innerHTML" name="status">
+		<select id="tr-filter-status" class="filter-select" hx-get="fragments/task-runs" hx-trigger="change" hx-target="#task-runs-frag" hx-swap="innerHTML" name="status">
 			<option value="">all status</option>
 			<option value="succeeded">succeeded</option>
 			<option value="failed">failed</option>
@@ -10,7 +8,7 @@
 			<option value="dead">dead</option>
 		</select>
 		<input id="tr-filter-task" class="filter-input" placeholder="task name…" style="width:160px"
-			hx-get="/fragments/task-runs" hx-trigger="keyup changed delay:300ms" hx-target="#task-runs-frag" hx-swap="innerHTML" name="task">
+			hx-get="fragments/task-runs" hx-trigger="keyup changed delay:300ms" hx-target="#task-runs-frag" hx-swap="innerHTML" name="task">
 	</div>
 </div>
 <div class="surface-body flush" style="padding-top:0">
@@ -27,11 +25,11 @@
 	<div class="tasks-page-info" id="task-runs-page">—</div>
 	<div style="display:flex;gap:var(--s-1)">
 		<button class="btn" id="tr-btn-prev" disabled
-			hx-get="/fragments/task-runs" hx-trigger="click" hx-target="#task-runs-frag" hx-swap="innerHTML"
+			hx-get="fragments/task-runs" hx-trigger="click" hx-target="#task-runs-frag" hx-swap="innerHTML"
 			hx-include="#tr-filter-status,#tr-filter-task" hx-vals='{"offset":"prev"}'>
 			&larr; prev</button>
 		<button class="btn" id="tr-btn-next" disabled
-			hx-get="/fragments/task-runs" hx-trigger="click" hx-target="#task-runs-frag" hx-swap="innerHTML"
+			hx-get="fragments/task-runs" hx-trigger="click" hx-target="#task-runs-frag" hx-swap="innerHTML"
 			hx-include="#tr-filter-status,#tr-filter-task" hx-vals='{"offset":"next"}'>
 			next &rarr;</button>
 	</div>
@@ -49,7 +47,7 @@
 		const params = new URLSearchParams({limit:LIMIT,offset:_offset});
 		if(status) params.set('status',status);
 		if(task) params.set('task',task);
-		fetch('/api/task-runs?'+params)
+		fetch('api/task-runs?'+params)
 			.then(r=>r.json())
 			.then(d=>{
 				if(!d.rows) return;
@@ -86,7 +84,7 @@
 		tbody.innerHTML=h;
 		tbody.querySelectorAll('.task-run-row').forEach(tr=>{
 			tr.addEventListener('click',()=>{
-				htmx.ajax('GET','/fragments/task-run-detail?message_id='+encodeURIComponent(tr.dataset.mid),'#task-runs-frag');
+				htmx.ajax('GET','fragments/task-run-detail?message_id='+encodeURIComponent(tr.dataset.mid),'#task-runs-frag');
 			});
 		});
 	}
@@ -99,7 +97,6 @@
 	}
 	function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
 
-	// HTMX events
 	document.getElementById('task-runs-frag').addEventListener('htmx:afterSettle', function(evt){
 		_offset = 0;
 		loadRuns();

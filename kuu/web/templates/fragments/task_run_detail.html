@@ -1,9 +1,8 @@
-<!-- task-run-detail fragment -->
 <div class="surface-head" style="border-bottom:1px solid var(--hair);margin:-1px">
 	<span class="surface-title">task detail</span>
 	<span class="mono dim" style="margin-left:var(--s-2)" id="detail-mid">{{ message_id }}</span>
 	<button class="btn" style="margin-left:auto"
-		hx-get="/fragments/task-runs" hx-target="#task-runs-frag" hx-swap="innerHTML">
+		hx-get="fragments/task-runs" hx-target="#task-runs-frag" hx-swap="innerHTML">
 		&larr; back to list</button>
 </div>
 <div class="surface-body flush" id="attempts-area">
@@ -37,7 +36,7 @@
 	const mid = '{{ message_id }}';
 	if(!mid){ document.getElementById('attempts-area').innerHTML='<p class="placeholder">no message_id</p>'; return; }
 
-	fetch('/api/task-run-attempts?message_id='+encodeURIComponent(mid))
+	fetch('api/task-run-attempts?message_id='+encodeURIComponent(mid))
 		.then(r=>r.json()).then(d=>{
 			if(!d.attempts){ return; }
 			renderAttempts(d.attempts);
@@ -131,7 +130,7 @@
 		const lvl=parseInt(document.getElementById('log-level-filter').value)||0;
 		const search=(document.getElementById('log-search').value||'').trim().toLowerCase();
 		setPoll('fetching…');
-		fetch('/api/task-run-logs?message_id='+encodeURIComponent(messageId)+'&attempt='+attempt+'&limit=500&after_ts='+_logAfter)
+		fetch('api/task-run-logs?message_id='+encodeURIComponent(messageId)+'&attempt='+attempt+'&limit=500&after_ts='+_logAfter)
 			.then(r=>r.json()).then(d=>{
 				if(!document.getElementById('log-stream-body')) return;
 				const logs=d.logs||[];
