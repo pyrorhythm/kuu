@@ -25,6 +25,8 @@ from kuu.observability import (
 	MpQueueSource,
 	State,
 )
+from kuu.observability._protocol import LogBatch
+from kuu.persistence import PersistenceWorker, create_backend
 
 if typing.TYPE_CHECKING:
 	from wsgiref.simple_server import WSGIServer
@@ -86,6 +88,7 @@ class ControlPlane:
 	_stop_event: anyio.Event
 	_metrics_dir: str | None = None
 	_metrics_server: WSGIServer | None = None
+	_persist_worker: PersistenceWorker | None = None
 
 	def __init__(self, kuunfig: Kuunfig) -> None:
 		self.kuunfig = kuunfig
@@ -99,6 +102,7 @@ class ControlPlane:
 		self._cmd_pending = {}
 		self._cmd_results = {}
 		self._stop_event = anyio.Event()
+		self._persist_worker = self._create_persist_worker()
 
 	async def start(self) -> None:
 		instances = self._instances()
@@ -115,6 +119,8 @@ class ControlPlane:
 				tg.start_soon(self._ingest_loop)
 				tg.start_soon(self._cmd_response_loop)
 				tg.start_soon(self._roster_log_loop)
+				if self._persist_worker is not None:
+					tg.start_soon(self._persist_worker.run, self._stop_event)
 				if self._dashboard is not None:
 					tg.start_soon(self._serve_dashboard)
 				await self._stop_event.wait()
@@ -179,8 +185,13 @@ class ControlPlane:
 				case Event() as e:
 					if self._dashboard is not None:
 						self._dashboard.stats.ingest(e.kind, e.task, env.ts)
+					if self._persist_worker is not None:
+						self._persist_worker.enqueue_event(env.instance, e)
 				case State():
 					pass
+				case LogBatch() as lb:
+					if self._persist_worker is not None:
+						self._persist_worker.enqueue_log_batch(env.instance, lb)
 				case _:
 					pass
 
@@ -267,6 +278,16 @@ class ControlPlane:
 			except _QueueEmpty:
 				pass
 			await anyio.sleep(0.05)
+
+	# === persistence
+
+	def _create_persist_worker(self) -> PersistenceWorker | None:
+		cfg = self.kuunfig.default.persistence
+		if not cfg.enable:
+			log.info("persistence: disabled")
+			return None
+		backend = create_backend(cfg)
+		return PersistenceWorker(backend, cfg)
 
 	# === dashboard
 

@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+import os
 import pathlib
 import tomllib
 from pathlib import Path
 from typing import Annotated, Any, Self
 
-from msgspec import Meta, Struct, convert, field
-from msgspec import to_builtins as _msgspec_to_builtins
-from msgspec import json as _json
 from msgspec import DecodeError as _DecodeError
+from msgspec import Meta, Struct, convert, field
+from msgspec import json as _json
+from msgspec import to_builtins as _msgspec_to_builtins
 
 
 def _enc_hook(obj: Any) -> Any:
@@ -63,14 +64,31 @@ class WatchSettings(Struct, frozen=True):
 	reload_debounce: float = 0.5
 
 
+class PersistenceConfig(Struct, frozen=True):
+	enable: bool = True
+	dsn: str = field(
+		default_factory=lambda: os.environ.get("KUU_PERSISTENCE_DSN", "sqlite:///./kuu.db")
+	)
+	schema: str | None = None
+	runs_table: str = "kuu_runs"
+	logs_table: str = "kuu_run_logs"
+	keep_days: int = 7
+	max_runs: int = 100_000
+	log_level: str = "INFO"
+	capture_args: bool = True
+
+
 class Settings(Struct, frozen=True, forbid_unknown_fields=True):
-	app: Annotated[
-		str,
-		Meta(
-			pattern=_APP_PATTERN,
-			description="path to the location of `Kuu` instance formatted as `dotted.python_module[:instance]`",
-		),
-	] | None = None
+	app: (
+		Annotated[
+			str,
+			Meta(
+				pattern=_APP_PATTERN,
+				description="path to the location of `Kuu` instance formatted as `dotted.python_module[:instance]`",
+			),
+		]
+		| None
+	) = None
 	task_modules: list[Annotated[str, Meta(pattern=_MODULE_PATTERN)]] = field(default_factory=list)
 	queues: list[str] = field(default_factory=list)
 	processes: Annotated[int, Meta(ge=1)] = 1
@@ -82,6 +100,7 @@ class Settings(Struct, frozen=True, forbid_unknown_fields=True):
 	dashboard: WebSettings = field(default_factory=WebSettings)
 	watch: WatchSettings = field(default_factory=WatchSettings)
 	scheduler: SchedulerSettings = field(default_factory=SchedulerSettings)
+	persistence: PersistenceConfig = field(default_factory=PersistenceConfig)
 
 	def with_overrides(self, overrides: list[str]) -> Self:
 		if not overrides:

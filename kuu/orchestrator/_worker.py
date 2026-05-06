@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import contextvars
 import logging
 import multiprocessing as mp
+import threading
 import time
+import traceback as _traceback_module
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import anyio
 import anyio.to_thread
@@ -19,8 +22,51 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("kuu.orchestrator.worker_pool")
 
+_log_buffer: list[Any] = []
+_log_buffer_lock = threading.Lock()
+_log_queue: "mp.Queue[Any] | None" = None
+_current_msg_ctx: contextvars.ContextVar[Any] = contextvars.ContextVar(
+	"_current_msg_ctx", default=None
+)
+
 
 WorkerEventKind = Literal["started", "succeeded", "failed", "retried", "dead"]
+
+
+_MAX_ARG_REPR = 500
+_MAX_TRACEBACK = 8192
+
+
+def _safe_repr(obj: Any) -> str | None:
+	"""repr an object, truncated to _MAX_ARG_REPR chars"""
+	if obj is None:
+		return None
+	try:
+		s = repr(obj)
+		if len(s) > _MAX_ARG_REPR:
+			return s[:_MAX_ARG_REPR] + "...<truncated>"
+		return s
+	except Exception:
+		return "<unrepresentable>"
+
+
+def _args_repr(args: tuple[Any, ...]) -> str | None:
+	if not args:
+		return None
+	joined = ", ".join(_safe_repr(a) or "?" for a in args)
+	if len(joined) > _MAX_ARG_REPR:
+		return joined[:_MAX_ARG_REPR] + "...<truncated>"
+	return joined
+
+
+def _kwargs_repr(kwargs: dict[str, Any]) -> str | None:
+	if not kwargs:
+		return None
+	parts = [f"{k}={_safe_repr(v) or '?'}" for k, v in kwargs.items()]
+	joined = ", ".join(parts)
+	if len(joined) > _MAX_ARG_REPR:
+		return joined[:_MAX_ARG_REPR] + "...<truncated>"
+	return joined
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +83,13 @@ class WorkerEvent:
 	ts: float
 	pid: int
 	elapsed: float | None = None
+	message_id: str | None = None
+	attempt: int | None = None
+	args_repr: str | None = None
+	kwargs_repr: str | None = None
+	exc_type: str | None = None
+	exc_message: str | None = None
+	traceback: str | None = None
 
 
 class WorkerPool:
@@ -122,6 +175,51 @@ class WorkerPool:
 						log.exception("mark_worker_dead failed for pid=%s", p.pid)
 
 
+class TaskLogHandler(logging.Handler):
+	"""capture log records with current message context during task execution"""
+
+	def __init__(self, level: int = logging.INFO) -> None:
+		super().__init__(level=level)
+
+	def emit(self, record: logging.LogRecord) -> None:
+		from kuu.observability._protocol import LogRecord as _LR
+
+		msg = _current_msg_ctx.get(None)
+		if msg is None:
+			return
+		with _log_buffer_lock:
+			_log_buffer.append(
+				_LR(
+					message_id=str(msg.id),
+					attempt=msg.attempt,
+					level=record.levelno,
+					logger=record.name,
+					message=self.format(record),
+					ts=record.created,
+				)
+			)
+			if len(_log_buffer) >= 100:
+				_flush_logs_now()
+
+
+def _flush_logs_now() -> None:
+	"""flush log buffer to the mp.Queue (thread-safe)"""
+	from kuu.observability._protocol import LogBatch
+
+	q = _log_queue
+	if q is None:
+		return
+	with _log_buffer_lock:
+		if not _log_buffer:
+			return
+		batch = list(_log_buffer)
+		_log_buffer.clear()
+	try:
+		q.put_nowait(LogBatch(records=batch))
+	except Exception:
+		pass
+
+
 def _run_worker(config: Settings, events_queue: mp.Queue | None = None) -> None:
 	log.info("worker process starting")
 	app = import_object(config.app)  # type:ignore
@@ -133,10 +231,34 @@ def _run_worker(config: Settings, events_queue: mp.Queue | None = None) -> None:
 		WorkerMetrics(app)
 
 	if events_queue is not None:
+		global _log_queue
+		_log_queue = events_queue
 		_install_event_forwarder(app, events_queue)
+		_install_log_forwarder()
 
 	anyio.run(Worker(config, app=app).run)
 	log.info("worker process exiting")
+
+
+def _install_log_forwarder() -> None:
+	"""install a logging handler that captures per-task logs and flushes to the mp.Queue
+
+	logs are flushed either when the buffer reaches 100 records, or via the
+	periodic flush task (every 200ms) running in the worker's asyncio event loop
+	"""
+	handler = TaskLogHandler(level=logging.INFO)
+	handler.setFormatter(logging.Formatter(
+		"%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+		datefmt="%Y-%m-%dT%H:%M:%S",
+	))
+	logging.getLogger().addHandler(handler)
+
+
+async def _run_log_flush_loop() -> None:
+	"""periodic flush for logs that haven't filled the buffer yet"""
+	while True:
+		await anyio.sleep(0.2)
+		_flush_logs_now()
 
 
 def _install_event_forwarder(app: Kuu, q: mp.Queue) -> None:
@@ -145,7 +267,38 @@ def _install_event_forwarder(app: Kuu, q: mp.Queue) -> None:
 
 	pid = os.getpid()
 
-	def _put(kind: WorkerEventKind, task: str, queue: str, elapsed: float | None = None) -> None:
+	def _put(
+		kind: WorkerEventKind,
+		task: str,
+		queue: str,
+		elapsed: float | None = None,
+		msg: Any = None,
+		exc: BaseException | None = None,
+	) -> None:
+		message_id: str | None = None
+		attempt: int | None = None
+		args_repr_val: str | None = None
+		kwargs_repr_val: str | None = None
+		exc_type: str | None = None
+		exc_message: str | None = None
+		traceback_str: str | None = None
+		if msg is not None:
+			message_id = str(msg.id)
+			attempt = msg.attempt
+			if msg.payload.args:
+				args_repr_val = _args_repr(msg.payload.args)
+			if msg.payload.kwargs:
+				kwargs_repr_val = _kwargs_repr(msg.payload.kwargs)
+		if exc is not None:
+			exc_type = type(exc).__name__
+			exc_message_val = str(exc)
+			if len(exc_message_val) > _MAX_ARG_REPR:
+				exc_message_val = exc_message_val[:_MAX_ARG_REPR] + "...<truncated>"
+			exc_message = exc_message_val
+			tb = _traceback_module.format_exc()
+			if len(tb) > _MAX_TRACEBACK:
+				tb = tb[:_MAX_TRACEBACK] + "...<truncated>"
+			traceback_str = tb
 		try:
 			q.put_nowait(
 				WorkerEvent(
@@ -155,14 +308,27 @@ def _install_event_forwarder(app: Kuu, q: mp.Queue) -> None:
 					ts=time.time(),
 					pid=pid,
 					elapsed=elapsed,
+					message_id=message_id,
+					attempt=attempt,
+					args_repr=args_repr_val,
+					kwargs_repr=kwargs_repr_val,
+					exc_type=exc_type,
+					exc_message=exc_message,
+					traceback=traceback_str,
 				)
 			)
 		except Exception:
 			pass
 
 	ev = app.events
-	ev.task_started.connect(lambda msg: _put("started", msg.task, msg.queue))
-	ev.task_succeeded.connect(lambda msg, elapsed: _put("succeeded", msg.task, msg.queue, elapsed))
-	ev.task_failed.connect(lambda msg, exc: _put("failed", msg.task, msg.queue))
-	ev.task_retried.connect(lambda msg, delay: _put("retried", msg.task, msg.queue))
-	ev.task_dead.connect(lambda msg: _put("dead", msg.task, msg.queue))
+	ev.task_started.connect(lambda msg: _put("started", msg.task, msg.queue, msg=msg))
+	ev.task_succeeded.connect(
+		lambda msg, elapsed: _put("succeeded", msg.task, msg.queue, elapsed=elapsed, msg=msg)
+	)
+	ev.task_failed.connect(
+		lambda msg, exc: _put("failed", msg.task, msg.queue, msg=msg, exc=exc)
+	)
+	ev.task_retried.connect(
+		lambda msg, delay: _put("retried", msg.task, msg.queue, msg=msg)
+	)
+	ev.task_dead.connect(lambda msg: _put("dead", msg.task, msg.queue, msg=msg))

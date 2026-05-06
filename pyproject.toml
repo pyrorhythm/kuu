@@ -34,7 +34,7 @@ classifiers = [
     "Topic :: System :: Networking",
     "Typing :: Typed",
 ]
-urls = { "homepage" = "https://github.com/pyrorhythm/kuu" }
+urls = { "homepage" = "https://github.com/pyrorhythm/kuu", "docs" = "https://pyrorhythm.github.io/kuu" }
 dependencies = [
     "adaptix>=3.0.0b12",
     "anyio>=4.10,<5",

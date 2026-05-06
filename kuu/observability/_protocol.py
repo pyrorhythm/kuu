@@ -68,6 +68,26 @@ class Event(Struct, frozen=True, tag="event"):
 	queue: str
 	worker_pid: int
 	elapsed: float | None = None
+	message_id: str | None = None
+	attempt: int | None = None
+	args_repr: str | None = None
+	kwargs_repr: str | None = None
+	exc_type: str | None = None
+	exc_message: str | None = None
+	traceback: str | None = None
+
+
+class LogRecord(Struct, frozen=True):
+	message_id: str
+	attempt: int
+	level: int
+	logger: str
+	message: str
+	ts: float
+
+
+class LogBatch(Struct, frozen=True, tag="log_batch"):
+	records: list[LogRecord] = field(default_factory=list)
 
 
 class State(Struct, frozen=True, tag="state"):
@@ -80,7 +100,7 @@ class Bye(Struct, frozen=True, tag="bye"):
 	reason: ByeReason
 
 
-Body = Hello | Event | State | Bye
+Body = Hello | Event | State | Bye | LogBatch
 
 
 class Envelope(Struct, frozen=True):
@@ -125,6 +145,8 @@ __all__ = [
 	"TaskInfo",
 	"Hello",
 	"Event",
+	"LogBatch",
+	"LogRecord",
 	"State",
 	"Bye",
 	"Body",
