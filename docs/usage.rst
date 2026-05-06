@@ -302,7 +302,7 @@ Three are bundled, same Protocol as user middleware:
   is the default.
 
 Custom Middleware
-~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
