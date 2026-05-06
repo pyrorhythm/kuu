@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from queue import Empty as _QueueEmpty
 
 import anyio
+import anyio.lowlevel
 
 from kuu.observability._protocol import (
 	Bye,
@@ -45,11 +46,21 @@ class MpQueueSource:
 	async def __aiter__(self) -> AsyncIterator[Envelope]:
 		while not self._closed:
 			try:
-				while True:
-					yield self._q.get_nowait()
-			except _QueueEmpty:
-				pass
-			await anyio.sleep(self._poll_interval)
+				did_work = False
+				for _ in range(100):
+					try:
+						yield self._q.get_nowait()
+						did_work = True
+					except _QueueEmpty:
+						break
+				if did_work:
+					await anyio.lowlevel.checkpoint()
+				else:
+					await anyio.sleep(self._poll_interval)
+			except Exception:
+				if self._closed:
+					break
+				raise
 
 
 class InMemoryRegistry:

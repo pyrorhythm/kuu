@@ -187,8 +187,14 @@ class PresetSupervisor:
 		q = self._wp.events_queue
 		while not self._stop_event.is_set():
 			try:
-				while True:
-					item = q.get_nowait()
+				did_work = False
+				for _ in range(100):
+					try:
+						item = q.get_nowait()
+						did_work = True
+					except _QueueEmpty:
+						break
+
 					if isinstance(item, LogBatch):
 						self._emit(item)
 						continue
@@ -201,9 +207,16 @@ class PresetSupervisor:
 						self._inflight[we.queue] -= 1
 					self._current_task.pop(we.pid, None)
 					self._emit_event(we)
-			except _QueueEmpty:
-				pass
-			await anyio.sleep(0.1)
+
+				if did_work:
+					await anyio.lowlevel.checkpoint()
+				else:
+					await anyio.sleep(0.1)
+			except Exception:
+				if self._stop_event.is_set():
+					break
+				log.exception("worker event forwarder error")
+				await anyio.sleep(0.5)
 
 	def _emit_event(self, we: WorkerEvent) -> None:
 		sink = self._events_sink

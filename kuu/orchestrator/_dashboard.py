@@ -88,9 +88,20 @@ class DashboardRunner:
 			return
 		while not stop_event.is_set():
 			try:
-				while True:
-					we = q.get_nowait()
+				did_work = False
+				for _ in range(100):
+					try:
+						we = q.get_nowait()
+						did_work = True
+					except queue.Empty:
+						break
 					stats.ingest(we.kind, we.task, we.ts)
-			except queue.Empty:
-				pass
-			await anyio.sleep(1.0)
+
+				if did_work:
+					await anyio.lowlevel.checkpoint()
+				else:
+					await anyio.sleep(1.0)
+			except Exception:
+				if stop_event.is_set():
+					break
+				await anyio.sleep(1.0)

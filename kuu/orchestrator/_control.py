@@ -254,15 +254,27 @@ class ControlPlane:
 
 		while not self._stop_event.is_set():
 			try:
-				while True:
-					resp = self._cmd_responses.get_nowait()
+				did_work = False
+				for _ in range(50):
+					try:
+						resp = self._cmd_responses.get_nowait()
+						did_work = True
+					except _QueueEmpty:
+						break
 					ev = self._cmd_pending.pop(resp.request_id, None)
 					if ev is not None:
 						self._cmd_results[resp.request_id] = resp
 						ev.set()
-			except _QueueEmpty:
-				pass
-			await anyio.sleep(0.05)
+
+				if did_work:
+					await anyio.lowlevel.checkpoint()
+				else:
+					await anyio.sleep(0.05)
+			except Exception:
+				if self._stop_event.is_set():
+					break
+				log.exception("command response loop error")
+				await anyio.sleep(0.5)
 
 	def _create_persist_worker(self) -> PersistenceWorker | None:
 		cfg = self.kuunfig.default.persistence

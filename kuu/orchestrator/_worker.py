@@ -4,12 +4,12 @@ import logging
 import multiprocessing as mp
 import time
 import traceback as _traceback_module
-from dataclasses import dataclass
 from multiprocessing.context import SpawnProcess
 from typing import TYPE_CHECKING, Any, Literal
 
 import anyio
 import anyio.to_thread
+from msgspec import Struct
 
 from kuu._import import import_object, import_tasks
 from kuu.app import Kuu
@@ -61,8 +61,7 @@ def _kwargs_repr(kwargs: dict[str, Any]) -> str | None:
 	return joined
 
 
-@dataclass(frozen=True, slots=True)
-class WorkerEvent:
+class WorkerEvent(Struct, frozen=True):
 	"""ipc record pushed by a worker subprocess onto the shared mp.Queue
 
 	the supervisor consumes these to update in-flight counters, current-task
