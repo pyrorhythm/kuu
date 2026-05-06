@@ -39,7 +39,7 @@ class Worker:
 		  `conn_config.app` itself.
 		"""
 
-		self.app = app if app is not None else import_object(config.app)
+		self.app = app if app is not None else import_object(config.app)  # type:ignore
 		self.queues = config.queues or sorted(
 			self.app.registry.queues() or {self.app.default_queue}
 		)
@@ -99,7 +99,9 @@ class Worker:
 		task = self.app.registry.get(msg.task)
 		ctx = Context(app=self.app, message=msg, phase="process", task=task)
 
-		log.debug("WORKER HANDLE: task=%s, key=%s, attempt=%s", msg.task, result_key(msg), msg.attempt)
+		log.debug(
+			"WORKER HANDLE: task=%s, key=%s, attempt=%s", msg.task, result_key(msg), msg.attempt
+		)
 
 		with anyio.CancelScope(shield=True):
 			await self.app.events.task_received.send(msg)
@@ -134,10 +136,10 @@ class Worker:
 				if notnil_task.blocking:
 
 					def _call() -> Any:
-						return notnil_task.original_func(*payload.args, **payload.kwargs)  # type:ignore
+						return notnil_task.original_func(*payload.args, **payload.kwargs)
 
 					return await anyio.to_thread.run_sync(_call, abandon_on_cancel=True)
-				r = notnil_task.original_func(*payload.args, **payload.kwargs)  # type:ignore
+				r = notnil_task.original_func(*payload.args, **payload.kwargs)
 				if inspect.isawaitable(r):
 					r = await r
 				return r
@@ -146,14 +148,15 @@ class Worker:
 			log.debug("WORKER HANDLE: executing task=%s", msg.task)
 			value = await run_chain(ctx, self.app.middleware, _terminal)
 			log.debug("WORKER HANDLE: task=%s completed, storing result", msg.task)
-			if results is not None:
-				payload, type_fqn = results.encode(value)
-				await results.set(
-					key,
-					Result(status="ok", value=payload, type=type_fqn),
-					ttl=results.ttl,
-				)
-				log.debug("WORKER HANDLE: result stored for key=%s", key)
+			with anyio.CancelScope(shield=True):
+				if results is not None:
+					payload, type_fqn = results.encode(value)
+					await results.set(
+						key,
+						Result(status="ok", value=payload, type=type_fqn),
+						ttl=results.ttl,
+					)
+					log.debug("WORKER HANDLE: result stored for key=%s", key)
 			outcome = Ok(time.perf_counter() - started)
 		except RetryErr as r:
 			outcome = Retry(

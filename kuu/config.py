@@ -1,167 +1,99 @@
 from __future__ import annotations
 
-import json
 import pathlib
-import re
 import tomllib
 from pathlib import Path
 from typing import Annotated, Any, Self
-from warnings import deprecated
 
-import orjson
-from pydantic import (
-	BaseModel,
-	ConfigDict,
-	Field,
-	NonNegativeFloat,
-	PositiveInt,
-	StringConstraints,
-	create_model,
-	model_validator,
+from msgspec import Meta, Struct, convert, field
+from msgspec import to_builtins as _msgspec_to_builtins
+from msgspec import json as _json
+from msgspec import DecodeError as _DecodeError
+
+
+def _enc_hook(obj: Any) -> Any:
+	if isinstance(obj, Path):
+		return str(obj)
+	raise NotImplementedError(f"Cannot encode type {type(obj).__name__}")
+
+
+def _dec_hook(typ: type, obj: Any) -> Any:
+	if typ is Path:
+		return Path(obj)
+	raise NotImplementedError(f"Cannot decode type {typ.__name__}")
+
+
+type Port = Annotated[int, Meta(ge=1, le=65535)]
+
+_APP_PATTERN = (
+	r"^[a-zA-Z_][a-zA-Z0-9_]*"
+	r"(\.[a-zA-Z_][a-zA-Z0-9_]*)*"
+	r":[a-zA-Z_][a-zA-Z0-9_]*$"
+)
+
+_MODULE_PATTERN = (
+	r"^[a-zA-Z_][a-zA-Z0-9_]*"
+	r"(\.[a-zA-Z_][a-zA-Z0-9_]*)*$"
 )
 
 
-class SchedulerSettings(BaseModel):
-	enable: bool = Field(
-		False,
-		description=(
-			"run the scheduler loop inside the orchestrator. jobs are declared "
-			"in code via `app.schedule.cron(...)` / `.every(...)`."
-		),
-	)
+class SchedulerSettings(Struct, frozen=True):
+	enable: bool = False
 
 
-class MetricsSettings(BaseModel):
-	enable: bool = Field(False)
-	host: str = Field("0.0.0.0")
-	port: int = Field(9191)
+class MetricsSettings(Struct, frozen=True):
+	enable: bool = False
+	host: str = "0.0.0.0"
+	port: Port = 9191
 
 
-class WebSettings(BaseModel):
-	enable: bool = Field(False)
-	host: str = Field("0.0.0.0")
-	port: int = Field(8181)
-	path: str = Field("/dashboard")
+class WebSettings(Struct, frozen=True):
+	enable: bool = False
+	host: str = "0.0.0.0"
+	port: Port = 8181
+	path: str = "/dashboard"
 
 
-class WatchSettings(BaseModel):
-	enable: bool = Field(
-		False,
-		description="watch filesystem changes and reload workers on every change",
-	)
-
-	root: Path = Field(
-		default_factory=Path.cwd,
-		description="directory to watch for changes",
-	)
-
-	respect_gitignore: bool = Field(
-		True,
-		description="filter .gitignore paths in addition to [watch.exclude] globs",
-	)
-
-	exclude: list[Path] = Field(
-		[Path(".git") / "**"],
-		description="globs to exclude from watching",
-	)
-
-	reload_delay: float = Field(0.25)
-
-	reload_debounce: float = Field(0.5)
+class WatchSettings(Struct, frozen=True):
+	enable: bool = False
+	root: Path = field(default_factory=Path.cwd)
+	respect_gitignore: bool = True
+	exclude: list[Path] = field(default_factory=lambda: [Path(".git") / "**"])
+	reload_delay: float = 0.25
+	reload_debounce: float = 0.5
 
 
-class Settings(BaseModel):
-	"""Flat, resolved application settings used at runtime."""
-
-	model_config = ConfigDict(
-		frozen=True,
-		extra="forbid",
-	)
-
+class Settings(Struct, frozen=True, forbid_unknown_fields=True):
 	app: Annotated[
 		str,
-		StringConstraints(
-			pattern=re.compile(
-				r"^[a-zA-Z_][a-zA-Z0-9_]*"
-				r"(\.[a-zA-Z_][a-zA-Z0-9_]*)*"
-				r":[a-zA-Z_][a-zA-Z0-9_]*$"
-			),
+		Meta(
+			pattern=_APP_PATTERN,
+			description="path to the location of `Kuu` instance formatted as `dotted.python_module[:instance]`",
 		),
-	] = Field(
-		description="path to the location of `Kuu` instance\nformatted as `dotted.python_module[:instance]`",
-		examples=["myapp.kuu.instance:kuu"],
-	)
-
-	task_modules: list[
-		Annotated[
-			str,
-			StringConstraints(
-				pattern=re.compile(
-					r"^[a-zA-Z_][a-zA-Z0-9_]*"
-					r"(\.[a-zA-Z_][a-zA-Z0-9_]*)*$"
-				),
-			),
-		]
-	] = Field(
-		description="modules which declare tasks with this `Kuu` instance\nformatted as `dotted.python_module`",
-	)
-
-	queues: list[str] = Field(
-		[],
-		description=(
-			"queues this worker consumes from; empty means auto-discover from "
-			"the registered tasks, falling back to the app's default_queue"
-		),
-	)
-
-	processes: PositiveInt = Field(
-		1,
-		description="worker subprocesses to spawn",
-	)
-
-	concurrency: PositiveInt = Field(
-		64,
-		description="max concurrent coroutines per worker",
-	)
-
-	prefetch: PositiveInt = Field(
-		default_factory=lambda data: max(1, data["concurrency"] // 4),
-		description="messages to prefetch per broker pull",
-	)
-
-	shutdown_timeout: NonNegativeFloat = Field(
-		30.0,
-		description="seconds to wait for in-flight tasks before forcing shutdown",
-	)
-
-	watch_fs: bool = Field(
-		False,
-		description="reload workers on filesystem changes",
-		deprecated=deprecated("use [watch] enable=true (or WatchKuunfig) instead"),
-	)
-
-	metrics: MetricsSettings = Field(MetricsSettings())
-	dashboard: WebSettings = Field(WebSettings())
-	watch: WatchSettings = Field(WatchSettings())
-	scheduler: SchedulerSettings = Field(SchedulerSettings())
+	] | None = None
+	task_modules: list[Annotated[str, Meta(pattern=_MODULE_PATTERN)]] = field(default_factory=list)
+	queues: list[str] = field(default_factory=list)
+	processes: Annotated[int, Meta(ge=1)] = 1
+	concurrency: Annotated[int, Meta(ge=1)] = 64
+	prefetch: Annotated[int, Meta(ge=0)] = 0
+	shutdown_timeout: Annotated[float, Meta(ge=0)] = 30.0
+	watch_fs: bool = False
+	metrics: MetricsSettings = field(default_factory=MetricsSettings)
+	dashboard: WebSettings = field(default_factory=WebSettings)
+	watch: WatchSettings = field(default_factory=WatchSettings)
+	scheduler: SchedulerSettings = field(default_factory=SchedulerSettings)
 
 	def with_overrides(self, overrides: list[str]) -> Self:
-		"""
-		Return a copy of this conn_config with `dotted.path=value` overrides applied.
-
-		Values are parsed as JSON when possible (so `true`, `42`, `"x"`,
-		`[1,2]` all work); otherwise they are kept as raw strings.
-		"""
 		if not overrides:
 			return self
-		data: dict[str, Any] = self.model_dump()
+		data: dict[str, Any] = _msgspec_to_builtins(self, enc_hook=_enc_hook)
 		for raw in overrides:
 			key, sep, value = raw.partition("=")
 			if not sep:
 				raise ValueError(f"override must be in form 'dotted.path=value', got: {raw!r}")
 			try:
-				parsed: Any = orjson.loads(value)
-			except json.JSONDecodeError:
+				parsed: Any = _json.decode(value)
+			except _DecodeError:
 				parsed = value
 			parts = key.split(".")
 			cursor = data
@@ -172,28 +104,13 @@ class Settings(BaseModel):
 					cursor[part] = existing
 				cursor = existing
 			cursor[parts[-1]] = parsed
-		return type(self).model_validate(data)
+		return convert(data, type(self), dec_hook=_dec_hook)  # type: ignore
+
+	def to_dict(self) -> dict[str, Any]:
+		return _msgspec_to_builtins(self, enc_hook=_enc_hook)
 
 
-def unset_required(m: type[BaseModel], name: str | None = None) -> type[BaseModel]:
-	fields: dict = {
-		k: (
-			unset_required(v.annotation) if isinstance(v.annotation, BaseModel) else (v.annotation),
-			None,
-		)
-		for k, v in m.model_fields.items()
-	}
-	return create_model(
-		name if name is not None else m.__name__,
-		__base__=BaseModel,
-		**fields,
-	)
-
-
-SettingsPreset = unset_required(Settings, "SettingsPreset")
-
-
-class Kuunfig(BaseModel):
+class Kuunfig(Struct, frozen=True, forbid_unknown_fields=True):
 	"""Top-level configuration with defaults and named presets.
 
 	.. code-block:: toml
@@ -217,18 +134,8 @@ class Kuunfig(BaseModel):
 		>>> settings = cfg.resolve("prod")
 	"""
 
-	model_config = ConfigDict(frozen=True, extra="forbid")
-
 	default: Settings
-	presets: dict[str, SettingsPreset] = Field(default_factory=dict)
-
-	@model_validator(mode="before")
-	@classmethod
-	def _auto_wrap_flat(cls, data: Any) -> Any:
-		if isinstance(data, dict) and "default" not in data:
-			if any(k in data for k in ("app", "task_modules")):
-				data = {"default": data}
-		return data
+	presets: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 	@classmethod
 	def load(cls, config: str | pathlib.Path | None = None) -> Self:
@@ -236,7 +143,10 @@ class Kuunfig(BaseModel):
 		data = tomllib.loads(path.read_text())
 		if path.name == "pyproject.toml":
 			data = data.get("tool", {}).get("kuu")
-		return cls.model_validate(data)
+		if isinstance(data, dict) and "default" not in data:
+			if any(k in data for k in ("app", "task_modules")):
+				data = {"default": data}
+		return convert(data, cls, dec_hook=_dec_hook)
 
 	@staticmethod
 	def _resolve(config: str | pathlib.Path | None) -> pathlib.Path:
@@ -255,22 +165,22 @@ class Kuunfig(BaseModel):
 						continue
 				return p
 		raise FileNotFoundError(
-			"no kuu conn_config found (looked for ./kuunfig.toml and [tool.kuu] in ./pyproject.toml)"
+			"no kuu conn_config found (looked for ./kuunfig.toml "
+			"and [tool.kuu] in ./pyproject.toml)"
 		)
 
 	def resolve(self, name: str | None = None) -> Settings:
-		"""Resolve a named preset by merging it with ``default``.
-
-		Preset values take precedence; ``None`` fields fall back to the
-		default.  When *name* is ``None``, returns ``self.default``
-		unchanged.
-		"""
 		if name is None:
-			return self.default
-		preset = self.presets.get(name)
-		if preset is None:
-			raise KeyError(f"preset {name!r} not found; available: {sorted(self.presets)}")
-		data = self.default.model_dump()
-		preset_data = preset.model_dump(exclude_none=True)
-		data.update(preset_data)
-		return Settings.model_validate(data)
+			merged = self.default
+		else:
+			preset = self.presets.get(name)
+			if preset is None:
+				raise KeyError(f"preset {name!r} not found; available: {sorted(self.presets)}")
+			data = _msgspec_to_builtins(self.default, enc_hook=_enc_hook)
+			preset_data = {k: v for k, v in preset.items() if v is not None}
+			data.update(preset_data)
+			merged = convert(data, Settings, dec_hook=_dec_hook)
+		if merged.app is None:
+			where = f"preset {name!r}" if name else "default"
+			raise ValueError(f"{where}: 'app' is required after resolve")
+		return merged

@@ -9,6 +9,12 @@
 			var u = location.href.split('?')[0].split('#')[0];
 			if (!u.endsWith('/')) u += '/';
 			document.write('<base href="' + u + '">');
+			try {
+				var saved = localStorage.getItem('kuu-theme');
+				if (saved === 'dark' || (!saved && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+					document.documentElement.setAttribute('data-theme', 'dark');
+				}
+			} catch (_) { }
 		}());
 	</script>
 	<title>{% block title %}kuu{% endblock %}</title>
@@ -31,6 +37,11 @@
 		<div class="kuu-header-right">
 			<span class="kuu-header-sep"></span>
 			<span class="kuu-header-label">dashboard</span>
+			<span class="kuu-header-sep"></span>
+			<button id="theme-toggle" class="theme-toggle" aria-label="toggle theme" title="toggle theme">
+				<svg class="theme-icon theme-icon-sun" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+				<svg class="theme-icon theme-icon-moon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+			</button>
 		</div>
 	</header>
 
@@ -59,6 +70,20 @@
 	<div id="kuu-toast" class="kuu-toast" aria-live="polite"></div>
 
 	<script>
+		(function () {
+			const toggle = document.getElementById('theme-toggle');
+			if (toggle) {
+				toggle.addEventListener('click', function () {
+					var cur = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+					var next = cur === 'dark' ? 'light' : 'dark';
+					if (next === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+					else document.documentElement.removeAttribute('data-theme');
+					try { localStorage.setItem('kuu-theme', next); } catch (_) { }
+					window.dispatchEvent(new CustomEvent('kuu-theme-change', { detail: { theme: next } }));
+				});
+			}
+		}());
+
 		(function () {
 			const dialog = document.getElementById('run-task-dialog');
 			const taskNameEl = document.getElementById('dialog-task-name');
@@ -113,14 +138,16 @@
 				formArea.innerHTML = html || '<p class="placeholder">no parameters</p>';
 			}
 
-			window.kuuRunTask = async function (taskName) {
+			window.kuuRunTask = async function (taskName, instance) {
 				taskNameEl.textContent = taskName;
 				formArea.innerHTML = '<p class="placeholder">loading…</p>';
 				dialog.dataset.task = taskName;
+				dialog.dataset.instance = instance || '';
 				dialog.dataset.mode = 'raw';
 				dialog.showModal();
 				try {
-					const r = await fetch('api/task-params?task=' + encodeURIComponent(taskName));
+					const qs = 'task=' + encodeURIComponent(taskName) + (instance ? '&instance=' + encodeURIComponent(instance) : '');
+					const r = await fetch('api/task-params?' + qs);
 					const d = await r.json();
 					if (r.ok) {
 						if (d.raw || d.params.length === 0) buildRaw();
@@ -137,6 +164,7 @@
 
 			document.getElementById('dialog-submit').addEventListener('click', async () => {
 				const task = dialog.dataset.task;
+				const instance = dialog.dataset.instance || '';
 				const mode = dialog.dataset.mode;
 				let args = [], kwargs = {};
 
@@ -173,11 +201,12 @@
 				}
 
 				try {
-					const pl = { task, args, kwargs }
+					const payload = { task, args, kwargs };
+					if (instance) payload.instance = instance;
 					const r = await fetch('api/run-task', {
 						method: 'POST',
 						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ task, args, kwargs }),
+						body: JSON.stringify(payload),
 					});
 					const d = await r.json().catch(() => ({}));
 					if (r.ok) { closeDialog(); showToast('enqueued', true); }
@@ -185,12 +214,14 @@
 				} catch (_) { showToast('request failed', false); }
 			});
 
-			window.kuuTriggerJob = async function (jobId) {
+			window.kuuTriggerJob = async function (jobId, instance) {
 				try {
+					const body = { job_id: jobId };
+					if (instance) body.instance = instance;
 					const r = await fetch('api/trigger-job', {
 						method: 'POST',
 						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ job_id: jobId }),
+						body: JSON.stringify(body),
 					});
 					const d = await r.json().catch(() => ({}));
 					if (r.ok) {
@@ -200,12 +231,14 @@
 				} catch (_) { showToast('request failed', false); }
 			};
 
-			window.kuuRemoveJob = async function (jobId) {
+			window.kuuRemoveJob = async function (jobId, instance) {
 				try {
+					const body = { job_id: jobId };
+					if (instance) body.instance = instance;
 					const r = await fetch('api/remove-job', {
 						method: 'POST',
 						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ job_id: jobId }),
+						body: JSON.stringify(body),
 					});
 					const d = await r.json().catch(() => ({}));
 					if (r.ok) {

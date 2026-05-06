@@ -38,7 +38,7 @@ class PickleSerializer(Serializer):
 		return pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)
 
 	@staticmethod
-	def unmarshal(data: bytes, into: type | None = None) -> object:  # type:ignore
+	def unmarshal(data: bytes, into: type | None = None) -> object:  # pyrefly: ignore[bad-override]
 		if not pickle_allowed:
 			warnings.warn(_WARN_MSG, SecurityWarning, stacklevel=2)
 		if not data:

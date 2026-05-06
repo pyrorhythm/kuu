@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import queue as _queue
+import queue
 from logging import getLogger
 from typing import TYPE_CHECKING
 
@@ -11,17 +11,17 @@ from kuu.config import Settings
 if TYPE_CHECKING:
 	import multiprocessing as mp
 
-	from kuu.orchestrator.main import Orchestrator
+	from kuu.orchestrator.main import PresetSupervisor
 	from kuu.web.stats import StatsCollector
 
 log = getLogger("kuu.orchestrator.dashboard-runner")
 
 
 class DashboardRunner:
-	_orch: Orchestrator
+	_orch: PresetSupervisor
 	_config: Settings
 
-	def __init__(self, orch: Orchestrator, config: Settings) -> None:
+	def __init__(self, orch: PresetSupervisor, config: Settings) -> None:
 		self._orch = orch
 		self._config = config
 
@@ -40,7 +40,7 @@ class DashboardRunner:
 			log.exception("dashboard dependencies missing; install kuu[dashboard]")
 			return
 
-		kuu = import_object(self._config.app)
+		kuu = import_object(self._config.app)  # type:ignore
 		import_tasks(self._config.task_modules, pattern=(), fs_discover=False)
 		dashboard = Dashboard(app=kuu, orchestrator=self._orch)
 		asgi_app = dashboard.build_app()
@@ -75,22 +75,22 @@ class DashboardRunner:
 			if server.started:
 				server.force_exit = True
 
-	def _worker_events_queue(self) -> mp.Queue | None:  # type: ignore[type-arg]
+	def _worker_events_queue(self) -> mp.Queue | None:
 		try:
 			return self._orch._wp.events_queue
 		except AttributeError:
 			return None
 
 	async def _drain_events(self, stats: StatsCollector, stop_event: anyio.Event) -> None:
-		"""Read (event, task, ts, pid) tuples from the worker pool queue and feed StatsCollector."""
+		"""drain :class:`WorkerEvent` and feed StatsCollector"""
 		q = self._worker_events_queue()
 		if q is None:
 			return
 		while not stop_event.is_set():
 			try:
 				while True:
-					event, task, ts, _pid = q.get_nowait()
-					stats.ingest(event, task, ts)
-			except _queue.Empty:
+					we = q.get_nowait()
+					stats.ingest(we.kind, we.task, we.ts)
+			except queue.Empty:
 				pass
 			await anyio.sleep(1.0)

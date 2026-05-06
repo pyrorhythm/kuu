@@ -17,7 +17,7 @@ pytestmark = pytest.mark.anyio
 
 
 async def _run_worker_until(app: Kuu, predicate, *, timeout: float = 3.0) -> None:
-    config = Settings.model_construct(queues=["default"], concurrency=4)
+    config = Settings(app="test:app", task_modules=["test.mod"], queues=["default"], concurrency=4)
     worker = Worker(config, app=app)
 
     async def _supervise(scope: anyio.CancelScope):

@@ -9,29 +9,11 @@ from ._config import ClusterConfig, RedisConfig, SentinelConfig, StandaloneConfi
 
 
 class RedisTransport:
-	"""Manages a redis-py client lifecycle with cluster-aware key formatting.
-
-	Accepts any :class:`RedisConfig` variant or a pre-built client.
-
-	.. code-block::
-
-	    RedisTransport(StandaloneConfig(url="redis://localhost:6379/0"))
-	    RedisTransport(ClusterConfig(url="redis://node1:6379"))
-	    RedisTransport(SentinelConfig(
-	        hosts=(("s1", 26379), ("s2", 26379)),
-	        service_name="mymaster",
-	    ))
-	    RedisTransport(client=Redis.from_url("redis://localhost:6379/0"))
-	    RedisTransport(client=RedisCluster.from_url("redis://n1:6379"))
-
-	After :meth:`connect`, the underlying client is available as ``.r``.
-	"""
-
 	def __init__(
-			self,
-			config: RedisConfig | None = None,
-			*,
-			client: Redis | RedisCluster | None = None,
+		self,
+		config: RedisConfig | None = None,
+		*,
+		client: Redis | RedisCluster | None = None,
 	) -> None:
 		self._config = config or StandaloneConfig()
 		self._client = client
@@ -50,7 +32,7 @@ class RedisTransport:
 		match cfg:
 			case SentinelConfig(hosts=hosts, service_name=service_name):
 				sentinel = Sentinel(list(hosts), **kwargs)
-				self.r = sentinel.master_for(service_name)  # type: ignore[arg-type]
+				self.r = sentinel.master_for(service_name)
 			case ClusterConfig(url=url):
 				read_from = kwargs.pop("read_from_replicas", False)
 				self.r = RedisCluster.from_url(url, read_from_replicas=read_from, **kwargs)

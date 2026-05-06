@@ -123,6 +123,6 @@ class Scheduler:
 							headers=job.headers,
 							max_attempts=job.max_attempts,
 						)
-					except BaseException:
+					except Exception:
 						log.exception("scheduler: enqueue %s failed", job.id)
 					job.schedule_next(now)

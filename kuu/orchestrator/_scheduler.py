@@ -20,7 +20,7 @@ class SchedulerRunner:
 		if not self._config.scheduler.enable:
 			return
 
-		app = import_object(self._config.app)
+		app = import_object(self._config.app)  # type:ignore
 		import_tasks(self._config.task_modules, "", False)
 
 		scheduler = app.schedule

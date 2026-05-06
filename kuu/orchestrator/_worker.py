@@ -3,12 +3,14 @@ from __future__ import annotations
 import logging
 import multiprocessing as mp
 import time
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal
 
 import anyio
 import anyio.to_thread
 
 from kuu._import import import_object, import_tasks
+from kuu.app import Kuu
 from kuu.config import Settings
 from kuu.worker import Worker
 
@@ -18,11 +20,30 @@ if TYPE_CHECKING:
 log = logging.getLogger("kuu.orchestrator.worker_pool")
 
 
+WorkerEventKind = Literal["started", "succeeded", "failed", "retried", "dead"]
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerEvent:
+	"""ipc record pushed by a worker subprocess onto the shared mp.Queue
+
+	the supervisor consumes these to update in-flight counters, current-task
+	tracking, and to build outgoing :class:`kuu.observability.Event` envelopes
+	"""
+
+	kind: WorkerEventKind
+	task: str
+	queue: str
+	ts: float
+	pid: int
+	elapsed: float | None = None
+
+
 class WorkerPool:
 	_config: Settings
 	_stop_event: anyio.Event
 	_processes: list[mp.Process]
-	events_queue: mp.Queue  # type: ignore[type-arg]
+	events_queue: mp.Queue
 
 	def __init__(self, config: Settings) -> None:
 		self._config = config
@@ -101,9 +122,9 @@ class WorkerPool:
 						log.exception("mark_worker_dead failed for pid=%s", p.pid)
 
 
-def _run_worker(config: Settings, events_queue: mp.Queue | None = None) -> None:  # type: ignore[type-arg]
+def _run_worker(config: Settings, events_queue: mp.Queue | None = None) -> None:
 	log.info("worker process starting")
-	app = import_object(config.app)
+	app = import_object(config.app)  # type:ignore
 	import_tasks(config.task_modules, "", False)
 
 	if config.metrics.enable:
@@ -118,20 +139,30 @@ def _run_worker(config: Settings, events_queue: mp.Queue | None = None) -> None:
 	log.info("worker process exiting")
 
 
-def _install_event_forwarder(app: Any, q: mp.Queue) -> None:  # type: ignore[type-arg]
-	"""Push lightweight event records onto the inter-process queue so the dashboard can consume them."""
+def _install_event_forwarder(app: Kuu, q: mp.Queue) -> None:
+	"""push :class:`WorkerEvent` records onto the inter-process queue"""
 	import os
 
 	pid = os.getpid()
 
-	def _put(event: str, task: str) -> None:
+	def _put(kind: WorkerEventKind, task: str, queue: str, elapsed: float | None = None) -> None:
 		try:
-			q.put_nowait((event, task, time.time(), pid))
+			q.put_nowait(
+				WorkerEvent(
+					kind=kind,
+					task=task,
+					queue=queue,
+					ts=time.time(),
+					pid=pid,
+					elapsed=elapsed,
+				)
+			)
 		except Exception:
 			pass
 
 	ev = app.events
-	ev.task_succeeded.connect(lambda msg, elapsed: _put("succeeded", msg.task))
-	ev.task_failed.connect(lambda msg, exc: _put("failed", msg.task))
-	ev.task_retried.connect(lambda msg, delay: _put("retried", msg.task))
-	ev.task_dead.connect(lambda msg: _put("dead", msg.task))
+	ev.task_started.connect(lambda msg: _put("started", msg.task, msg.queue))
+	ev.task_succeeded.connect(lambda msg, elapsed: _put("succeeded", msg.task, msg.queue, elapsed))
+	ev.task_failed.connect(lambda msg, exc: _put("failed", msg.task, msg.queue))
+	ev.task_retried.connect(lambda msg, delay: _put("retried", msg.task, msg.queue))
+	ev.task_dead.connect(lambda msg: _put("dead", msg.task, msg.queue))

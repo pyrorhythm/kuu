@@ -24,7 +24,7 @@ class RedisResults(ResultBackend):
 
 		:param url: Redis connection URL (convenience alias for ``StandaloneConfig``).
 		:param prefix: key prefix for every stored result.
-		:param transport: pre-configured :class:`~kuu.redis.RedisTransport`. When given, ``url`` is ignored.
+		:param transport: pre-configured :class:`~kuu.transports.redis.RedisTransport`. When given, ``url`` is ignored.
 		:param serializer: payload serializer.
 		:param marshal_types: persist type info alongside the payload.
 		:param ttl: default expiry in seconds; ``None`` means no expiry.

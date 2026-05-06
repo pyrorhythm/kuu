@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-import dataclasses
 import functools
 import inspect
-import types
-import typing
-from collections.abc import AsyncGenerator
+import typing as t
 from types import NoneType
-from typing import Any, AsyncIterator, Callable, Concatenate, Coroutine, Protocol, TYPE_CHECKING, TypeIs
+from typing import Any, Callable, Concatenate, Coroutine, Protocol, TYPE_CHECKING
 
-from pydantic import BaseModel
+from adaptix import Retort
+from adaptix.load_error import LoadError
 
 if TYPE_CHECKING:
 	from kuu.task import Task
@@ -20,137 +18,37 @@ from kuu.message import Payload
 
 log = logging.getLogger("kuu.worker")
 
-_Incomplete = (Any, NoneType)
-
-
-def _origin(ann: Any) -> Any:
-	o = typing.get_origin(ann)
-	if o is types.UnionType:
-		return o
-	# typing.Union
-	if o is typing.Union:
-		return o
-	return o
-
-
-def _is_incomplete(ann: Any) -> bool:
-	if ann is None or ann is Any:
-		return True
-	o = typing.get_origin(ann)
-	if o is None and ann in _Incomplete:
-		return True
-	if isinstance(ann, str):
-		return True
-	return False
-
-
-def _resolve_field_types(cls: type[Any]) -> dict[str, Any]:
-	try:
-		hints = typing.get_type_hints(cls, include_extras=True)
-	except Exception:
-		hints = {}
-
-	if _is_pydantic_model(cls):
-		return {name: hints.get(name, field.annotation) for name, field in cls.model_fields.items()}
-
-	if dataclasses.is_dataclass(cls):
-		return {f.name: hints.get(f.name, f.type) for f in dataclasses.fields(cls)}
-
-	return {}
-
-
-def _model_construct(cls: type, data: dict[str, Any]) -> Any:
-	if dataclasses.is_dataclass(cls):
-		field_types = _resolve_field_types(cls)
-		coerced = _coerce_dict(data, field_types)
-		return cls(**coerced)
-
-	if _is_pydantic_model(cls):
-		field_types = _resolve_field_types(cls)
-		coerced = _coerce_dict(data, field_types)
-		return cls.model_validate(coerced) if _needs_validation(cls) else cls(**coerced)
-
-	return cls(**data)
-
-
-def _needs_validation(cls: type) -> bool:
-	if not _is_pydantic_model(cls):
-		return False
-	return (
-		bool(cls.__pydantic_decorators__.validators)
-		if hasattr(cls, "__pydantic_decorators__")
-		else True
-	)
-
-
-def _is_pydantic_model(cls: type) -> TypeIs[type[BaseModel]]:
-	return hasattr(cls, "model_validate") and hasattr(cls, "model_fields")
-
-
-def _is_structlike(cls: type) -> bool:
-	return _is_pydantic_model(cls) or dataclasses.is_dataclass(cls)
+_retort = Retort(strict_coercion=True)
 
 
 def _coerce(value: Any, ann: Any) -> Any:
-	"""Recursively coerce *value* to match *ann* (the type annotation).
-
-	:param value: target value
-	:param ann: annotation to be resolved against value
-
-	Algorithm:
-		#. Resolve the annotation — strip Optional unions, get origin.
-		#. If concrete struct-like type ~> construct from dict / recurse fields.
-		#. If `list[Inner]` ~> recurse each element against Inner.
-		#. If `dict[K, V]` ~> recurse each value against V.
-		#. If `X | None` ~> recurse value against X (or passthrough None).
-		#. If annotation incomplete ~> try runtime deduction.
-		#. Otherwise return value unchanged.
-	"""
-
-	if ann is inspect.Parameter.empty or ann is None:
+	if ann is inspect.Parameter.empty or ann is None or _is_incomplete(ann):
 		return _coerce_runtime(value)
-
-	if _is_incomplete(ann):
-		return _coerce_runtime(value)
-
-	# Unpack union (X | None, Union[X, None], etc.)
-	non_none, has_none = _flatten_union(ann)
-	if has_none:
-		if value is None:
-			return None
-		if len(non_none) == 1:
-			return _coerce(value, non_none[0])
-		# multi-type union: try each until one fits
-		for branch in non_none:
-			try:
-				return _coerce(value, branch)
-			except (TypeError, ValueError, KeyError):
-				continue
+	if isinstance(ann, type) and isinstance(value, ann):
 		return value
 
-	origin = typing.get_origin(ann)
+	origin = t.get_origin(ann)
+	args = t.get_args(ann)
 
 	if origin is list:
-		inner = typing.get_args(ann)[0] if typing.get_args(ann) else Any
+		inner = args[0] if args else Any
 		if not isinstance(value, list):
 			return value
 		return [_coerce(v, inner) for v in value]
 
 	if origin is dict:
-		args = typing.get_args(ann)
 		val_ann = args[1] if len(args) > 1 else Any
 		if not isinstance(value, dict):
 			return value
 		return {k: _coerce(v, val_ann) for k, v in value.items()}
 
 	if origin is set:
-		inner = typing.get_args(ann)[0] if typing.get_args(ann) else Any
+		inner = args[0] if args else Any
 		if not isinstance(value, (set, list, tuple)):
 			return value
 		return {_coerce(v, inner) for v in value}
 
 	if origin is tuple:
-		args = typing.get_args(ann)
 		if not args:
 			return value
 		if not isinstance(value, (tuple, list)):
@@ -159,31 +57,13 @@ def _coerce(value: Any, ann: Any) -> Any:
 			return tuple(_coerce(v, args[0]) for v in value)
 		return tuple(_coerce(v, a) for v, a in zip(value, args))
 
-	if isinstance(ann, type) and _is_structlike(ann):
-		if isinstance(value, ann):
-			return value
-		if isinstance(value, dict):
-			return _model_construct(ann, value)
+	try:
+		return _retort.load(value, ann)
+	except LoadError:
 		return value
-
-	if isinstance(ann, type):
-		if isinstance(value, ann):
-			return value
-		if ann is int and isinstance(value, (bool, int)):
-			return value
-		if ann is float and isinstance(value, (int, float)) and not isinstance(value, bool):
-			return float(value)
-		if ann is str and isinstance(value, str):
-			return value
-
-	return value
 
 
 def _coerce_runtime(value: Any) -> Any:
-	"""Best-effort coercion when no annotation is available.
-
-	Recursively descends dicts-looking-like-models and lists.
-	"""
 	if isinstance(value, dict):
 		return {k: _coerce_runtime(v) for k, v in value.items()}
 	if isinstance(value, list):
@@ -191,44 +71,22 @@ def _coerce_runtime(value: Any) -> Any:
 	return value
 
 
-def _coerce_dict(data: dict[str, Any], field_types: dict[str, Any]) -> dict[str, Any]:
-	"""Given a dict of field-name→annotation, coerce each matching key."""
-	out: dict[str, Any] = {}
-	for k, v in data.items():
-		if k in field_types:
-			out[k] = _coerce(v, field_types[k])
-		else:
-			out[k] = v
-	return out
-
-
-def _flatten_union(ann: Any) -> tuple[list[Any], bool]:
-	"""Return (non-None branches, has_None branch)."""
-	origin = typing.get_origin(ann)
-	if origin is types.UnionType or origin is typing.Union:
-		args = typing.get_args(ann)
-		non_none = [a for a in args if a is not type(None)]
-		has_none = any(a is type(None) for a in args)
-		return non_none, has_none
-	return [], False
+def _is_incomplete(ann: Any) -> bool:
+	if ann is Any or ann is None:
+		return True
+	o = t.get_origin(ann)
+	if o is None and ann in (Any, NoneType):
+		return True
+	if isinstance(ann, str):
+		return True
+	return False
 
 
 def _coerce_payload(func: Any, payload: Payload) -> Payload:
-	"""Coerce every argument in *payload* according to *func*'s type annotations.
-
-	:param func: target function to be executed with payload.
-	:param payload: raw payload, possibly untyped
-
-	- Annotations are the source of truth. When an annotation is missing or
-	incomplete (``Any``, ``None``, unresolved forward ref), the function
-	attempts runtime type deduction.
-
-	:returns: a new ``Payload`` with coerced values.
-	"""
 	try:
 		sig = inspect.signature(func)
-		hints = typing.get_type_hints(func, include_extras=True)
-	except BaseException:  # noqa
+		hints = t.get_type_hints(func, include_extras=True)
+	except Exception:
 		return payload
 
 	bound = sig.bind(*payload.args, **payload.kwargs)
@@ -236,26 +94,28 @@ def _coerce_payload(func: Any, payload: Payload) -> Payload:
 
 	new_kwargs = dict(payload.kwargs)
 	new_args = list(payload.args)
-	params = list(sig.parameters.values())
 
-	for i, (name, value) in enumerate(bound.arguments.items()):
+	positional_idx = 0
+	for p in sig.parameters.values():
+		if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+			continue
+		name = p.name
+		if name not in bound.arguments:
+			continue
+
 		ann = hints.get(name, inspect.Parameter.empty)
-		if ann is inspect.Parameter.empty:
-			# No annotation at all -> try runtime deduction
-			ann = None
+		coerced = _coerce(bound.arguments[name], ann)
 
-		coerced = _coerce(value, ann)
-
-		p = params[i] if i < len(params) else None
-		if p is not None and p.kind in (
+		if p.kind in (
 				inspect.Parameter.POSITIONAL_ONLY,
 				inspect.Parameter.POSITIONAL_OR_KEYWORD,
 		):
 			if name in new_kwargs:
 				new_kwargs[name] = coerced
-			elif i < len(new_args):
-				new_args[i] = coerced
-		elif name in new_kwargs:
+			elif positional_idx < len(new_args):
+				new_args[positional_idx] = coerced
+			positional_idx += 1
+		elif p.kind == inspect.Parameter.KEYWORD_ONLY and name in new_kwargs:
 			new_kwargs[name] = coerced
 
 	return Payload(args=tuple(new_args), kwargs=new_kwargs)
@@ -278,17 +138,5 @@ def _ensure_connected[T: Connectable, **P, R](
 	async def wrapper(self: T, *args: P.args, **kwargs: P.kwargs) -> R:
 		await self.connect()
 		return await fn(self, *args, **kwargs)
-
-	return wrapper
-
-
-def _ensure_connected_cm[T: Connectable, **P, R](
-		fn: Callable[Concatenate[T, P], AsyncIterator[R]],
-) -> Callable[Concatenate[T, P], AsyncGenerator[R]]:
-	async def wrapper(self: T, *args: P.args, **kwargs: P.kwargs) -> AsyncGenerator[R]:
-		await self.connect()
-		async for item in fn(self, *args, **kwargs):
-			yield item
-			return
 
 	return wrapper

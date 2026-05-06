@@ -6,14 +6,15 @@ from datetime import datetime, timezone
 from typing import Awaitable, Callable, NamedTuple, cast
 
 import anyio
+from msgspec import structs
 from redis.asyncio import Redis, RedisCluster
 
-from .base import Broker, Delivery
 from .._types import _ensure_connected
 from ..exceptions import InvalidReceiptType, NotConnected
 from ..message import Message
 from ..serializers import JSONSerializer, Serializer
 from ..transports.redis import RedisTransport, StandaloneConfig
+from .base import Broker, Delivery
 
 _MOVE_LUA = """
 local z = KEYS[1]
@@ -28,8 +29,8 @@ end
 return #items
 """
 
-_KT = bytes | str | memoryview
-_ST = int | _KT
+type _KT = bytes | str | memoryview
+type _ST = int | _KT
 
 
 def _asyncify[**P, T](fn: Callable[P, Awaitable[T] | T]) -> Callable[P, Awaitable[T]]:
@@ -48,7 +49,7 @@ class RedisBroker(Broker[RedisReceipt]):
 	Consumer groups handle competing consumers across worker subprocesses.
 
 	- `url`: Redis connection URL (convenience alias for ``StandaloneConfig``).
-	- `t`: pre-configured :class:`~kuu.redis.RedisTransport`.
+	- `t`: pre-configured :class:`~kuu.transports.redis.RedisTransport`.
 	  When given, ``url`` is ignored.
 	- `group`: consumer group name.
 	- `consumer`: consumer name within the group.
@@ -60,17 +61,17 @@ class RedisBroker(Broker[RedisReceipt]):
 	"""
 
 	def __init__(
-			self,
-			url: str = "redis://localhost:6379/0",
-			*,
-			transport: RedisTransport | None = None,
-			group: str = "qq",
-			consumer: str = "c1",
-			stream_prefix: str = "qq:s:",
-			zset_prefix: str = "qq:z:",
-			block_ms: int = 5000,
-			claim_min_idle_ms: int = 60000,
-			serializer: Serializer = JSONSerializer(),
+		self,
+		url: str = "redis://localhost:6379/0",
+		*,
+		transport: RedisTransport | None = None,
+		group: str = "qq",
+		consumer: str = "c1",
+		stream_prefix: str = "qq:s:",
+		zset_prefix: str = "qq:z:",
+		block_ms: int = 5000,
+		claim_min_idle_ms: int = 60000,
+		serializer: Serializer = JSONSerializer(),
 	):
 		if transport is not None:
 			self._redis = transport
@@ -110,6 +111,16 @@ class RedisBroker(Broker[RedisReceipt]):
 			await self._redis.close()
 		self._move_sha = None
 
+	async def queue_depth(self, queue: str) -> int | None:
+		if self._redis.r is None:
+			return None
+		try:
+			stream = await self.r.xlen(self._stream(queue))
+			scheduled = await self.r.zcard(self._zset(queue))
+			return int(stream) + int(scheduled)
+		except Exception:
+			return None
+
 	@_ensure_connected
 	async def declare(self, queue: str) -> None:
 		if queue in self._declared:
@@ -143,29 +154,31 @@ class RedisBroker(Broker[RedisReceipt]):
 
 		while True:
 			now = datetime.now(timezone.utc).timestamp()
-			await asyncio.gather(*[
-				_asyncify(self.r.evalsha)(
+			await asyncio.gather(
+				*[
+					_asyncify(self.r.evalsha)(
 						self._move_sha, 2, self._zset(q), self._stream(q), str(now), "128"
-				)
-				for q in queues
-			])
+					)
+					for q in queues
+				]
+			)
 			await anyio.sleep(0.5)
 
 	async def _claim_stale(self, queue: str) -> list[tuple[bytes, dict[bytes, bytes]]]:
 		try:
 			_, items, _ = await self.r.xautoclaim(
-					self._stream(queue),
-					self.group,
-					self.consumer,
-					min_idle_time=self.claim_min_idle_ms,
-					count=32,
+				self._stream(queue),
+				self.group,
+				self.consumer,
+				min_idle_time=self.claim_min_idle_ms,
+				count=32,
 			)
 			return items or []
 		except Exception:
 			return []
 
 	async def consume(
-			self, queues: list[str], prefetch: int
+		self, queues: list[str], prefetch: int
 	) -> AsyncIterator[Delivery[RedisReceipt]]:
 		for q in queues:
 			await self.declare(q)
@@ -173,40 +186,40 @@ class RedisBroker(Broker[RedisReceipt]):
 		last_claim = 0.0
 		claim_interval = max(1.0, self.claim_min_idle_ms / 1000 / 2)
 
-		async with anyio.create_task_group() as tg:
-			tg.start_soon(self._pump_scheduled, queues)
-			try:
-				streams: dict[_KT, _ST] = {self._stream(q): ">" for q in queues}
-				q_by_stream = {self._stream(q): q for q in queues}
-				while True:
-					now = anyio.current_time()
-					if now - last_claim >= claim_interval:
-						last_claim = now
-						for q in queues:
-							for sid, data in await self._claim_stale(q):
-								yield Delivery(
-										message=self.serializer.unmarshal(data[b"m"], into=Message),
-										receipt=RedisReceipt(queue=q, stream_id=sid),
-										queue=q,
-								)
+		handle = asyncio.ensure_future(self._pump_scheduled(queues))
 
-					resp = await self.r.xreadgroup(
-							self.group, self.consumer, streams, count=prefetch, block=self.block_ms
-					)
-					if not resp:
-						continue
-					for stream_name, entries in resp:
-						q = q_by_stream[
-							stream_name.decode() if isinstance(stream_name, bytes) else stream_name
-						]
-						for sid, data in entries:
+		try:
+			streams: dict[_KT, _ST] = {self._stream(q): ">" for q in queues}
+			q_by_stream = {self._stream(q): q for q in queues}
+			while True:
+				now = anyio.current_time()
+				if now - last_claim >= claim_interval:
+					last_claim = now
+					for q in queues:
+						for sid, data in await self._claim_stale(q):
 							yield Delivery(
-									message=self.serializer.unmarshal(data[b"m"], into=Message),
-									receipt=RedisReceipt(queue=q, stream_id=sid),
-									queue=q,
+								message=self.serializer.unmarshal(data[b"m"], into=Message),
+								receipt=RedisReceipt(queue=q, stream_id=sid),
+								queue=q,
 							)
-			finally:
-				tg.cancel_scope.cancel()
+
+				resp = await self.r.xreadgroup(
+					self.group, self.consumer, streams, count=prefetch, block=self.block_ms
+				)
+				if not resp:
+					continue
+				for stream_name, entries in resp:
+					q = q_by_stream[
+						stream_name.decode() if isinstance(stream_name, bytes) else stream_name
+					]
+					for sid, data in entries:
+						yield Delivery(
+							message=self.serializer.unmarshal(data[b"m"], into=Message),
+							receipt=RedisReceipt(queue=q, stream_id=sid),
+							queue=q,
+						)
+		finally:
+			handle.cancel()
 
 	@_ensure_connected
 	async def ack(self, delivery: Delivery) -> None:
@@ -217,17 +230,17 @@ class RedisBroker(Broker[RedisReceipt]):
 				raise InvalidReceiptType(type(delivery.receipt))
 
 		q, sid = delivery.receipt
-		async with self.r.pipeline() as pipe:  # type:ignore
+		async with self.r.pipeline() as pipe:  # pyrefly: ignore[bad-context-manager]
 			pipe.xack(self._stream(q), self.group, sid)
 			pipe.xdel(self._stream(q), sid)
 			await pipe.execute()
 
 	@_ensure_connected
 	async def nack(
-			self,
-			delivery: Delivery,
-			requeue: bool = True,
-			delay: float | None = None,
+		self,
+		delivery: Delivery,
+		requeue: bool = True,
+		delay: float | None = None,
 	) -> None:
 		match delivery.receipt:
 			case RedisReceipt():
@@ -237,13 +250,13 @@ class RedisBroker(Broker[RedisReceipt]):
 
 		q, sid = delivery.receipt
 		if not requeue:
-			async with self.r.pipeline() as pipe:  # type:ignore
+			async with self.r.pipeline() as pipe:  # pyrefly: ignore[bad-context-manager]
 				pipe.xack(self._stream(q), self.group, sid)
 				pipe.xdel(self._stream(q), sid)
 				await pipe.execute()
 			return
-		msg = delivery.message.model_copy(update={"attempt": delivery.message.attempt + 1})
-		async with self.r.pipeline() as pipe:  # type:ignore
+		msg = structs.replace(delivery.message, attempt=delivery.message.attempt + 1)
+		async with self.r.pipeline() as pipe:  # pyrefly: ignore[bad-context-manager]
 			if delay and delay > 0:
 				when = datetime.now(timezone.utc).timestamp() + delay
 				pipe.zadd(self._zset(q), {self.serializer.marshal(msg): when})
