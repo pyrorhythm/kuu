@@ -25,6 +25,8 @@ from kuu.observability import (
 	MpQueueSource,
 	State,
 )
+from kuu.observability._protocol import LogBatch
+from kuu.persistence import PersistenceWorker, create_backend
 
 if typing.TYPE_CHECKING:
 	from wsgiref.simple_server import WSGIServer
@@ -49,7 +51,6 @@ def _run_supervisor_child(
 	cmd_in: mp.Queue[Cmd],
 	cmd_out: mp.Queue[CmdResponse],
 ) -> None:
-	"""child entrypoint: build a sink-driven supervisor and run it"""
 	import anyio as _anyio
 
 	from kuu.orchestrator.main import PresetSupervisor
@@ -68,8 +69,6 @@ def _run_supervisor_child(
 
 
 class ControlPlane:
-	"""orchestrates N preset supervisors as subprocesses"""
-
 	kuunfig: Kuunfig
 
 	_events_queue: mp.Queue[Envelope]
@@ -86,20 +85,21 @@ class ControlPlane:
 	_stop_event: anyio.Event
 	_metrics_dir: str | None = None
 	_metrics_server: WSGIServer | None = None
+	_persist_worker: PersistenceWorker | None = None
 
 	def __init__(self, kuunfig: Kuunfig) -> None:
 		self.kuunfig = kuunfig
-		self._mp_ctx = mp.get_context("spawn")
-		self._events_queue = self._mp_ctx.Queue()
+		self._events_queue = mp.Queue()
 		self._source = MpQueueSource(self._events_queue)
 		self._registry = InMemoryRegistry()
 		self._procs = []
 		self._dashboard = None
-		self._cmd_responses = self._mp_ctx.Queue()
+		self._cmd_responses = mp.Queue()
 		self._cmd_in_per_instance = {}
 		self._cmd_pending = {}
 		self._cmd_results = {}
 		self._stop_event = anyio.Event()
+		self._persist_worker = self._create_persist_worker()
 
 	async def start(self) -> None:
 		instances = self._instances()
@@ -116,6 +116,8 @@ class ControlPlane:
 				tg.start_soon(self._ingest_loop)
 				tg.start_soon(self._cmd_response_loop)
 				tg.start_soon(self._roster_log_loop)
+				if self._persist_worker is not None:
+					tg.start_soon(self._persist_worker.run, self._stop_event)
 				if self._dashboard is not None:
 					tg.start_soon(self._serve_dashboard)
 				await self._stop_event.wait()
@@ -129,11 +131,6 @@ class ControlPlane:
 			self._stop_metrics_server()
 
 	def _instances(self) -> list[tuple[str, Settings]]:
-		"""decide which supervisors to spawn
-
-		if ``presets`` is non-empty, spawn one per preset using the
-		resolved settings; otherwise spawn a single ``default`` supervisor
-		"""
 		if self.kuunfig.presets:
 			return [(name, self.kuunfig.resolve(name)) for name in self.kuunfig.presets]
 		return [("default", self.kuunfig.default)]
@@ -141,16 +138,16 @@ class ControlPlane:
 	def _spawn_all(self, instances: list[tuple[str, Settings]]) -> None:
 		for preset, cfg in instances:
 			instance_id = str(uuid.uuid4())
-			cmd_in: mp.Queue[Cmd] = self._mp_ctx.Queue()
+			cmd_in: mp.Queue[Cmd] = mp.Queue()
 			self._cmd_in_per_instance[instance_id] = cmd_in
-			p = self._mp_ctx.Process(
+			p = mp.Process(
 				target=_run_supervisor_child,
 				args=(cfg, preset, self._events_queue, instance_id, cmd_in, self._cmd_responses),
 				name=f"kuu-supervisor-{preset}",
 				daemon=False,
 			)
 			p.start()
-			self._procs.append((preset, p))  # type:ignore
+			self._procs.append((preset, p))
 			log.info("spawned supervisor preset=%s pid=%s instance=%s", preset, p.pid, instance_id)
 
 	async def _signal_listener(self) -> None:
@@ -180,13 +177,17 @@ class ControlPlane:
 				case Event() as e:
 					if self._dashboard is not None:
 						self._dashboard.stats.ingest(e.kind, e.task, env.ts)
+					if self._persist_worker is not None:
+						self._persist_worker.enqueue_event(env.instance, e)
 				case State():
 					pass
+				case LogBatch() as lb:
+					if self._persist_worker is not None:
+						self._persist_worker.enqueue_log_batch(env.instance, lb)
 				case _:
 					pass
 
 	async def _roster_log_loop(self) -> None:
-		"""diagnostic: print live roster every state interval"""
 		while not self._stop_event.is_set():
 			roster = self._registry.all()
 			if roster:
@@ -226,14 +227,7 @@ class ControlPlane:
 		await anyio.to_thread.run_sync(_terminate_and_wait)
 		self._procs = []
 
-	# === command rpc
-
 	async def send_command(self, instance_id: str, cmd: Cmd, timeout: float = 10.0) -> CmdResponse:
-		"""dispatch a command to ``instance_id`` and await its response
-
-		raises ``KeyError`` if the instance is unknown, ``TimeoutError`` if
-		no response arrives within ``timeout`` seconds
-		"""
 		cmd_in = self._cmd_in_per_instance.get(instance_id)
 		if cmd_in is None:
 			raise KeyError(f"unknown instance {instance_id!r}")
@@ -254,7 +248,6 @@ class ControlPlane:
 		return self._cmd_results.pop(rid)
 
 	async def _cmd_response_loop(self) -> None:
-		"""drain CmdResponses; wake waiters by request_id"""
 		from queue import Empty as _QueueEmpty
 
 		while not self._stop_event.is_set():
@@ -269,7 +262,19 @@ class ControlPlane:
 				pass
 			await anyio.sleep(0.05)
 
-	# === dashboard
+	def _create_persist_worker(self) -> PersistenceWorker | None:
+		cfg = self.kuunfig.default.persistence
+		if not cfg.enable:
+			log.info("persistence: disabled")
+			return None
+		backend = create_backend(cfg)
+		return PersistenceWorker(backend, cfg)
+
+	def _backend_for_dashboard(self):
+		pw = self._persist_worker
+		if pw is None:
+			return None
+		return pw._backend  # type: ignore[attr-defined]
 
 	def _build_dashboard(self) -> None:
 		dash_cfg = self.kuunfig.default.dashboard
@@ -288,6 +293,7 @@ class ControlPlane:
 			registry=self._registry,
 			control=self,
 			ingest_token=token,
+			persistence_backend=self._backend_for_dashboard(),
 		)
 
 	async def _serve_dashboard(self) -> None:
@@ -328,14 +334,7 @@ class ControlPlane:
 			if server.started:
 				server.force_exit = True
 
-	# === prometheus
-
 	async def _start_metrics_server(self, instances: list[tuple[str, Settings]]) -> None:
-		"""start one prometheus aggregator if any preset enables metrics
-
-		uses the first metrics-enabled preset's host/port; child processes
-		inherit ``PROMETHEUS_MULTIPROC_DIR`` from the parent env
-		"""
 		metrics_cfg = next(
 			(cfg.metrics for _, cfg in instances if cfg.metrics.enable),
 			None,

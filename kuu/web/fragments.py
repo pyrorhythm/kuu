@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import typing
+
 from jinja2 import Environment
 from starlette.requests import Request
 from starlette.responses import HTMLResponse
@@ -11,6 +13,9 @@ from kuu.orchestrator.main import PresetSupervisor
 from kuu.scheduler.scheduler import Scheduler
 from kuu.web.stats import StatsCollector
 
+if typing.TYPE_CHECKING:
+	from kuu.persistence._backend import PersistenceBackend
+
 
 class DashboardFragmentsMixin:
 	app: Kuu | None = None
@@ -20,6 +25,7 @@ class DashboardFragmentsMixin:
 	registry: InstanceRegistry | None = None
 	stats: StatsCollector
 	jinja: Environment
+	persistence_backend: "PersistenceBackend | None" = None
 
 	def _render(self, name: str, **ctx) -> str:
 		return self.jinja.get_template(name).render(**ctx)
@@ -147,6 +153,19 @@ class DashboardFragmentsMixin:
 			)
 		jobs = self.scheduler.jobs if self.scheduler else []
 		return HTMLResponse(self._render("fragments/scheduler.html", jobs=jobs, aggregated=False))
+
+	# ── task-run fragments ─────────────────────────────────────────
+
+	async def _frag_task_runs(self, _: Request) -> HTMLResponse:
+		return HTMLResponse(self._render("fragments/task_runs.html"))
+
+	async def _frag_task_run_detail(self, request: Request) -> HTMLResponse:
+		mid = request.query_params.get("message_id", "")
+		return HTMLResponse(
+			self._render("fragments/task_run_detail.html", message_id=mid)
+		)
+
+	# ── broker ──────────────────────────────────────────────────────
 
 	async def _broker_stats(self) -> dict:
 		if self.app is None:

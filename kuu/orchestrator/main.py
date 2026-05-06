@@ -180,12 +180,19 @@ class PresetSupervisor:
 
 	async def _forward_worker_events(self) -> None:
 		"""drain :class:`WorkerEvent` from the worker pool; track in_flight +
-		per-pid current_task; emit Event envelopes for finishing kinds"""
+		per-pid current_task; emit Event envelopes for finishing kinds.
+		also forwards :class:`LogBatch` objects directly to the events sink."""
+		from kuu.observability._protocol import LogBatch
+
 		q = self._wp.events_queue
 		while not self._stop_event.is_set():
 			try:
 				while True:
-					we: WorkerEvent = q.get_nowait()
+					item = q.get_nowait()
+					if isinstance(item, LogBatch):
+						self._emit(item)
+						continue
+					we: WorkerEvent = item
 					if we.kind == "started":
 						self._inflight[we.queue] += 1
 						self._current_task[we.pid] = we.task
@@ -214,6 +221,13 @@ class PresetSupervisor:
 						queue=we.queue,
 						worker_pid=we.pid,
 						elapsed=we.elapsed,
+						message_id=we.message_id,
+						attempt=we.attempt,
+						args_repr=we.args_repr,
+						kwargs_repr=we.kwargs_repr,
+						exc_type=we.exc_type,
+						exc_message=we.exc_message,
+						traceback=we.traceback,
 					),
 				)
 			)

@@ -1,0 +1,136 @@
+<!-- task-run-detail fragment -->
+<div class="surface-head" style="border-bottom:1px solid var(--hair);margin:-1px">
+	<span class="surface-title">task detail</span>
+	<span class="mono dim" style="margin-left:var(--s-2)" id="detail-mid">{{ message_id }}</span>
+	<button class="btn" style="margin-left:auto"
+		hx-get="/fragments/task-runs" hx-target="#task-runs-frag" hx-swap="innerHTML">
+		&larr; back to list</button>
+</div>
+<div class="surface-body flush" id="attempts-area">
+	<p class="placeholder">loading attempts…</p>
+</div>
+
+<div id="log-stream-surface" style="border-top:1px solid var(--hair);display:none">
+	<div class="surface-head" style="margin:0">
+		<span class="surface-title">logs</span>
+		<span class="mono dim" style="margin-left:var(--s-2)" id="log-run-id"></span>
+		<div style="margin-left:auto;display:flex;gap:var(--s-2)">
+			<select id="log-level-filter" class="filter-select">
+				<option value="0">all levels</option>
+				<option value="10">≥ DEBUG</option>
+				<option value="20" selected>≥ INFO</option>
+				<option value="30">≥ WARNING</option>
+				<option value="40">≥ ERROR</option>
+			</select>
+			<input id="log-search" class="filter-input" placeholder="search…" style="width:120px">
+		</div>
+	</div>
+	<div class="surface-body flush" style="max-height:400px;overflow-y:auto" id="log-stream-body">
+		<p class="placeholder">select an attempt to view logs</p>
+	</div>
+</div>
+
+<script>
+(function(){
+	const mid = '{{ message_id }}';
+	if(!mid){ document.getElementById('attempts-area').innerHTML='<p class="placeholder">no message_id</p>'; return; }
+
+	fetch('/api/task-run-attempts?message_id='+encodeURIComponent(mid))
+		.then(r=>r.json()).then(d=>{
+			if(!d.attempts){ return; }
+			renderAttempts(d.attempts);
+		}).catch(()=>{});
+
+	function renderAttempts(attempts){
+		const area = document.getElementById('attempts-area');
+		if(!attempts||!attempts.length){ area.innerHTML='<p class="placeholder">no attempts found</p>'; return; }
+		const task=attempts[0].task||'?', queue=attempts[0].queue||'?';
+		let h = '<div class="detail-meta">'
+			+'<span>task: <strong>'+esc(task)+'</strong></span>'
+			+'<span class="dim">queue: '+esc(queue)+'</span>'
+			+'<span class="dim">attempts: '+attempts.length+'</span></div>';
+		h += '<table class="kuu-table"><thead><tr>'
+			+'<th>#</th><th>status</th><th>started</th><th>finished</th>'
+			+'<th>elapsed</th><th>exc</th><th>logs</th></tr></thead><tbody>';
+		for(const a of attempts){
+			const started = a.started_at ? ts(a.started_at) : '—';
+			const finished = a.finished_at ? ts(a.finished_at) : '—';
+			const elapsed = a.time_elapsed!=null ? a.time_elapsed.toFixed(2)+'s' : '—';
+			const sc = sbc(a.status);
+			h += '<tr class="attempt-row" data-rid="'+(a.id||'')+'" data-attempt="'+a.attempt+'">'
+				+'<td>'+(a.attempt+1)+'</td>'
+				+'<td><span class="status-badge '+sc+'">'+esc(a.status)+'</span></td>'
+				+'<td class="dim">'+started+'</td>'
+				+'<td class="dim">'+finished+'</td>'
+				+'<td>'+elapsed+'</td>'
+				+'<td class="mono-cell">'+esc(a.exc_type||'')+'</td>'
+				+'<td><button class="btn btn-primary btn-tiny view-logs-btn" data-rid="'+(a.id||'')+'">logs</button></td></tr>';
+			if(a.traceback||a.exc_message||a.args_repr||a.kwargs_repr){
+				const args = a.args_repr ? '<div class="detail-section"><div class="detail-label">args</div><pre class="detail-pre">'+esc(a.args_repr)+'</pre></div>' : '';
+				const kwargs = a.kwargs_repr ? '<div class="detail-section"><div class="detail-label">kwargs</div><pre class="detail-pre">'+esc(a.kwargs_repr)+'</pre></div>' : '';
+				const trace = a.traceback ? '<div class="detail-section"><div class="detail-label">traceback</div><pre class="detail-pre traceback">'+esc(a.traceback)+'</pre></div>' : '';
+				const excMsg = a.exc_message&&!a.traceback ? '<div class="detail-section"><div class="detail-label">error</div><pre class="detail-pre">'+esc(a.exc_message)+'</pre></div>' : '';
+				h += '<tr class="attempt-extra" style="display:none"><td colspan="7"><div class="detail-extra-body">'+args+kwargs+trace+excMsg+'</div></td></tr>';
+			}
+		}
+		h += '</tbody></table>';
+		area.innerHTML = h;
+
+		area.querySelectorAll('.attempt-row').forEach(tr=>{
+			tr.style.cursor='pointer';
+			tr.addEventListener('click',function(e){
+				if(e.target.closest('.view-logs-btn')) return;
+				const extra=tr.nextElementSibling;
+				if(extra&&extra.classList.contains('attempt-extra')){
+					extra.style.display = extra.style.display==='none' ? '' : 'none';
+				}
+			});
+		});
+		area.querySelectorAll('.view-logs-btn').forEach(btn=>{
+			btn.addEventListener('click',function(e){
+				e.stopPropagation();
+				const rid=this.dataset.rid;
+				document.getElementById('log-run-id').textContent='run #'+rid;
+				document.getElementById('log-stream-surface').style.display='';
+				_logAfter=0; loadLogs(rid);
+			});
+		});
+	}
+
+	let _logAfter=0, _logTimer;
+	function loadLogs(runId){
+		const lvl=parseInt(document.getElementById('log-level-filter').value)||0;
+		const search=document.getElementById('log-search').value.trim().toLowerCase();
+		const area=document.getElementById('log-stream-body');
+		clearTimeout(_logTimer);
+		fetch('/api/task-run-logs?run_id='+runId+'&limit=500&after_ts='+_logAfter)
+			.then(r=>r.json()).then(d=>{
+				const logs=d.logs||[];
+				let h='';
+				for(const l of logs){
+					if(l.level<lvl) continue;
+					const msg=l.message||'';
+					if(search&&!msg.toLowerCase().includes(search)) continue;
+					h += '<div class="log-line log-lvl-'+l.level+'">'
+						+'<span class="log-ts">'+ts(l.ts)+'</span>'
+						+'<span class="log-lvl">'+lvlLabel(l.level)+'</span>'
+						+'<span class="log-logger">'+esc(l.logger||'')+'</span>'
+						+'<span class="log-msg">'+esc(msg)+'</span></div>';
+				}
+				if(_logAfter===0) area.innerHTML = h||'<p class="placeholder">no logs</p>';
+				else area.innerHTML += h;
+				if(logs.length>0) _logAfter=logs[logs.length-1].ts;
+				area.scrollTop=area.scrollHeight;
+				_logTimer=setTimeout(()=>loadLogs(runId),2000);
+			}).catch(()=>{});
+	}
+
+	function lvlLabel(l){ return ({10:'DBG',20:'INF',30:'WRN',40:'ERR',50:'CRT'})[l]||String(l); }
+	function ts(v){ return new Date(v*1000).toISOString().replace('T',' ').slice(0,19); }
+	function sbc(s){ if(s==='succeeded') return 'sb-ok'; if(s==='failed'||s==='dead') return 'sb-err'; if(s==='retried') return 'sb-retry'; return ''; }
+	function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
+
+	document.getElementById('log-level-filter').addEventListener('change',()=>{_logAfter=0;loadLogs(document.getElementById('log-run-id').textContent.replace('run #',''));});
+	document.getElementById('log-search').addEventListener('input',()=>{_logAfter=0;loadLogs(document.getElementById('log-run-id').textContent.replace('run #',''));});
+})();
+</script>

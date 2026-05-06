@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextvars
 import inspect
 import logging
 import signal
@@ -25,6 +26,10 @@ if TYPE_CHECKING:
 	from kuu.config import Settings
 
 log = logging.getLogger("kuu.worker")
+
+_current_msg_ctx: contextvars.ContextVar[Any] = contextvars.ContextVar(
+	"_current_msg_ctx", default=None
+)
 
 
 class Worker:
@@ -63,6 +68,7 @@ class Worker:
 				consumer_scope = anyio.CancelScope()
 				async with anyio.create_task_group() as control:
 					control.start_soon(self._signal_watcher, consumer_scope)
+					control.start_soon(self._log_flush_loop)
 					with consumer_scope:
 						await self._consume(handlers)
 					control.cancel_scope.cancel()
@@ -76,6 +82,22 @@ class Worker:
 			await self.app.broker.close()
 			if self.app.results is not None:
 				await self.app.results.close()
+
+	@staticmethod
+	async def _log_flush_loop() -> None:
+		"""periodic flush for log records that haven't filled the buffer yet"""
+		try:
+			from kuu.orchestrator._worker import _flush_logs_now
+
+			while True:
+				await anyio.sleep(0.2)
+				_flush_logs_now()
+		except ImportError:
+			await anyio.sleep_forever()
+		except anyio.get_cancelled_exc_class():
+			raise
+		except Exception:
+			await anyio.sleep_forever()
 
 	async def _signal_watcher(self, scope: CancelScope) -> None:
 		try:
@@ -98,6 +120,21 @@ class Worker:
 		msg = delivery.message
 		task = self.app.registry.get(msg.task)
 		ctx = Context(app=self.app, message=msg, phase="process", task=task)
+
+		_token = _current_msg_ctx.set(msg)
+		try:
+			await self._handle_inner(delivery, msg, task, ctx)
+		finally:
+			_current_msg_ctx.reset(_token)
+			# flush any remaining log records for this task
+			try:
+				from kuu.orchestrator._worker import _flush_logs_now
+
+				_flush_logs_now()
+			except Exception:
+				pass
+
+	async def _handle_inner(self, delivery: Delivery, msg: Any, task: Any, ctx: Context) -> None:
 
 		log.debug(
 			"WORKER HANDLE: task=%s, key=%s, attempt=%s", msg.task, result_key(msg), msg.attempt

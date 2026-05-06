@@ -1,0 +1,115 @@
+<!-- task-runs list fragment: loaded into #task-runs-frag via HTMX -->
+<div class="surface-head" style="border-bottom:1px solid var(--hair);margin:-1px">
+	<span class="surface-title">task runs</span>
+	<div style="margin-left:auto;display:flex;gap:var(--s-2)">
+		<select id="tr-filter-status" class="filter-select" hx-get="/fragments/task-runs" hx-trigger="change" hx-target="#task-runs-frag" hx-swap="innerHTML" name="status">
+			<option value="">all status</option>
+			<option value="succeeded">succeeded</option>
+			<option value="failed">failed</option>
+			<option value="retried">retried</option>
+			<option value="dead">dead</option>
+		</select>
+		<input id="tr-filter-task" class="filter-input" placeholder="task name…" style="width:160px"
+			hx-get="/fragments/task-runs" hx-trigger="keyup changed delay:300ms" hx-target="#task-runs-frag" hx-swap="innerHTML" name="task">
+	</div>
+</div>
+<div class="surface-body flush" style="padding-top:0">
+	<table class="kuu-table" id="task-runs-table">
+		<thead><tr>
+			<th>task</th><th>status</th><th>message id</th><th>attempt</th>
+			<th>instance</th><th>elapsed</th><th>finished</th></tr></thead>
+		<tbody id="task-runs-tbody">
+			<p class="placeholder">loading…</p>
+		</tbody>
+	</table>
+</div>
+<div class="tasks-foot" id="task-runs-foot">
+	<div class="tasks-page-info" id="task-runs-page">—</div>
+	<div style="display:flex;gap:var(--s-1)">
+		<button class="btn" id="tr-btn-prev" disabled
+			hx-get="/fragments/task-runs" hx-trigger="click" hx-target="#task-runs-frag" hx-swap="innerHTML"
+			hx-include="#tr-filter-status,#tr-filter-task" hx-vals='{"offset":"prev"}'>
+			&larr; prev</button>
+		<button class="btn" id="tr-btn-next" disabled
+			hx-get="/fragments/task-runs" hx-trigger="click" hx-target="#task-runs-frag" hx-swap="innerHTML"
+			hx-include="#tr-filter-status,#tr-filter-task" hx-vals='{"offset":"next"}'>
+			next &rarr;</button>
+	</div>
+</div>
+
+<script>
+(function(){
+	if(window._trInit) return; window._trInit = true;
+	let _offset = 0;
+	const LIMIT = 50;
+
+	function loadRuns(){
+		const status = document.getElementById('tr-filter-status')?.value || '';
+		const task = document.getElementById('tr-filter-task')?.value || '';
+		const params = new URLSearchParams({limit:LIMIT,offset:_offset});
+		if(status) params.set('status',status);
+		if(task) params.set('task',task);
+		fetch('/api/task-runs?'+params)
+			.then(r=>r.json())
+			.then(d=>{
+				if(!d.rows) return;
+				renderRows(d.rows);
+				const pi = document.getElementById('task-runs-page');
+				if(pi) pi.textContent = d.rows.length===0 ? 'no runs' : ('showing '+_offset+'–'+(_offset+d.rows.length));
+				const bp = document.getElementById('tr-btn-prev');
+				const bn = document.getElementById('tr-btn-next');
+				if(bp) bp.disabled = _offset===0;
+				if(bn) bn.disabled = d.rows.length < LIMIT;
+			}).catch(()=>{});
+	}
+
+	function renderRows(rows){
+		const tbody = document.getElementById('task-runs-tbody');
+		if(!tbody) return;
+		if(!rows.length){ tbody.innerHTML='<tr><td colspan="7" class="placeholder">no runs</td></tr>'; return; }
+		let h='';
+		for(const r of rows){
+			const mid = r.message_id||'—';
+			const midShort = mid.length>12 ? mid.slice(0,12)+'…' : mid;
+			const elapsed = r.time_elapsed!=null ? r.time_elapsed.toFixed(2)+'s' : '—';
+			const finished = r.finished_at!=null ? new Date(r.finished_at*1000).toISOString().replace('T',' ').slice(0,19) : '—';
+			const sc = sb(r.status);
+			h += '<tr class="task-run-row" data-mid="'+esc(mid)+'" style="cursor:pointer">'
+				+'<td>'+esc(r.task)+'</td>'
+				+'<td><span class="status-badge '+sc+'">'+esc(r.status)+'</span></td>'
+				+'<td class="mono-cell">'+esc(midShort)+'</td>'
+				+'<td class="dim">'+r.attempt+'</td>'
+				+'<td class="mono-cell dim">'+esc((r.instance_id||'—').slice(0,12))+'…</td>'
+				+'<td>'+elapsed+'</td>'
+				+'<td class="dim">'+finished+'</td></tr>';
+		}
+		tbody.innerHTML=h;
+		tbody.querySelectorAll('.task-run-row').forEach(tr=>{
+			tr.addEventListener('click',()=>{
+				htmx.ajax('GET','/fragments/task-run-detail?message_id='+encodeURIComponent(tr.dataset.mid),'#task-runs-frag');
+			});
+		});
+	}
+
+	function sb(s){
+		if(s==='succeeded') return 'sb-ok';
+		if(s==='failed'||s==='dead') return 'sb-err';
+		if(s==='retried') return 'sb-retry';
+		return '';
+	}
+	function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
+
+	// HTMX events
+	document.getElementById('task-runs-frag').addEventListener('htmx:afterSettle', function(evt){
+		_offset = 0;
+		loadRuns();
+	});
+	document.getElementById('tr-btn-prev').addEventListener('click',function(e){
+		e.preventDefault(); _offset=Math.max(0,_offset-LIMIT); loadRuns();
+	});
+	document.getElementById('tr-btn-next').addEventListener('click',function(e){
+		e.preventDefault(); _offset+=LIMIT; loadRuns();
+	});
+	loadRuns();
+})();
+</script>

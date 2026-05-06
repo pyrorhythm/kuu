@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import typing
 import uuid
 
@@ -19,6 +21,7 @@ from kuu.web.stats import StatsCollector
 
 if typing.TYPE_CHECKING:
 	from kuu.orchestrator._control import ControlPlane
+	from kuu.persistence._backend import PersistenceBackend
 
 
 class DashbordAPIMixin:
@@ -28,6 +31,7 @@ class DashbordAPIMixin:
 	control: "ControlPlane | None" = None
 	registry: InstanceRegistry | None = None
 	stats: StatsCollector
+	persistence_backend: "PersistenceBackend | None" = None
 
 	async def _api_activity(self, request: Request) -> JSONResponse:
 		return JSONResponse(self.stats.activity_series())
@@ -135,6 +139,85 @@ class DashbordAPIMixin:
 			return Err("job not found", 404)
 		return Ok()
 
+	async def _api_task_runs(self, request: Request) -> JSONResponse:
+		be = self.persistence_backend
+		if be is None:
+			return Err("persistence disabled", 503)
+
+		qp = request.query_params
+		task = qp.get("task")
+		status = qp.get("status")
+		before = qp.get("before")
+		after = qp.get("after")
+		limit = max(1, min(500, int(qp.get("limit", "100"))))
+		offset = max(0, int(qp.get("offset", "0")))
+
+		try:
+			rows = await be.query_runs(
+				task=task or None,
+				status=status or None,
+				before=float(before) if before else None,
+				after=float(after) if after else None,
+				limit=limit,
+				offset=offset,
+			)
+		except Exception as exc:
+			return Err(str(exc), 500)
+
+		return Ok(
+			{
+				"rows": [_run_to_dict(r) for r in rows],
+				"limit": limit,
+				"offset": offset,
+			}
+		)
+
+	async def _api_task_run_attempts(self, request: Request) -> JSONResponse:
+		"""all attempts for a given message_id"""
+		be = self.persistence_backend
+		if be is None:
+			return Err("persistence disabled", 503)
+
+		mid = request.query_params.get("message_id")
+		if not mid:
+			return Err("message_id required")
+
+		try:
+			rows = await be.query_run_attempts(mid)
+		except Exception as exc:
+			return Err(str(exc), 500)
+
+		return Ok(
+			{
+				"message_id": mid,
+				"attempts": [_run_to_dict(r) for r in rows],
+			}
+		)
+
+	async def _api_task_run_logs(self, request: Request) -> JSONResponse:
+		be = self.persistence_backend
+		if be is None:
+			return Err("persistence disabled", 503)
+
+		qp = request.query_params
+		run_id_str = qp.get("run_id")
+		if not run_id_str:
+			return Err("run_id required")
+		limit = max(1, min(2000, int(qp.get("limit", "500"))))
+		after_ts = float(qp.get("after_ts", "0"))
+
+		try:
+			rows = await be.query_logs(int(run_id_str), limit=limit, after_ts=after_ts)
+		except Exception as exc:
+			return Err(str(exc), 500)
+
+		return Ok(
+			{
+				"run_id": int(run_id_str),
+				"logs": [_log_to_dict(r) for r in rows],
+			}
+		)
+
 	def _lookup_task(self, task_name: str, instance: str | None) -> TaskInfo | None:
 		if self.registry is not None:
 			if instance:
@@ -173,6 +256,37 @@ class DashbordAPIMixin:
 			params=params,
 			has_varargs=has_varargs,
 		)
+
+
+def _run_to_dict(r: typing.Any) -> dict:
+	return {
+		"id": r.id,
+		"message_id": r.message_id,
+		"attempt": r.attempt,
+		"task": r.task,
+		"queue": r.queue,
+		"instance_id": r.instance_id,
+		"worker_pid": r.worker_pid,
+		"args_repr": r.args_repr,
+		"kwargs_repr": r.kwargs_repr,
+		"started_at": r.started_at,
+		"finished_at": r.finished_at,
+		"time_elapsed": r.time_elapsed,
+		"status": r.status,
+		"exc_type": r.exc_type,
+		"exc_message": r.exc_message,
+		"traceback": r.traceback,
+	}
+
+
+def _log_to_dict(r: typing.Any) -> dict:
+	return {
+		"run_id": r.run_id,
+		"ts": r.ts,
+		"level": r.level,
+		"logger": r.logger,
+		"message": r.message,
+	}
 
 
 async def _route(control: "ControlPlane", instance: str, cmd: typing.Any) -> JSONResponse:

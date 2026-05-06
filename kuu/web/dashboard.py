@@ -6,6 +6,7 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from kuu.marshal import marshal as _marshal
+from kuu.persistence._backend import PersistenceBackend
 from starlette.applications import Starlette
 from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
@@ -41,6 +42,7 @@ class Dashboard(DashboardFragmentsMixin, DashbordAPIMixin):
 		control: "ControlPlane | None" = None,
 		title: str = "kuu dashboard",
 		ingest_token: str | None = None,
+		persistence_backend: PersistenceBackend | None = None,
 	) -> None:
 		self.app = app
 		self.scheduler = scheduler
@@ -48,6 +50,7 @@ class Dashboard(DashboardFragmentsMixin, DashbordAPIMixin):
 		self.registry = registry
 		self.control = control
 		self.title = title
+		self.persistence_backend = persistence_backend
 		self._ingest_token = ingest_token
 		self.stats = StatsCollector(app, connect_app_events=registry is None and app is not None)
 		here = Path(__file__).parent
@@ -65,6 +68,8 @@ class Dashboard(DashboardFragmentsMixin, DashbordAPIMixin):
 				Route("/", self._index),
 				Route("/fragments/stats", self._frag_stats),
 				Route("/fragments/tasks", self._frag_tasks),
+				Route("/fragments/task-runs", self._frag_task_runs),
+				Route("/fragments/task-run-detail", self._frag_task_run_detail),
 				Route("/fragments/scheduler", self._frag_scheduler),
 				Route("/fragments/presets", self._frag_presets),
 				Route("/fragments/queues", self._frag_queues),
@@ -73,6 +78,9 @@ class Dashboard(DashboardFragmentsMixin, DashbordAPIMixin):
 				Route("/api/run-task", self._api_run_task, methods=["POST"]),
 				Route("/api/trigger-job", self._api_trigger_job, methods=["POST"]),
 				Route("/api/remove-job", self._api_remove_job, methods=["POST"]),
+				Route("/api/task-runs", self._api_task_runs),
+				Route("/api/task-run-attempts", self._api_task_run_attempts),
+				Route("/api/task-run-logs", self._api_task_run_logs),
 				WebSocketRoute("/_ingest", self._ws_ingest),
 				Mount("/static", StaticFiles(directory=str(static_dir)), name="static"),
 			],
