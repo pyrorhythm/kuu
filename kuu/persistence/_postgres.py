@@ -20,6 +20,10 @@ from kuu.persistence._rows import (
 )
 
 
+def _dec_if_b(v: Any) -> str | None:
+	return v.decode() if isinstance(v, bytes) else str(v) if v else None
+
+
 class _PoolAcqCtxProxy(PoolAcquireContext):
 	async def __aenter__(self) -> Connection:
 		if self.connection is not None or self.done:
@@ -236,8 +240,8 @@ class PostgresBackend(PersistenceBackend):
 						r.queue,
 						r.instance_id,
 						r.worker_pid,
-						r.args,
-						r.kwargs,
+						_dec_if_b(r.args),
+						_dec_if_b(r.kwargs),
 						to_naive(r.started_at),
 						to_naive(r.finished_at),
 						r.time_elapsed,
