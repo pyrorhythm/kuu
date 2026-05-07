@@ -11,6 +11,8 @@ import anyio
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from msgspec import structs
 
+from kuu._util import utcnow
+
 from ..exceptions import InvalidReceiptType
 from ..message import Message
 from .base import Broker, Delivery
@@ -27,9 +29,7 @@ class _Q(NamedTuple):
 
 
 class MemoryBroker(Broker[MemoryReceipt]):
-	def __init__(self,
-	             buffer: int = 1024,
-	             pump_interval: float = 0.05):
+	def __init__(self, buffer: int = 1024, pump_interval: float = 0.05):
 		"""
 		In-memory broker for tests and single-process setups.
 
@@ -67,7 +67,7 @@ class MemoryBroker(Broker[MemoryReceipt]):
 		self._queues[queue] = _Q(send, recv)
 
 	def _now(self) -> float:
-		return datetime.now(timezone.utc).timestamp()
+		return utcnow().timestamp()
 
 	def _ts(self, dt: datetime) -> float:
 		return dt.replace(tzinfo=timezone.utc).timestamp() if dt.tzinfo is None else dt.timestamp()
@@ -107,9 +107,9 @@ class MemoryBroker(Broker[MemoryReceipt]):
 					wait = self.pump_interval
 			await anyio.sleep(wait)
 
-	async def consume(self,
-	                  queues: list[str],
-	                  prefetch: int) -> AsyncIterator[Delivery[MemoryReceipt]]:
+	async def consume(
+		self, queues: list[str], prefetch: int
+	) -> AsyncIterator[Delivery[MemoryReceipt]]:
 		del prefetch  # buffer size on the memory stream controls prefetch
 		for q in queues:
 			await self.declare(q)
@@ -152,10 +152,9 @@ class MemoryBroker(Broker[MemoryReceipt]):
 			return 0
 		return q.recv.statistics().current_buffer_used
 
-	async def nack(self,
-	               delivery: Delivery,
-	               requeue: bool = True,
-	               delay: float | None = None) -> None:
+	async def nack(
+		self, delivery: Delivery, requeue: bool = True, delay: float | None = None
+	) -> None:
 		match delivery.receipt:
 			case MemoryReceipt():
 				pass

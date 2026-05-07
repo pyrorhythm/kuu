@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from datetime import datetime
 from typing import Any, Literal, Protocol
 
 from msgspec import Struct, field
 
+from kuu._util import utcnow
+
 PROTOCOL_VERSION = 1
 
-EventKind = Literal["enqueued", "succeeded", "failed", "retried", "dead"]
+EventKind = Literal["enqueued", "started", "succeeded", "failed", "retried", "dead"]
 ByeReason = Literal["sigterm", "sigint", "crash", "manual"]
 
 
@@ -54,7 +57,7 @@ class Hello(Struct, frozen=True, tag="hello"):
 	host: str
 	pid: int
 	version: str
-	started_at: float
+	started_at: datetime
 	broker: BrokerInfo
 	scheduler_enabled: bool
 	processes: int
@@ -67,11 +70,12 @@ class Event(Struct, frozen=True, tag="event"):
 	task: str
 	queue: str
 	worker_pid: int
+	ts: datetime = field(default_factory=utcnow)
 	elapsed: float | None = None
 	message_id: str | None = None
 	attempt: int | None = None
-	args_repr: str | None = None
-	kwargs_repr: str | None = None
+	args: Any | None = None
+	kwargs: Any | None = None
 	exc_type: str | None = None
 	exc_message: str | None = None
 	traceback: str | None = None
@@ -106,7 +110,7 @@ Body = Hello | Event | State | Bye | LogBatch
 class Envelope(Struct, frozen=True):
 	v: int
 	instance: str
-	ts: float
+	ts: datetime
 	body: Body
 
 
@@ -122,7 +126,7 @@ class InstanceInfo(Struct, frozen=True):
 	instance_id: str
 	hello: Hello
 	last_state: State | None
-	last_seen: float
+	last_seen: datetime
 
 
 class InstanceRegistry(Protocol):

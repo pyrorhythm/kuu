@@ -1,32 +1,88 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from datetime import datetime, timezone
+from typing import Any, Self
+
+from asyncpg import Connection, Pool, exceptions
+from asyncpg.pool import PoolAcquireContext
+from asyncpg.protocol import Record
 
 from kuu.config import PersistenceConfig
+from kuu.marshal import marshal as _m
 from kuu.persistence._backend import PersistenceBackend
 from kuu.persistence._rows import (
 	LogRow,
 	RunRow,
+	parse_pg_dsn,
+	to_naive,
 	validate_table_name,
 )
 
-if TYPE_CHECKING:
-	from asyncpg import Pool
+
+class _PoolAcqCtxProxy(PoolAcquireContext):
+	async def __aenter__(self) -> Connection:
+		if self.connection is not None or self.done:
+			raise exceptions.InterfaceError("a connection is already acquired")
+		conn: Connection = await self.pool._acquire(self.timeout)
+		for t in ("jsonb", "json"):
+			await conn.set_type_codec(
+				typename=t,
+				schema="pg_catalog",
+				encoder=_m.json_encode,
+				decoder=_m.json_decode,
+			)
+		self.connection = conn
+		return self.connection
+
+
+class _PoolProxy(Pool):
+	@classmethod
+	def _create(
+		cls,
+		dsn=None,
+		*,
+		min_size=10,
+		max_size=10,
+		max_queries=50000,
+		max_inactive_connection_lifetime=300.0,
+		connect=None,
+		setup=None,
+		init=None,
+		reset=None,
+		loop=None,
+		connection_class=Connection,
+		record_class=Record,
+		**connect_kwargs,
+	) -> Self:
+		inst = cls(
+			dsn,
+			connection_class=connection_class,
+			record_class=record_class,
+			min_size=min_size,
+			max_size=max_size,
+			max_queries=max_queries,
+			loop=loop,
+			connect=connect,
+			setup=setup,
+			init=init,
+			reset=reset,
+			max_inactive_connection_lifetime=max_inactive_connection_lifetime,
+			**connect_kwargs,
+		)
+		return inst
+
+	def acquire(self, *, timeout=None) -> PoolAcquireContext:
+		return _PoolAcqCtxProxy(self, timeout)
+
 
 log = logging.getLogger("kuu.persistence.postgres")
-
-
-def _parse_pg_dsn(dsn: str) -> str:
-	if dsn.startswith("postgres://"):
-		return "postgresql://" + dsn[len("postgres://") :]
-	return dsn
 
 
 class PostgresBackend(PersistenceBackend):
 	def __init__(self, cfg: PersistenceConfig) -> None:
 		self._cfg = cfg
-		self._dsn = _parse_pg_dsn(cfg.dsn)
+		self._dsn = parse_pg_dsn(cfg.dsn)
 		validate_table_name(cfg.runs_table)
 		validate_table_name(cfg.logs_table)
 		if cfg.schema is not None:
@@ -42,9 +98,7 @@ class PostgresBackend(PersistenceBackend):
 		return f'"{table}"'
 
 	async def connect(self) -> None:
-		import asyncpg
-
-		pool = await asyncpg.create_pool(
+		pool = await _PoolProxy._create(
 			self._dsn,
 			min_size=1,
 			max_size=3,
@@ -67,46 +121,47 @@ class PostgresBackend(PersistenceBackend):
 				await conn.execute(f'CREATE SCHEMA IF NOT EXISTS "{self._cfg.schema}"')
 			rt = self._qualified_runs
 			lt = self._qualified_logs
-			await conn.execute(f"""
-				CREATE TABLE IF NOT EXISTS {rt} (
-					id BIGINT PRIMARY KEY GENERATED ALWAYS BY IDENTITY,
-					message_id TEXT NOT NULL,
-					attempt INTEGER NOT NULL DEFAULT 0,
-					task TEXT NOT NULL,
-					queue TEXT NOT NULL DEFAULT 'default',
-					instance_id TEXT NOT NULL,
-					worker_pid INTEGER NOT NULL DEFAULT 0,
-					status TEXT NOT NULL DEFAULT 'succeeded'
-						CHECK (status IN (
-							'enqueued', 'started',
-							'succeeded', 'failed',
-						  'retried', 'dead'
-						)),
-					args_repr TEXT,
-					kwargs_repr TEXT,
-					started_at DOUBLE PRECISION,
-					finished_at DOUBLE PRECISION,
-					time_elapsed DOUBLE PRECISION,
-					exc_type TEXT,
-					exc_message TEXT,
-					traceback TEXT
-				);
+			await conn.execute(f"""CREATE TABLE IF NOT EXISTS {rt} (
+			    id BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+			    message_id TEXT NOT NULL,
+			    attempt INTEGER NOT NULL DEFAULT 0,
+			    task TEXT NOT NULL,
+			    queue TEXT NOT NULL DEFAULT 'default',
+			    instance_id TEXT NOT NULL,
+			    worker_pid INTEGER NOT NULL DEFAULT 0,
 
-				CREATE TABLE IF NOT EXISTS {lt} (
-					id BIGINT PRIMARY KEY GENERATED ALWAYS BY IDENTITY,
-					message_id TEXT NOT NULL,
-					attempt INTEGER NOT NULL DEFAULT 0,
-					ts DOUBLE PRECISION NOT NULL DEFAULT 0.0,
-					level INTEGER NOT NULL DEFAULT 0,
-					logger TEXT NOT NULL DEFAULT '',
-					message TEXT NOT NULL DEFAULT ''
-				)
-			""")
+			    status TEXT NOT NULL DEFAULT 'succeeded'
+			        CHECK (status IN (
+			            'enqueued', 'started',
+			            'succeeded', 'failed',
+			            'retried', 'dead'
+			        )),
 
-			runs_uniq = f'"{self._cfg.runs_table}_message_id_attempt_uniq"'
-			await conn.execute(
-				f"CREATE UNIQUE INDEX IF NOT EXISTS {runs_uniq} ON {rt}(message_id, attempt)"
-			)
+			    args JSONB,
+			    kwargs JSONB,
+			    started_at TIMESTAMP,
+			    finished_at TIMESTAMP,
+			    time_elapsed INTERVAL,
+			    exc_type TEXT,
+			    exc_message TEXT,
+			    traceback TEXT,
+
+					UNIQUE (message_id, attempt)
+			)""")
+			await conn.execute(f"""CREATE TABLE IF NOT EXISTS {lt} (
+			    id BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+			    message_id TEXT NOT NULL,
+			    attempt INTEGER NOT NULL DEFAULT 0,
+			    ts TIMESTAMP NOT NULL DEFAULT NOW(),
+			    level INTEGER NOT NULL DEFAULT 0,
+			    logger TEXT NOT NULL DEFAULT '',
+			    message TEXT NOT NULL DEFAULT '',
+
+			    FOREIGN KEY (message_id, attempt)
+			        REFERENCES {rt} (message_id, attempt)
+			        ON DELETE CASCADE
+			)""")
+
 			idx_specs = [
 				(f"{self._cfg.runs_table}_finished_at_idx", f"{rt}(finished_at DESC)"),
 				(
@@ -123,9 +178,33 @@ class PostgresBackend(PersistenceBackend):
 
 	_RUNS_COLS = (
 		"id, message_id, attempt, task, queue, instance_id, "
-		"worker_pid, args_repr, kwargs_repr, started_at, finished_at, "
+		"worker_pid, args, kwargs, started_at, finished_at, "
 		"time_elapsed, status, exc_type, exc_message, traceback"
 	)
+
+	@staticmethod
+	def _row_to_run(row: Any) -> RunRow:
+		"""Convert an asyncpg Record to a RunRow, making timestamps UTC-aware."""
+		started = row.get("started_at")
+		finished = row.get("finished_at")
+		return RunRow(
+			id=row["id"],
+			message_id=row["message_id"],
+			attempt=row["attempt"],
+			task=row["task"],
+			queue=row["queue"],
+			instance_id=row["instance_id"],
+			worker_pid=row["worker_pid"],
+			args=row["args"],
+			kwargs=row["kwargs"],
+			started_at=started.replace(tzinfo=timezone.utc) if started is not None else None,
+			finished_at=finished.replace(tzinfo=timezone.utc) if finished is not None else None,
+			time_elapsed=row["time_elapsed"],
+			status=row["status"],
+			exc_type=row["exc_type"],
+			exc_message=row["exc_message"],
+			traceback=row["traceback"],
+		)
 
 	async def write_runs(self, runs: list[RunRow]) -> None:
 		if not runs:
@@ -136,7 +215,7 @@ class PostgresBackend(PersistenceBackend):
 				f"""
 					INSERT INTO {self._qualified_runs} (
 						message_id, attempt, task, queue, instance_id, worker_pid,
-						args_repr, kwargs_repr, started_at, finished_at,
+						args, kwargs, started_at, finished_at,
 						time_elapsed, status, exc_type, exc_message, traceback
 					) VALUES (
 					  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
@@ -157,10 +236,10 @@ class PostgresBackend(PersistenceBackend):
 						r.queue,
 						r.instance_id,
 						r.worker_pid,
-						r.args_repr,
-						r.kwargs_repr,
-						r.started_at,
-						r.finished_at,
+						r.args,
+						r.kwargs,
+						to_naive(r.started_at),
+						to_naive(r.finished_at),
 						r.time_elapsed,
 						r.status,
 						r.exc_type,
@@ -183,7 +262,7 @@ class PostgresBackend(PersistenceBackend):
 					VALUES ($1, $2, $3, $4, $5, $6)
 				""",
 				[
-					(lr.message_id, lr.attempt, lr.ts, lr.level, lr.logger, lr.message)
+					(lr.message_id, lr.attempt, to_naive(lr.ts), lr.level, lr.logger, lr.message)
 					for lr in logs
 				],
 			)
@@ -193,8 +272,8 @@ class PostgresBackend(PersistenceBackend):
 		*,
 		task: str | None = None,
 		status: str | None = None,
-		before: float | None = None,
-		after: float | None = None,
+		before: datetime | None = None,
+		after: datetime | None = None,
 		limit: int = 100,
 		offset: int = 0,
 	) -> list[RunRow]:
@@ -213,11 +292,11 @@ class PostgresBackend(PersistenceBackend):
 			idx += 1
 		if before is not None:
 			where.append(f"finished_at <= ${idx}")
-			params.append(before)
+			params.append(to_naive(before))
 			idx += 1
 		if after is not None:
 			where.append(f"finished_at >= ${idx}")
-			params.append(after)
+			params.append(to_naive(after))
 			idx += 1
 		clause = " AND ".join(where) if where else "TRUE"
 		params.append(limit)
@@ -232,7 +311,7 @@ class PostgresBackend(PersistenceBackend):
 				""",
 				*params,
 			)
-		return [_pg_row_to_run(r) for r in rows]
+		return [self._row_to_run(r) for r in rows]
 
 	async def query_run_attempts(self, message_id: str) -> list[RunRow]:
 		assert self._pool is not None
@@ -246,25 +325,35 @@ class PostgresBackend(PersistenceBackend):
 				""",
 				message_id,
 			)
-		return [_pg_row_to_run(r) for r in rows]
+		return [self._row_to_run(r) for r in rows]
 
 	async def query_logs(
-		self, message_id: str, attempt: int, *, limit: int = 500, after_ts: float = 0.0
+		self,
+		message_id: str,
+		attempt: int,
+		*,
+		after_dt: datetime | None = None,
+		limit: int = 500,
 	) -> list[LogRow]:
 		assert self._pool is not None
 		lt = self._qualified_logs
+
+		where = "message_id = $2 AND attempt = $3"
+		params: list = [message_id, attempt]
+		if after_dt:
+			where += " AND ts > $4"
+			params.append(to_naive(after_dt))
+
 		async with self._pool.acquire() as conn:
 			rows = await conn.fetch(
 				f"""
 				  SELECT message_id, attempt, ts, level, logger, message
 					FROM {lt}
-					WHERE message_id = $1 AND attempt = $2 AND ts > $3
-					ORDER BY ts ASC LIMIT $4
+					WHERE {where}
+					ORDER BY ts ASC LIMIT $1
 				""",
-				message_id,
-				attempt,
-				after_ts,
 				limit,
+				*params,
 			)
 		return [
 			LogRow(
@@ -278,7 +367,7 @@ class PostgresBackend(PersistenceBackend):
 			for r in rows
 		]
 
-	async def prune(self, before_ts: float) -> int:
+	async def prune(self, before_ts: datetime) -> int:
 		assert self._pool is not None
 		rt = self._qualified_runs
 		lt = self._qualified_logs
@@ -287,32 +376,11 @@ class PostgresBackend(PersistenceBackend):
 				f"""DELETE FROM {lt}
 					WHERE (message_id, attempt) IN
 					(SELECT message_id, attempt FROM {rt} WHERE finished_at < $1)""",
-				before_ts,
+				to_naive(before_ts),
 			)
 			result = await conn.execute(
 				f"DELETE FROM {rt} WHERE finished_at < $1",
-				before_ts,
+				to_naive(before_ts),
 			)
 		parts = result.split()
 		return int(parts[1]) if len(parts) > 1 else 0
-
-
-def _pg_row_to_run(row: Any) -> RunRow:
-	return RunRow(
-		id=row["id"],
-		message_id=row["message_id"],
-		attempt=row["attempt"],
-		task=row["task"],
-		queue=row["queue"],
-		instance_id=row["instance_id"],
-		worker_pid=row["worker_pid"],
-		args_repr=row["args_repr"],
-		kwargs_repr=row["kwargs_repr"],
-		started_at=row["started_at"],
-		finished_at=row["finished_at"],
-		time_elapsed=row["time_elapsed"],
-		status=row["status"],
-		exc_type=row["exc_type"],
-		exc_message=row["exc_message"],
-		traceback=row["traceback"],
-	)

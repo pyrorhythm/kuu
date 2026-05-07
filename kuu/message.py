@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
 from msgspec import Meta, Struct, field
+
+from kuu._util import utcnow
 
 
 class Payload(Struct, frozen=True):
@@ -36,6 +38,4 @@ class Message(Struct, frozen=True):
 	attempt: Annotated[int, Meta(ge=0)] = 0
 	max_attempts: Annotated[int, Meta(ge=1)] = 5
 	not_before: Annotated[datetime, Meta(tz=True)] | None = None
-	enqueued_at: Annotated[datetime, Meta(tz=True)] = field(
-		default_factory=lambda: datetime.now(timezone.utc)
-	)
+	enqueued_at: Annotated[datetime, Meta(tz=True)] = field(default_factory=utcnow)

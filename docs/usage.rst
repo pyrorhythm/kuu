@@ -91,7 +91,7 @@ The broker holds the message until that UTC datetime, then delivers it:
    from datetime import datetime, timedelta, timezone
    from kuu.message import Payload
 
-   run_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+   run_at = utcnow() + timedelta(minutes=10)
 
    await app.enqueue_by_name(
        "myapp.tasks:charge",

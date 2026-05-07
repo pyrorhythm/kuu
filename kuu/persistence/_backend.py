@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol
 
 from kuu.persistence._rows import LogRow, RunRow
@@ -23,8 +24,8 @@ class PersistenceBackend(Protocol):
 		*,
 		task: str | None = None,
 		status: str | None = None,
-		before: float | None = None,
-		after: float | None = None,
+		before: datetime | None = None,
+		after: datetime | None = None,
 		limit: int = 100,
 		offset: int = 0,
 	) -> list[RunRow]: ...
@@ -32,10 +33,10 @@ class PersistenceBackend(Protocol):
 	async def query_run_attempts(self, message_id: str) -> list[RunRow]: ...
 
 	async def query_logs(
-		self, message_id: str, attempt: int, *, limit: int = 500, after_ts: float = 0.0
+		self, message_id: str, attempt: int, *, after_dt: datetime | None = None, limit: int = 500
 	) -> list[LogRow]: ...
 
-	async def prune(self, before_ts: float) -> int: ...
+	async def prune(self, before_ts: datetime) -> int: ...
 
 
 class NoopBackend:
@@ -65,5 +66,5 @@ class NoopBackend:
 	async def query_logs(self, message_id: str, attempt: int, **kwargs) -> list[LogRow]:
 		return []
 
-	async def prune(self, before_ts: float) -> int:
+	async def prune(self, before_ts: datetime) -> int:
 		return 0

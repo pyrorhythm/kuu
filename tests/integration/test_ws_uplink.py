@@ -12,6 +12,7 @@ from async_asgi_testclient import TestClient
 from msgspec.json import encode as _json_encode
 
 from kuu._types import _FnAsync
+from kuu._util import utcnow
 from kuu.app import Kuu
 from kuu.brokers.memory import MemoryBroker
 from kuu.observability import (
@@ -20,7 +21,8 @@ from kuu.observability import (
 	Event,
 	Hello,
 	InMemoryRegistry,
-	WsUplink, envelope_to_bytes,
+	WsUplink,
+	envelope_to_bytes,
 )
 from kuu.web.dashboard import Dashboard
 
@@ -39,25 +41,26 @@ def _free_port() -> int:
 
 def _hello() -> Hello:
 	return Hello(
-			preset="dev",
-			host="h",
-			pid=1,
-			version="0.1.0",
-			started_at=time.time(),
-			broker=BrokerInfo(type="MemoryBroker", key="kkk"),
-			scheduler_enabled=False,
-			processes=1,
+		preset="dev",
+		host="h",
+		pid=1,
+		version="0.1.0",
+		started_at=utcnow(),
+		broker=BrokerInfo(type="MemoryBroker", key="kkk"),
+		scheduler_enabled=False,
+		processes=1,
 	)
 
 
 @pytest.fixture
 def fresh_app() -> Kuu:
-	"""ws-uplink tests need a fresh Kuu so StatsCollector signals don't bleed across cases"""
 	return Kuu(broker=MemoryBroker())
 
 
 @pytest.fixture
-async def wsapp(make_app: _FnAsync[[], Kuu]) -> AsyncIterator[tuple[WsUplink, anyio.Event, Dashboard]]:
+async def wsapp(
+	make_app: _FnAsync[[], Kuu],
+) -> AsyncIterator[tuple[WsUplink, anyio.Event, Dashboard]]:
 	dash = Dashboard(app=await make_app(), registry=InMemoryRegistry())
 	app = dash.build_app()
 	uplink = WsUplink(asgi_app=app)
@@ -95,16 +98,17 @@ async def _drain_until(predicate, *, timeout: float = 1.0) -> None:
 
 class TestWsUplink:
 	async def test_hello_then_event_lands_in_registry_and_stats(
-			self, wsapp: tuple[WsUplink, anyio.Event, Dashboard]
+		self, wsapp: tuple[WsUplink, anyio.Event, Dashboard]
 	) -> None:
 		uplink, stop, dash = wsapp
 
-		hello = Envelope(v=1, instance="abc", ts=time.time(), body=_hello())
-		ev = Envelope(v=1,
-		              instance="abc",
-		              ts=time.time(),
-		              body=Event(kind="succeeded", task="t1", queue="q", worker_pid=42, elapsed=0.1),
-		              )
+		hello = Envelope(v=1, instance="abc", ts=utcnow(), body=_hello())
+		ev = Envelope(
+			v=1,
+			instance="abc",
+			ts=utcnow(),
+			body=Event(kind="succeeded", task="t1", queue="q", worker_pid=42, elapsed=0.1),
+		)
 
 		def _pred() -> bool:
 			print(f"registry={dash.registry.all()}, stats={dash.stats.totals}")
@@ -122,28 +126,27 @@ class TestWsUplink:
 		assert dash.stats.totals["succeeded"] == 1
 
 	async def test_re_hello_after_reconnect_preserves_instance(
-			self, wsapp: tuple[WsUplink, anyio.Event, Dashboard]
+		self, wsapp: tuple[WsUplink, anyio.Event, Dashboard]
 	) -> None:
-		"""reconnect cycle: stop the uplink mid-flight, restart, instance survives in roster"""
 		uplink, stop, dash = wsapp
 
-		hello = Envelope(v=1, instance="same", ts=time.time(), body=_hello())
+		hello = Envelope(v=1, instance="same", ts=utcnow(), body=_hello())
 		uplink.sink.emit(hello)
 		await _drain_until(lambda: bool(dash.registry.all()))
 
-		# Stop the initial uplink
 		stop.set()
-
-		# Round 2: new uplink with same dashboard app
 		app = dash.build_app()
 		uplink_b = WsUplink(asgi_app=app)
 		stop_b = anyio.Event()
 		async with anyio.create_task_group() as tg:
 			tg.start_soon(uplink_b.run, stop_b)
-			# Re-send hello (same instance id) and a failed event
 			uplink_b.sink.emit(hello)
-			ev = Envelope(v=1, instance="same",
-			              ts=time.time(), body=Event(kind="failed", task="x", queue="q", worker_pid=1))
+			ev = Envelope(
+				v=1,
+				instance="same",
+				ts=utcnow(),
+				body=Event(kind="failed", task="x", queue="q", worker_pid=1),
+			)
 			uplink_b.sink.emit(ev)
 			await _drain_until(lambda: dash.stats.totals.get("failed", 0) >= 1)
 			stop_b.set()
@@ -152,24 +155,26 @@ class TestWsUplink:
 		assert len(roster) == 1
 		assert roster[0].instance_id == "same"
 
-	async def test_unknown_tag_is_dropped_not_fatal(self, wsapp: tuple[WsUplink, anyio.Event, Dashboard]) -> None:
+	async def test_unknown_tag_is_dropped_not_fatal(
+		self, wsapp: tuple[WsUplink, anyio.Event, Dashboard]
+	) -> None:
 		uplink, _, dash = wsapp
-
 		app = uplink._asgi_app
 
-		async with (
-			TestClient(app) as tc,
-			tc.websocket_connect(path="/_ingest") as ws
-		):
-			await ws.send_bytes(_json_encode({"v": 1, "instance": "x", "ts": 0, "body": {"type": "totally-bogus"}}))
-			await ws.send_bytes(envelope_to_bytes(Envelope(v=1, instance="zzz", ts=time.time(), body=_hello())))
+		async with TestClient(app) as tc, tc.websocket_connect(path="/_ingest") as ws:
+			await ws.send_bytes(
+				_json_encode(
+					{"v": 1, "instance": "x", "ts": utcnow(), "body": {"type": "totally-bogus"}}
+				)
+			)
+			await ws.send_bytes(
+				envelope_to_bytes(Envelope(v=1, instance="zzz", ts=utcnow(), body=_hello()))
+			)
 
 		await _drain_until(lambda: any(e.instance_id == "zzz" for e in dash.registry.all()))
 
 
 class TestWsUplinkAuth:
-	"""ingest_token gates /_ingest; uplink presents Authorization: Bearer <token>"""
-
 	async def test_authorized_uplink_passes(self, make_app: _FnAsync[[], Kuu]) -> None:
 		dash = Dashboard(app=await make_app(), registry=InMemoryRegistry(), ingest_token="s3cret")
 		asgi = dash.build_app()
@@ -178,22 +183,18 @@ class TestWsUplinkAuth:
 		stop = anyio.Event()
 		async with anyio.create_task_group() as tg:
 			tg.start_soon(uplink.run, stop)
-			uplink.sink.emit(Envelope(v=1, instance="ok", ts=time.time(), body=_hello()))
+			uplink.sink.emit(Envelope(v=1, instance="ok", ts=utcnow(), body=_hello()))
 			await _drain_until(lambda: any(e.instance_id == "ok" for e in dash.registry.all()))
 			stop.set()
 
 	async def test_missing_token_is_rejected(self, make_app: _FnAsync[[], Kuu]) -> None:
 		dash = Dashboard(app=await make_app(), registry=InMemoryRegistry(), ingest_token="s3cret")
 		asgi = dash.build_app()
-
-		# uplink without token; the ws endpoint closes before accept, server-side
-		# stays clean; we assert no entry lands in the roster within the window
 		uplink = WsUplink(asgi_app=asgi)
 		stop = anyio.Event()
 		async with anyio.create_task_group() as tg:
 			tg.start_soon(uplink.run, stop)
-			uplink.sink.emit(Envelope(v=1, instance="nope", ts=time.time(), body=_hello()))
-			# give it a moment to fail repeatedly
+			uplink.sink.emit(Envelope(v=1, instance="nope", ts=utcnow(), body=_hello()))
 			await anyio.sleep(0.5)
 			stop.set()
 
@@ -207,7 +208,7 @@ class TestWsUplinkAuth:
 		stop = anyio.Event()
 		async with anyio.create_task_group() as tg:
 			tg.start_soon(uplink.run, stop)
-			uplink.sink.emit(Envelope(v=1, instance="bad", ts=time.time(), body=_hello()))
+			uplink.sink.emit(Envelope(v=1, instance="bad", ts=utcnow(), body=_hello()))
 			await anyio.sleep(0.5)
 			stop.set()
 

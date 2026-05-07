@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 import anyio
 import pytest
 
+from kuu._util import utcnow
 from kuu.brokers.base import Delivery
 from kuu.brokers.redis import RedisBroker, RedisReceipt
 from kuu.exceptions import NotConnected
@@ -189,7 +190,7 @@ async def test_enqueue_ensures_connection(redis_transport: RedisTransport):
 async def test_schedule_ensures_connection(redis_transport: RedisTransport):
 	broker = _broker(redis_transport, "sched")
 
-	when = datetime.now(timezone.utc) + timedelta(seconds=60)
+	when = utcnow() + timedelta(seconds=60)
 	await broker.schedule(_msg(), when)
 	assert broker._redis.r is not None
 
@@ -265,7 +266,7 @@ async def test_pump_scheduled_moves_due_messages(redis_transport: RedisTransport
 		await broker.declare(q)
 
 		msg = _msg()
-		past = datetime.now(timezone.utc) - timedelta(seconds=1)
+		past = utcnow() - timedelta(seconds=1)
 		await broker.r.zadd(broker._zset(q), {broker.serializer.marshal(msg): past.timestamp()})
 
 		with anyio.move_on_after(0.8):

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
+
+from kuu._util import utcnow
 
 from ..message import Payload
 from .schedule import Schedule
@@ -20,7 +22,7 @@ class BaseJob(ABC):
 	queue: str | None = None
 	headers: dict[str, str] | None = None
 	max_attempts: int | None = None
-	next_run: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+	next_run: datetime = field(default_factory=utcnow)
 
 	@abstractmethod
 	def schedule_next(self, now: datetime) -> None: ...

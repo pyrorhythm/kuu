@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-import time
 from collections import Counter, deque
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
+
+from kuu._util import utcnow
 
 if TYPE_CHECKING:
 	from kuu.app import Kuu
@@ -12,7 +14,7 @@ if TYPE_CHECKING:
 
 @dataclass(slots=True)
 class EventRecord:
-	ts: float
+	ts: datetime
 	task: str
 	event: str
 
@@ -38,7 +40,7 @@ class StatsCollector:
 
 	def _bump(self, event: str, msg: Message) -> None:
 		self.totals[event] += 1
-		self.events_log.append(EventRecord(time.time(), msg.task, event))
+		self.events_log.append(EventRecord(utcnow(), msg.task, event))
 
 	def _on_enqueued(self, msg: Message) -> None:
 		self._bump("enqueued", msg)
@@ -55,11 +57,13 @@ class StatsCollector:
 	def _on_dead(self, msg: Message) -> None:
 		self._bump("dead", msg)
 
-	def ingest(self, event: str, task: str, ts: float) -> None:
+	def ingest(self, event: str, task: str, ts: datetime) -> None:
 		self.totals[event] += 1
 		self.events_log.append(EventRecord(ts, task, event))
 
-	def activity_series(self, buckets: int = 60, bucket_sec: int = 5) -> dict:
+	def activity_series(
+		self, buckets: int = 60, bucket_sec: timedelta = timedelta(seconds=5)
+	) -> dict:
 		out: dict = {
 			"times": [],
 			"enqueued": [],
@@ -70,13 +74,13 @@ class StatsCollector:
 		}
 		if not self.events_log:
 			return out
-		now = time.time()
+		now = utcnow()
 		start = now - buckets * bucket_sec
 		window = [e for e in self.events_log if e.ts >= start]
 		for i in range(buckets):
 			t0 = start + i * bucket_sec
 			t1 = t0 + bucket_sec
-			out["times"].append(int(t1))
+			out["times"].append(t1.isoformat())
 			for k in ("enqueued", "succeeded", "failed", "retried", "dead"):
 				out[k].append(sum(1 for e in window if t0 <= e.ts < t1 and e.event == k))
 		return out

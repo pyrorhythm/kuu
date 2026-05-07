@@ -1,22 +1,48 @@
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 import threading
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import anyio
 import anyio.to_thread
 
 from kuu.config import PersistenceConfig
+from kuu.marshal import marshal as _m
 from kuu.persistence._backend import PersistenceBackend
 from kuu.persistence._rows import (
 	LogRow,
 	RunRow,
+	to_naive,
 	validate_table_name,
 )
 
 log = logging.getLogger("kuu.persistence.sqlite")
+
+
+def _safe_json_text(value: Any) -> str | None:
+	"""Serialize a value to a JSON string for TEXT-column storage."""
+	if value is None:
+		return None
+	if isinstance(value, str):
+		return value
+	try:
+		return json.dumps(value, default=str)
+	except Exception:
+		return str(value)
+
+
+def _parse_json_text(value: str | None) -> Any:
+	"""Parse a JSON string back to a Python object; falls back to raw string."""
+	if value is None:
+		return None
+	try:
+		return json.loads(value)
+	except (json.JSONDecodeError, TypeError):
+		return value
 
 
 def _parse_sqlite_dsn(dsn: str) -> str:
@@ -35,7 +61,8 @@ class SqliteBackend(PersistenceBackend):
 		self._path = _parse_sqlite_dsn(cfg.dsn)
 		validate_table_name(cfg.runs_table)
 		validate_table_name(cfg.logs_table)
-		self._conn: sqlite3.Connection | None = None
+		self._conn: sqlite3.Connection
+		self._initialized = False
 		self._lock = threading.Lock()
 
 	async def connect(self) -> None:
@@ -48,6 +75,7 @@ class SqliteBackend(PersistenceBackend):
 			conn.execute("PRAGMA synchronous=NORMAL")
 			conn.execute("PRAGMA temp_store=MEMORY")
 			self._conn = conn
+			self._initialized = True
 
 	async def close(self) -> None:
 		await anyio.to_thread.run_sync(self._close_sync)
@@ -56,13 +84,14 @@ class SqliteBackend(PersistenceBackend):
 		with self._lock:
 			if self._conn is not None:
 				self._conn.close()
-				self._conn = None
+				self._initialized = False
 
 	async def init_schema(self) -> None:
 		await anyio.to_thread.run_sync(self._init_schema_sync)
 
 	def _init_schema_sync(self) -> None:
-		assert self._conn is not None
+		if not self._initialized:
+			self._connect_sync()
 		rt = self._cfg.runs_table
 		lt = self._cfg.logs_table
 		with self._lock:
@@ -75,10 +104,10 @@ class SqliteBackend(PersistenceBackend):
 				queue TEXT NOT NULL,
 				instance_id TEXT NOT NULL,
 				worker_pid INTEGER NOT NULL DEFAULT 0,
-				args_repr TEXT,
-				kwargs_repr TEXT,
-				started_at REAL,
-				finished_at REAL,
+				args JSONB,
+				kwargs JSONB,
+				started_at INTEGER,
+				finished_at INTEGER,
 			 	time_elapsed REAL,
 				status TEXT NOT NULL DEFAULT 'succeeded'
 					CHECK (status IN (
@@ -89,16 +118,21 @@ class SqliteBackend(PersistenceBackend):
 				exc_type TEXT,
 				exc_message TEXT,
 				traceback TEXT
-			);
-			CREATE TABLE IF NOT EXISTS "{lt}" (
-				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				message_id TEXT NOT NULL,
-				attempt INTEGER NOT NULL DEFAULT 0,
-				ts REAL NOT NULL DEFAULT 0.0,
-				level INTEGER NOT NULL DEFAULT 0,
-				logger TEXT NOT NULL DEFAULT '',
-			  message TEXT NOT NULL DEFAULT ''
-			);
+			);""")
+
+			self._conn.executescript(f"""
+				CREATE TABLE IF NOT EXISTS "{lt}" (
+					id INTEGER PRIMARY KEY AUTOINCREMENT,
+					message_id TEXT NOT NULL,
+					attempt INTEGER NOT NULL DEFAULT 0,
+					ts INTEGER NOT NULL DEFAULT 0,
+					level INTEGER NOT NULL DEFAULT 0,
+					logger TEXT NOT NULL DEFAULT '',
+				  message TEXT NOT NULL DEFAULT ''
+				);
+				""")
+
+			self._conn.executescript(f"""
 			CREATE UNIQUE INDEX IF NOT EXISTS "{rt}_message_id_attempt_uniq"
 				ON "{rt}"(message_id, attempt);
 			CREATE INDEX IF NOT EXISTS "{rt}_finished_at_idx"
@@ -107,7 +141,7 @@ class SqliteBackend(PersistenceBackend):
 				ON "{rt}"(task, status, finished_at DESC);
 			CREATE INDEX IF NOT EXISTS "{lt}_message_id_attempt_ts_idx"
 				ON "{lt}"(message_id, attempt, ts);
-		""")
+			""")
 			self._conn.commit()
 
 	async def write_runs(self, runs: list[RunRow]) -> None:
@@ -116,7 +150,8 @@ class SqliteBackend(PersistenceBackend):
 		await anyio.to_thread.run_sync(self._write_runs_sync, runs)
 
 	def _write_runs_sync(self, runs: list[RunRow]) -> None:
-		assert self._conn is not None
+		if not self._initialized:
+			self._connect_sync()
 		rt = self._cfg.runs_table
 		rows: list[tuple[Any, ...]] = []
 		for r in runs:
@@ -128,11 +163,11 @@ class SqliteBackend(PersistenceBackend):
 					r.queue,
 					r.instance_id,
 					r.worker_pid,
-					r.args_repr,
-					r.kwargs_repr,
-					r.started_at,
-					r.finished_at,
-					r.time_elapsed,
+					_m.json_encode(r.args),
+					_m.json_encode(r.kwargs),
+					int(r.started_at.timestamp()) if r.started_at else None,
+					int(r.finished_at.timestamp()) if r.finished_at else None,
+					r.time_elapsed.total_seconds() if r.time_elapsed else None,
 					r.status,
 					r.exc_type,
 					r.exc_message,
@@ -144,7 +179,7 @@ class SqliteBackend(PersistenceBackend):
 				f"""
 					INSERT INTO "{rt}" (
 						message_id, attempt, task, queue, instance_id, worker_pid,
-						args_repr, kwargs_repr, started_at, finished_at,
+						args, kwargs, started_at, finished_at,
 						time_elapsed, status, exc_type, exc_message, traceback
 					) VALUES (
 						?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
@@ -167,11 +202,15 @@ class SqliteBackend(PersistenceBackend):
 		await anyio.to_thread.run_sync(self._write_logs_sync, logs)
 
 	def _write_logs_sync(self, logs: list[LogRow]) -> None:
-		assert self._conn is not None
+		if not self._initialized:
+			self._connect_sync()
 		lt = self._cfg.logs_table
 		rows: list[tuple[Any, ...]] = []
 		for lr in logs:
-			rows.append((lr.message_id, lr.attempt, lr.ts, lr.level, lr.logger, lr.message))
+			nvts: datetime = to_naive(lr.ts)  # type:ignore
+			rows.append(
+				(lr.message_id, lr.attempt, int(nvts.timestamp()), lr.level, lr.logger, lr.message)
+			)
 		with self._lock:
 			self._conn.executemany(
 				f"""
@@ -190,25 +229,32 @@ class SqliteBackend(PersistenceBackend):
 		*,
 		task: str | None = None,
 		status: str | None = None,
-		before: float | None = None,
-		after: float | None = None,
+		before: datetime | None = None,
+		after: datetime | None = None,
 		limit: int = 100,
 		offset: int = 0,
 	) -> list[RunRow]:
 		return await anyio.to_thread.run_sync(
-			self._query_runs_sync, task, status, before, after, limit, offset
+			self._query_runs_sync,
+			task,
+			status,
+			int(before.timestamp()) if before is not None else None,
+			int(after.timestamp()) if after is not None else None,
+			limit,
+			offset,
 		)
 
 	def _query_runs_sync(
 		self,
 		task: str | None,
 		status: str | None,
-		before: float | None,
-		after: float | None,
+		before: int | None,
+		after: int | None,
 		limit: int,
 		offset: int,
 	) -> list[RunRow]:
-		assert self._conn is not None
+		if not self._initialized:
+			self._connect_sync()
 		rt = self._cfg.runs_table
 		where: list[str] = []
 		params: list[Any] = []
@@ -231,7 +277,7 @@ class SqliteBackend(PersistenceBackend):
 				f"""
 						SELECT
 							id, message_id, attempt, task, queue, instance_id,
-							worker_pid, args_repr, kwargs_repr, started_at, finished_at,
+							worker_pid, args, kwargs, started_at, finished_at,
 							time_elapsed, status, exc_type, exc_message, traceback
 						FROM "{rt}" WHERE {clause}
 						ORDER BY finished_at DESC
@@ -245,14 +291,15 @@ class SqliteBackend(PersistenceBackend):
 		return await anyio.to_thread.run_sync(self._query_run_attempts_sync, message_id)
 
 	def _query_run_attempts_sync(self, message_id: str) -> list[RunRow]:
-		assert self._conn is not None
+		if not self._initialized:
+			self._connect_sync()
 		rt = self._cfg.runs_table
 		with self._lock:
 			cursor = self._conn.execute(
 				f"""
 					SELECT
 						id, message_id, attempt, task, queue, instance_id,
-						worker_pid, args_repr, kwargs_repr, started_at, finished_at,
+						worker_pid, args, kwargs, started_at, finished_at,
 						time_elapsed, status, exc_type, exc_message, traceback
 					FROM "{rt}" WHERE message_id = ?
 					ORDER BY attempt ASC
@@ -262,29 +309,41 @@ class SqliteBackend(PersistenceBackend):
 			return [_row_to_run(row) for row in cursor.fetchall()]
 
 	async def query_logs(
-		self, message_id: str, attempt: int, *, limit: int = 500, after_ts: float = 0.0
+		self, message_id: str, attempt: int, *, after_dt: datetime | None = None, limit: int = 500
 	) -> list[LogRow]:
 		return await anyio.to_thread.run_sync(
-			self._query_logs_sync, message_id, attempt, limit, after_ts
+			self._query_logs_sync, message_id, attempt, limit, after_dt
 		)
 
 	def _query_logs_sync(
-		self, message_id: str, attempt: int, limit: int, after_ts: float
+		self,
+		message_id: str,
+		attempt: int,
+		limit: int,
+		after_dt: datetime | None,
 	) -> list[LogRow]:
-		assert self._conn is not None
+		if not self._initialized:
+			self._connect_sync()
 		lt = self._cfg.logs_table
+
+		where = "message_id = ? AND attempt = ?"
+		params: list = [message_id, attempt]
+		if after_dt:
+			where += " AND ts > ?"
+			params.append(int(to_naive(after_dt).timestamp()))
+
 		with self._lock:
 			cursor = self._conn.execute(
 				f"""SELECT message_id, attempt, ts, level, logger, message
-					FROM "{lt}" WHERE message_id = ? AND attempt = ? AND ts > ?
+					FROM "{lt}" WHERE {where}
 					ORDER BY ts ASC LIMIT ?""",
-				(message_id, attempt, after_ts, limit),
+				(*params, limit),
 			)
 			return [
 				LogRow(
 					message_id=row[0],
 					attempt=row[1],
-					ts=row[2],
+					ts=datetime.fromtimestamp(row[2], tz=timezone.utc),
 					level=row[3],
 					logger=row[4],
 					message=row[5],
@@ -292,11 +351,12 @@ class SqliteBackend(PersistenceBackend):
 				for row in cursor.fetchall()
 			]
 
-	async def prune(self, before_ts: float) -> int:
-		return await anyio.to_thread.run_sync(self._prune_sync, before_ts)
+	async def prune(self, before_ts: datetime) -> int:
+		return await anyio.to_thread.run_sync(self._prune_sync, int(before_ts.timestamp()))
 
-	def _prune_sync(self, before_ts: float) -> int:
-		assert self._conn is not None
+	def _prune_sync(self, before_ts: int) -> int:
+		if not self._initialized:
+			self._connect_sync()
 		rt = self._cfg.runs_table
 		lt = self._cfg.logs_table
 		with self._lock:
@@ -322,11 +382,13 @@ def _row_to_run(row: tuple[Any, ...]) -> RunRow:
 		queue=row[4],
 		instance_id=row[5],
 		worker_pid=row[6],
-		args_repr=row[7],
-		kwargs_repr=row[8],
-		started_at=row[9],
-		finished_at=row[10],
-		time_elapsed=row[11],
+		args=_m.json_decode(row[7]),
+		kwargs=_m.json_decode(row[8]),
+		started_at=datetime.fromtimestamp(row[9], tz=timezone.utc) if row[9] is not None else None,
+		finished_at=datetime.fromtimestamp(row[10], tz=timezone.utc)
+		if row[10] is not None
+		else None,
+		time_elapsed=timedelta(seconds=row[11]) if row[11] is not None else None,
 		status=row[12],
 		exc_type=row[13],
 		exc_message=row[14],

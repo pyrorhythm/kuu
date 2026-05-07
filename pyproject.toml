@@ -73,6 +73,9 @@ docs = [
     "sphinx-autodoc2>=0.5",
     "sphinx-copybutton>=0.5",
 ]
+postgres = [
+    "pypika>=0.51.1",
+]
 
 [build-system]
 requires = ["uv_build>=0.11,<0.13"]

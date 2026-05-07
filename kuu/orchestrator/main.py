@@ -7,10 +7,11 @@ import shutil
 import signal
 import socket
 import threading
-import time
 import typing
 import uuid
 from collections import Counter
+from datetime import datetime as dtime
+from datetime import timezone as tz
 from importlib.metadata import version as _pkg_version
 from queue import Empty as _QueueEmpty
 
@@ -28,7 +29,6 @@ from kuu.observability import (
 	EnqueueCmd,
 	Envelope,
 	Event,
-	EventKind,
 	EventsSink,
 	Hello,
 	JobSnapshot,
@@ -44,7 +44,7 @@ from kuu.observability import (
 from kuu.orchestrator._dashboard import DashboardRunner
 from kuu.orchestrator._scheduler import SchedulerRunner
 from kuu.orchestrator._watcher import Watcher
-from kuu.orchestrator._worker import WorkerEvent, WorkerPool
+from kuu.orchestrator._worker import WorkerPool
 
 if typing.TYPE_CHECKING:
 	from wsgiref.simple_server import WSGIServer
@@ -69,7 +69,7 @@ class PresetSupervisor:
 	_stop_event: anyio.Event
 	_metrics_dir: str | None = None
 	_metrics_server: WSGIServer | None = None
-	_started_at: float
+	_started_at: dtime
 	_bye_reason: ByeReason = "manual"
 
 	def __init__(
@@ -92,7 +92,7 @@ class PresetSupervisor:
 		self._watcher = Watcher(config, self._wp.on_change_callback)
 		self._sched = SchedulerRunner(config)
 		self._stop_event = anyio.Event()
-		self._started_at = 0.0
+		self._started_at = dtime.now(tz=tz.utc)
 		self._manage_metrics = manage_metrics
 		self._app: typing.Any = None
 		self._inflight: Counter[str] = Counter()
@@ -124,7 +124,7 @@ class PresetSupervisor:
 			self.config.metrics.enable,
 			self.config.scheduler.enable,
 		)
-		self._started_at = time.time()
+		self._started_at = dtime.now(tz=tz.utc)
 		try:
 			await self._start_metrics_server()
 			if self._events_sink is not None:
@@ -160,7 +160,12 @@ class PresetSupervisor:
 			return
 		try:
 			sink.emit(
-				Envelope(v=PROTOCOL_VERSION, instance=self.instance_id, ts=time.time(), body=body)
+				Envelope(
+					v=PROTOCOL_VERSION,
+					instance=self.instance_id,
+					ts=dtime.now(tz=tz.utc),
+					body=body,
+				)
 			)
 		except Exception:
 			log.exception("events sink emit failed")
@@ -182,6 +187,8 @@ class PresetSupervisor:
 		"""drain :class:`WorkerEvent` from the worker pool; track in_flight +
 		per-pid current_task; emit Event envelopes for finishing kinds.
 		also forwards :class:`LogBatch` objects directly to the events sink."""
+		import anyio.lowlevel
+
 		from kuu.observability._protocol import LogBatch
 
 		q = self._wp.events_queue
@@ -198,14 +205,14 @@ class PresetSupervisor:
 					if isinstance(item, LogBatch):
 						self._emit(item)
 						continue
-					we: WorkerEvent = item
+					we: Event = item
 					if we.kind == "started":
 						self._inflight[we.queue] += 1
-						self._current_task[we.pid] = we.task
+						self._current_task[we.worker_pid] = we.task
 						continue
 					if self._inflight[we.queue] > 0:
 						self._inflight[we.queue] -= 1
-					self._current_task.pop(we.pid, None)
+					self._current_task.pop(we.worker_pid, None)
 					self._emit_event(we)
 
 				if did_work:
@@ -218,7 +225,7 @@ class PresetSupervisor:
 				log.exception("worker event forwarder error")
 				await anyio.sleep(0.5)
 
-	def _emit_event(self, we: WorkerEvent) -> None:
+	def _emit_event(self, we: Event) -> None:
 		sink = self._events_sink
 		if sink is None:
 			return
@@ -228,20 +235,7 @@ class PresetSupervisor:
 					v=PROTOCOL_VERSION,
 					instance=self.instance_id,
 					ts=we.ts,
-					body=Event(
-						kind=typing.cast(EventKind, we.kind),
-						task=we.task,
-						queue=we.queue,
-						worker_pid=we.pid,
-						elapsed=we.elapsed,
-						message_id=we.message_id,
-						attempt=we.attempt,
-						args_repr=we.args_repr,
-						kwargs_repr=we.kwargs_repr,
-						exc_type=we.exc_type,
-						exc_message=we.exc_message,
-						traceback=we.traceback,
-					),
+					body=we,
 				)
 			)
 		except Exception:

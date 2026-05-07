@@ -9,6 +9,8 @@ import anyio
 from msgspec import structs
 from redis.asyncio import Redis, RedisCluster
 
+from kuu._util import utcnow
+
 from .._types import _ensure_connected
 from ..exceptions import InvalidReceiptType, NotConnected
 from ..message import Message
@@ -153,7 +155,7 @@ class RedisBroker(Broker[RedisReceipt]):
 			raise NotConnected("redis broker not connected")
 
 		while True:
-			now = datetime.now(timezone.utc).timestamp()
+			now = utcnow().timestamp()
 			await asyncio.gather(
 				*[
 					_asyncify(self.r.evalsha)(
@@ -258,7 +260,7 @@ class RedisBroker(Broker[RedisReceipt]):
 		msg = structs.replace(delivery.message, attempt=delivery.message.attempt + 1)
 		async with self.r.pipeline() as pipe:  # pyrefly: ignore[bad-context-manager]
 			if delay and delay > 0:
-				when = datetime.now(timezone.utc).timestamp() + delay
+				when = utcnow().timestamp() + delay
 				pipe.zadd(self._zset(q), {self.serializer.marshal(msg): when})
 			else:
 				pipe.xadd(self._stream(q), {"m": self.serializer.marshal(msg)})

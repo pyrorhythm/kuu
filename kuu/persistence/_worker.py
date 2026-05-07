@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import time as _time
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import anyio
 
+from kuu._util import utcnow
 from kuu.observability._protocol import Event, EventKind, LogBatch
 from kuu.persistence._backend import PersistenceBackend
 
@@ -119,8 +121,8 @@ class PersistenceWorker:
 					queue=r["queue"],
 					instance_id=r["instance_id"],
 					worker_pid=r["worker_pid"],
-					args_repr=r.get("args_repr"),
-					kwargs_repr=r.get("kwargs_repr"),
+					args=r.get("args"),
+					kwargs=r.get("kwargs"),
 					started_at=r.get("started_at"),
 					finished_at=r.get("finished_at"),
 					time_elapsed=r.get("time_elapsed"),
@@ -181,17 +183,17 @@ class PersistenceWorker:
 				"queue": evt.queue,
 				"instance_id": instance_id,
 				"worker_pid": evt.worker_pid,
-				"started_at": _time.time(),
+				"started_at": utcnow(),
 			}
 			return
 
-		finish_ts = _time.time()
+		finish_ts = utcnow()
 		start_info = self._started.pop(mid, None)
-		time_elapsed: float | None = None
+		time_elapsed: timedelta | None = None
 		if start_info is not None:
 			started_at = start_info.get("started_at")
 			if started_at is not None:
-				time_elapsed = finish_ts - float(started_at)
+				time_elapsed = finish_ts - started_at
 		else:
 			start_info = {
 				"message_id": mid,
@@ -215,8 +217,8 @@ class PersistenceWorker:
 				"finished_at": finish_ts,
 				"time_elapsed": time_elapsed,
 				"status": status_map.get(kind, "failed"),
-				"args_repr": evt.args_repr,
-				"kwargs_repr": evt.kwargs_repr,
+				"args": evt.args,
+				"kwargs": evt.kwargs,
 				"exc_type": evt.exc_type,
 				"exc_message": evt.exc_message,
 				"traceback": evt.traceback,
@@ -229,7 +231,7 @@ class PersistenceWorker:
 				{
 					"message_id": rec.message_id,
 					"attempt": rec.attempt,
-					"ts": rec.ts,
+					"ts": datetime.fromtimestamp(rec.ts),
 					"level": rec.level,
 					"logger": rec.logger,
 					"message": rec.message,
@@ -243,7 +245,7 @@ class PersistenceWorker:
 			if stop_event.is_set():
 				return
 			try:
-				cutoff = _time.time() - (self._cfg.keep_days * 86400)
+				cutoff = utcnow() - timedelta(days=self._cfg.keep_days)
 				deleted = await self._backend.prune(cutoff)
 				if deleted > 0:
 					log.info(

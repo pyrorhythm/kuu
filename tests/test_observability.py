@@ -1,11 +1,27 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime as dt
+from datetime import timedelta
+from datetime import timezone as tz
 
 import pytest
 
-from kuu.observability import (BrokerInfo, Bye, Envelope, Event, Hello, InMemoryRegistry, JobSnapshot, PROTOCOL_VERSION,
-                               QueueSnapshot, State, WorkerSnapshot, envelope_from_bytes, envelope_to_bytes)
+from kuu.observability import (
+	PROTOCOL_VERSION,
+	BrokerInfo,
+	Bye,
+	Envelope,
+	Event,
+	Hello,
+	InMemoryRegistry,
+	JobSnapshot,
+	QueueSnapshot,
+	State,
+	WorkerSnapshot,
+	envelope_from_bytes,
+	envelope_to_bytes,
+)
 from kuu.observability._broker_key import broker_key
 
 pytestmark = pytest.mark.anyio
@@ -15,37 +31,37 @@ pytestmark = pytest.mark.anyio
 
 
 def _make_envelope(body) -> Envelope:
-	return Envelope(v=PROTOCOL_VERSION, instance="i-1", ts=time.time(), body=body)
+	return Envelope(v=PROTOCOL_VERSION, instance="i-1", ts=dt.now(tz=tz.utc), body=body)
 
 
 def _hello() -> Hello:
 	return Hello(
-			preset="dev",
-			host="h",
-			pid=42,
-			version="0.1.0",
-			started_at=time.time() - 100,
-			broker=BrokerInfo(type="MemoryBroker", key="abcd"),
-			scheduler_enabled=False,
-			processes=2,
+		preset="dev",
+		host="h",
+		pid=42,
+		version="0.1.0",
+		started_at=dt.now(tz=tz.utc) - timedelta(seconds=100),
+		broker=BrokerInfo(type="MemoryBroker", key="abcd"),
+		scheduler_enabled=False,
+		processes=2,
 	)
 
 
 class TestCodec:
 	@pytest.mark.parametrize(
-			"body",
-			[
-				_hello(),
-				Event(kind="succeeded", task="t", queue="q", worker_pid=10, elapsed=0.5),
-				Event(kind="failed", task="t", queue="q", worker_pid=10),  # default elapsed=None
-				State(),
-				State(
-						workers=[WorkerSnapshot(pid=1, alive=True), WorkerSnapshot(pid=2, alive=False)],
-						jobs=[JobSnapshot(id="j1", task="tt", next_run=999.0)],
-						queues={"q": QueueSnapshot(in_flight=3, depth=10)},
-				),
-				Bye(reason="manual"),
-			],
+		"body",
+		[
+			_hello(),
+			Event(kind="succeeded", task="t", queue="q", worker_pid=10, elapsed=0.5),
+			Event(kind="failed", task="t", queue="q", worker_pid=10),  # default elapsed=None
+			State(),
+			State(
+				workers=[WorkerSnapshot(pid=1, alive=True), WorkerSnapshot(pid=2, alive=False)],
+				jobs=[JobSnapshot(id="j1", task="tt", next_run=999.0)],
+				queues={"q": QueueSnapshot(in_flight=3, depth=10)},
+			),
+			Bye(reason="manual"),
+		],
 	)
 	def test_roundtrip(self, body) -> None:
 		env = _make_envelope(body)
@@ -56,11 +72,10 @@ class TestCodec:
 		assert type(decoded.body) is type(env.body)
 
 	def test_decoder_rejects_unknown_tag(self) -> None:
-		from msgspec import ValidationError, json as _json
+		from msgspec import ValidationError
+		from msgspec import json as _json
 
-		data = _json.encode(
-				{"v": 1, "instance": "x", "ts": 0, "body": {"type": "garbage"}}
-		)
+		data = _json.encode({"v": 1, "instance": "x", "ts": 0, "body": {"type": "garbage"}})
 		with pytest.raises(ValidationError):
 			envelope_from_bytes(data)
 
@@ -108,7 +123,7 @@ class TestInMemoryRegistry:
 		assert reg.all() == []
 
 	def test_stale_eviction_on_read(self) -> None:
-		reg = InMemoryRegistry(stale_after=0.05)
+		reg = InMemoryRegistry(stale_after=timedelta(seconds=0.05))
 		reg.ingest(_make_envelope(_hello()))
 		assert reg.get("i-1") is not None
 		time.sleep(0.1)

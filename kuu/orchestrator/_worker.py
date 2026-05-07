@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import anyio
 import anyio.to_thread
-from msgspec import Struct
 
 from kuu._import import import_object, import_tasks
 from kuu.app import Kuu
@@ -40,47 +39,6 @@ def _safe_repr(obj: Any) -> str | None:
 		return s
 	except Exception:
 		return "<unrepresentable>"
-
-
-def _args_repr(args: tuple[Any, ...]) -> str | None:
-	if not args:
-		return None
-	joined = ", ".join(_safe_repr(a) or "?" for a in args)
-	if len(joined) > _MAX_ARG_REPR:
-		return joined[:_MAX_ARG_REPR] + "...<truncated>"
-	return joined
-
-
-def _kwargs_repr(kwargs: dict[str, Any]) -> str | None:
-	if not kwargs:
-		return None
-	parts = [f"{k}={_safe_repr(v) or '?'}" for k, v in kwargs.items()]
-	joined = ", ".join(parts)
-	if len(joined) > _MAX_ARG_REPR:
-		return joined[:_MAX_ARG_REPR] + "...<truncated>"
-	return joined
-
-
-class WorkerEvent(Struct, frozen=True):
-	"""ipc record pushed by a worker subprocess onto the shared mp.Queue
-
-	the supervisor consumes these to update in-flight counters, current-task
-	tracking, and to build outgoing :class:`kuu.observability.Event` envelopes
-	"""
-
-	kind: WorkerEventKind
-	task: str
-	queue: str
-	ts: float
-	pid: int
-	elapsed: float | None = None
-	message_id: str | None = None
-	attempt: int | None = None
-	args_repr: str | None = None
-	kwargs_repr: str | None = None
-	exc_type: str | None = None
-	exc_message: str | None = None
-	traceback: str | None = None
 
 
 class WorkerPool:
@@ -207,10 +165,12 @@ def _install_event_forwarder(app: Kuu, q: mp.Queue) -> None:
 	"""push :class:`WorkerEvent` records onto the inter-process queue"""
 	import os
 
+	from kuu.observability import Event, EventKind
+
 	pid = os.getpid()
 
 	def _put(
-		kind: WorkerEventKind,
+		kind: EventKind,
 		task: str,
 		queue: str,
 		elapsed: float | None = None,
@@ -219,8 +179,8 @@ def _install_event_forwarder(app: Kuu, q: mp.Queue) -> None:
 	) -> None:
 		message_id: str | None = None
 		attempt: int | None = None
-		args_repr_val: str | None = None
-		kwargs_repr_val: str | None = None
+		args: Any = None
+		kwargs: Any = None
 		exc_type: str | None = None
 		exc_message: str | None = None
 		traceback_str: str | None = None
@@ -228,9 +188,9 @@ def _install_event_forwarder(app: Kuu, q: mp.Queue) -> None:
 			message_id = str(msg.id)
 			attempt = msg.attempt
 			if msg.payload.args:
-				args_repr_val = _args_repr(msg.payload.args)
+				args = msg.payload.args
 			if msg.payload.kwargs:
-				kwargs_repr_val = _kwargs_repr(msg.payload.kwargs)
+				kwargs = msg.payload.kwargs
 		if exc is not None:
 			exc_type = type(exc).__name__
 			exc_message_val = str(exc)
@@ -247,17 +207,16 @@ def _install_event_forwarder(app: Kuu, q: mp.Queue) -> None:
 			traceback_str = tb
 		try:
 			q.put_nowait(
-				WorkerEvent(
+				Event(
+					worker_pid=pid,
 					kind=kind,
 					task=task,
 					queue=queue,
-					ts=time.time(),
-					pid=pid,
 					elapsed=elapsed,
 					message_id=message_id,
 					attempt=attempt,
-					args_repr=args_repr_val,
-					kwargs_repr=kwargs_repr_val,
+					args=args,
+					kwargs=kwargs,
 					exc_type=exc_type,
 					exc_message=exc_message,
 					traceback=traceback_str,
@@ -266,11 +225,15 @@ def _install_event_forwarder(app: Kuu, q: mp.Queue) -> None:
 		except Exception:
 			pass
 
-	ev = app.events
-	ev.task_started.connect(lambda msg: _put("started", msg.task, msg.queue, msg=msg))
-	ev.task_succeeded.connect(
+	app.events.task_enqueued.connect(lambda msg: _put("enqueued", msg.task, msg.queue, msg=msg))
+	app.events.task_started.connect(lambda msg: _put("started", msg.task, msg.queue, msg=msg))
+	app.events.task_succeeded.connect(
 		lambda msg, elapsed: _put("succeeded", msg.task, msg.queue, elapsed=elapsed, msg=msg)
 	)
-	ev.task_failed.connect(lambda msg, exc: _put("failed", msg.task, msg.queue, msg=msg, exc=exc))
-	ev.task_retried.connect(lambda msg, delay: _put("retried", msg.task, msg.queue, msg=msg))
-	ev.task_dead.connect(lambda msg: _put("dead", msg.task, msg.queue, msg=msg))
+	app.events.task_failed.connect(
+		lambda msg, exc: _put("failed", msg.task, msg.queue, msg=msg, exc=exc)
+	)
+	app.events.task_retried.connect(
+		lambda msg, delay: _put("retried", msg.task, msg.queue, msg=msg)
+	)
+	app.events.task_dead.connect(lambda msg: _put("dead", msg.task, msg.queue, msg=msg))

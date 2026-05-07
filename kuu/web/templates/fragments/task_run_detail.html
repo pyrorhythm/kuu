@@ -67,8 +67,8 @@
 				+'<td>'+elapsed+'</td>'
 				+'<td class="mono-cell exc-cell" title="'+esc(exc)+'">'+esc(exc)+'</td>'
 				+'<td class="action-cell"><button class="btn btn-primary btn-tiny view-logs-btn">logs</button></td></tr>';
-			const args = a.args_repr ? '<div class="detail-section"><div class="detail-label">args</div><pre class="detail-pre">'+esc(a.args_repr)+'</pre></div>' : '';
-			const kwargs = a.kwargs_repr ? '<div class="detail-section"><div class="detail-label">kwargs</div><pre class="detail-pre">'+esc(a.kwargs_repr)+'</pre></div>' : '';
+			const args = a.args ? '<div class="detail-section"><div class="detail-label">args</div><pre class="detail-pre">'+esc(a.args)+'</pre></div>' : '';
+			const kwargs = a.kwargs ? '<div class="detail-section"><div class="detail-label">kwargs</div><pre class="detail-pre">'+esc(a.kwargs)+'</pre></div>' : '';
 			const trace = a.traceback ? '<div class="detail-section"><div class="detail-label">traceback</div><pre class="detail-pre traceback">'+esc(a.traceback)+'</pre></div>' : '';
 			const excMsg = a.exc_message&&!a.traceback ? '<div class="detail-section"><div class="detail-label">error</div><pre class="detail-pre">'+esc(a.exc_message)+'</pre></div>' : '';
 			const empty = !args && !kwargs && !trace && !excMsg

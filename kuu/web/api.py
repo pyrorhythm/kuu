@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import typing
 import uuid
+from datetime import datetime, timezone
 
 from msgspec import to_builtins
 from starlette.requests import Request
@@ -156,8 +157,8 @@ class DashbordAPIMixin:
 			rows = await be.query_runs(
 				task=task or None,
 				status=status or None,
-				before=float(before) if before else None,
-				after=float(after) if after else None,
+				before=datetime.fromtimestamp(float(before), tz=timezone.utc) if before else None,
+				after=datetime.fromtimestamp(float(after), tz=timezone.utc) if after else None,
 				limit=limit,
 				offset=offset,
 			)
@@ -211,7 +212,9 @@ class DashbordAPIMixin:
 		after_ts = float(qp.get("after_ts", "0"))
 
 		try:
-			rows = await be.query_logs(message_id, attempt, limit=limit, after_ts=after_ts)
+			rows = await be.query_logs(
+				message_id, attempt, limit=limit, after_dt=datetime.fromtimestamp(after_ts)
+			)
 		except Exception as exc:
 			return Err(str(exc), 500)
 
@@ -272,8 +275,8 @@ def _run_to_dict(r: typing.Any) -> dict:
 		"queue": r.queue,
 		"instance_id": r.instance_id,
 		"worker_pid": r.worker_pid,
-		"args_repr": r.args_repr,
-		"kwargs_repr": r.kwargs_repr,
+		"args": r.args,
+		"kwargs": r.kwargs,
 		"started_at": r.started_at,
 		"finished_at": r.finished_at,
 		"time_elapsed": r.time_elapsed,

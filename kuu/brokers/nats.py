@@ -10,6 +10,8 @@ from nats.aio.msg import Msg
 from nats.js import JetStreamContext
 from nats.js.api import ConsumerConfig, RetentionPolicy, StreamConfig
 
+from kuu._util import utcnow
+
 from .._types import _ensure_connected
 from ..exceptions import InvalidReceiptType
 from ..message import Message
@@ -147,7 +149,7 @@ class NatsBroker(Broker[NatsReceipt]):
 	async def _pump_scheduled(self) -> None:
 		while True:
 			async with self._sched_lock:
-				now = datetime.now(timezone.utc).timestamp()
+				now = utcnow().timestamp()
 				due: list[Message] = []
 				while self._scheduled and self._scheduled[0][0] <= now:
 					due.append(self._scheduled.pop(0)[1])

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import logging
 import signal
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import anyio
 
+from kuu._util import utcnow
 
 from ..message import Payload
 from ..task import Task
@@ -38,7 +39,7 @@ class Scheduler:
 		headers: dict[str, str] | None = None,
 		max_attempts: int | None = None,
 	) -> IntervalJob:
-		now = datetime.now(timezone.utc)
+		now = utcnow()
 		job = IntervalJob(
 			id=id or f"interval:{self._resolve(task)}:{len(self.jobs)}",
 			task_name=self._resolve(task),
@@ -71,7 +72,7 @@ class Scheduler:
 			headers=headers,
 			max_attempts=max_attempts,
 			schedule=schedule,
-			next_run=schedule.next_after(datetime.now(timezone.utc)),
+			next_run=schedule.next_after(utcnow()),
 		)
 		self.jobs.append(job)
 		return job
@@ -104,7 +105,7 @@ class Scheduler:
 		if not self.jobs:
 			log.warning("scheduler started with no jobs")
 		while True:
-			now = datetime.now(timezone.utc)
+			now = utcnow()
 			if not self.jobs:
 				await anyio.sleep(1.0)
 				continue
@@ -112,7 +113,7 @@ class Scheduler:
 			delay = (earliest - now).total_seconds()
 			if delay > 0.001:
 				await anyio.sleep(min(max(delay, 0), 60.0))
-			now = datetime.now(timezone.utc)
+			now = utcnow()
 			for job in self.jobs:
 				if job.next_run <= now:
 					try:

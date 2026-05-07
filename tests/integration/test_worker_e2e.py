@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from typing import Any
 
 import anyio
 import pytest
 from msgspec import Struct
 
+from kuu._util import utcnow
 from kuu.app import Kuu
 from kuu.config import Settings
 from kuu.exceptions import TaskError
@@ -160,7 +161,7 @@ async def test_e2e_scheduled_task_delivered_after_delay(make_app):
 		delivered_at.append(anyio.current_time())
 
 	sent_at = anyio.current_time()
-	when = datetime.now(timezone.utc) + timedelta(milliseconds=300)
+	when = utcnow() + timedelta(milliseconds=300)
 	msg = Message(task=delayed.task_name, queue="default", payload=Payload(), not_before=when)
 	await app.broker.schedule(msg, when)
 
@@ -312,7 +313,7 @@ async def test_e2e_mixed_immediate_and_scheduled(make_app):
 
 	await record.q("immediate")
 
-	when = datetime.now(timezone.utc) + timedelta(milliseconds=400)
+	when = utcnow() + timedelta(milliseconds=400)
 	msg = Message(
 		task=record.task_name,
 		queue="default",

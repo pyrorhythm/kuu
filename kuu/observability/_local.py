@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import multiprocessing as mp
-import time
 from collections.abc import AsyncIterator
+from datetime import datetime, timedelta
 from queue import Empty as _QueueEmpty
 
 import anyio
 import anyio.lowlevel
 
+from kuu._util import utcnow
 from kuu.observability._protocol import (
 	Bye,
 	Envelope,
@@ -16,7 +17,7 @@ from kuu.observability._protocol import (
 	State,
 )
 
-_STALE_AFTER = 5.0
+_STALE_AFTER = timedelta(seconds=5.0)
 
 
 class MpQueueSink:
@@ -64,7 +65,7 @@ class MpQueueSource:
 
 
 class InMemoryRegistry:
-	def __init__(self, stale_after: float = _STALE_AFTER) -> None:
+	def __init__(self, stale_after: timedelta = _STALE_AFTER) -> None:
 		self._entries: dict[str, _Entry] = {}
 		self._stale_after = stale_after
 
@@ -100,7 +101,7 @@ class InMemoryRegistry:
 		return [e.snapshot() for e in self._entries.values()]
 
 	def _evict_stale(self) -> None:
-		now = time.time()
+		now = utcnow()
 		dead = [iid for iid, e in self._entries.items() if now - e.last_seen > self._stale_after]
 		for iid in dead:
 			del self._entries[iid]
@@ -114,7 +115,7 @@ class _Entry:
 		instance_id: str,
 		hello: Hello,
 		last_state: State | None,
-		last_seen: float,
+		last_seen: datetime,
 	) -> None:
 		self.instance_id = instance_id
 		self.hello = hello
