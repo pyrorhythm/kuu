@@ -67,7 +67,7 @@
 			const mid = r.message_id||'-';
 			const midShort = mid.length>12 ? mid.slice(0,12)+'…' : mid;
 			const elapsed = r.time_elapsed!=null ? r.time_elapsed.toFixed(2)+'s' : '-';
-			const finished = r.finished_at!=null ? new Date(r.finished_at*1000).toISOString().replace('T',' ').slice(0,19) : '-';
+			const finished = r.finished_at!=null ? new Date(r.finished_at).toISOString().replace('T',' ').slice(0,19) : '-';
 			const sc = sb(r.status);
 			h += '<tr class="task-run-row" data-mid="'+esc(mid)+'" style="cursor:pointer">'
 				+'<td>'+esc(r.task)+'</td>'

@@ -118,7 +118,6 @@
 	function loadLogs(){
 		const body=document.getElementById('log-stream-body');
 		const surface=document.getElementById('log-stream-surface');
-		// detached or hidden - stop polling
 		if(!body || !surface || surface.style.display==='none'){
 			clearTimer();
 			return;
@@ -163,7 +162,7 @@
 	}
 
 	function lvlLabel(l){ return ({10:'DBG',20:'INF',30:'WRN',40:'ERR',50:'CRT'})[l]||String(l); }
-	function ts(v){ return new Date(v*1000).toISOString().replace('T',' ').slice(0,19); }
+	function ts(v){ return new Date(v).toISOString().replace('T',' ').slice(0,19); }
 	function sbc(s){
 		if(s==='succeeded') return 'sb-ok';
 		if(s==='failed'||s==='dead') return 'sb-err';
