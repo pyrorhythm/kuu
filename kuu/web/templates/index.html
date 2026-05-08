@@ -5,23 +5,23 @@
 <div hx-get="fragments/stats" hx-trigger="load, every 2s" hx-swap="innerHTML">
 	<div class="stat-strip">
 		<div class="stat-cell">
-			<div class="stat-num dim">—</div>
+			<div class="stat-num dim">-</div>
 			<div class="stat-key">enqueued</div>
 		</div>
 		<div class="stat-cell">
-			<div class="stat-num dim">—</div>
+			<div class="stat-num dim">-</div>
 			<div class="stat-key">succeeded</div>
 		</div>
 		<div class="stat-cell">
-			<div class="stat-num dim">—</div>
+			<div class="stat-num dim">-</div>
 			<div class="stat-key">failed</div>
 		</div>
 		<div class="stat-cell">
-			<div class="stat-num dim">—</div>
+			<div class="stat-num dim">-</div>
 			<div class="stat-key">retried</div>
 		</div>
 		<div class="stat-cell">
-			<div class="stat-num dim">—</div>
+			<div class="stat-num dim">-</div>
 			<div class="stat-key">dead</div>
 		</div>
 	</div>
@@ -155,7 +155,7 @@
 				const r = await fetch('api/activity');
 				const d = await r.json();
 				chart.setOption({
-					xAxis: { data: d.times.map(t => new Date(t * 1000).toLocaleTimeString()) },
+					xAxis: { data: d.times.map(t => new Date(t).toLocaleTimeString()) },
 					series: [
 						{ name: 'enqueued', data: d.enqueued },
 						{ name: 'succeeded', data: d.succeeded },

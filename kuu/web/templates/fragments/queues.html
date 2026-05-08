@@ -13,7 +13,7 @@
     <tr>
       <td class="mono-cell">{{ q.name }}</td>
       <td>{{ q.in_flight }}</td>
-      <td class="dim">{{ q.depth if q.depth is not none else "—" }}</td>
+      <td class="dim">{{ q.depth if q.depth is not none else "-" }}</td>
       <td class="dim">{{ q.instances }}</td>
     </tr>
     {% endfor %}

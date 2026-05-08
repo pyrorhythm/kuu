@@ -64,7 +64,7 @@ class DashboardFragmentsMixin:
 		return HTMLResponse(self._render("fragments/queues.html", queues=rows))
 
 	def _tasks_by_broker(self) -> list[dict]:
-		"""group tasks by unique broker key — presets sharing a broker collapse
+		"""group tasks by unique broker key - presets sharing a broker collapse
 		into one group, since they serve the same task registry"""
 		if self.registry is not None:
 			groups: dict[str, dict] = {}
@@ -195,9 +195,7 @@ class DashboardFragmentsMixin:
 
 	async def _frag_task_run_detail(self, request: Request) -> HTMLResponse:
 		mid = request.query_params.get("message_id", "")
-		return HTMLResponse(
-			self._render("fragments/task_run_detail.html", message_id=mid)
-		)
+		return HTMLResponse(self._render("fragments/task_run_detail.html", message_id=mid))
 
 	# ── broker ──────────────────────────────────────────────────────
 

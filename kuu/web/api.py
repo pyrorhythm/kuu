@@ -167,7 +167,7 @@ class DashbordAPIMixin:
 
 		return Ok(
 			{
-				"rows": [_run_to_dict(r) for r in rows],
+				"rows": [r.asdict() for r in rows],
 				"limit": limit,
 				"offset": offset,
 			}
@@ -191,7 +191,7 @@ class DashbordAPIMixin:
 		return Ok(
 			{
 				"message_id": mid,
-				"attempts": [_run_to_dict(r) for r in rows],
+				"attempts": [r.asdict() for r in rows],
 			}
 		)
 
@@ -222,7 +222,7 @@ class DashbordAPIMixin:
 			{
 				"message_id": message_id,
 				"attempt": attempt,
-				"logs": [_log_to_dict(r) for r in rows],
+				"logs": [r.asdict() for r in rows],
 			}
 		)
 
@@ -266,38 +266,6 @@ class DashbordAPIMixin:
 		)
 
 
-def _run_to_dict(r: typing.Any) -> dict:
-	return {
-		"id": r.id,
-		"message_id": r.message_id,
-		"attempt": r.attempt,
-		"task": r.task,
-		"queue": r.queue,
-		"instance_id": r.instance_id,
-		"worker_pid": r.worker_pid,
-		"args": r.args,
-		"kwargs": r.kwargs,
-		"started_at": r.started_at,
-		"finished_at": r.finished_at,
-		"time_elapsed": r.time_elapsed,
-		"status": r.status,
-		"exc_type": r.exc_type,
-		"exc_message": r.exc_message,
-		"traceback": r.traceback,
-	}
-
-
-def _log_to_dict(r: typing.Any) -> dict:
-	return {
-		"message_id": r.message_id,
-		"attempt": r.attempt,
-		"ts": r.ts,
-		"level": r.level,
-		"logger": r.logger,
-		"message": r.message,
-	}
-
-
 async def _route(control: "ControlPlane", instance: str, cmd: typing.Any) -> JSONResponse:
 	try:
 		resp = await control.send_command(instance, cmd)
@@ -315,5 +283,4 @@ class Ok(JSONResponse):
 
 class Err(JSONResponse):
 	def __init__(self, error: str, status_code: int = 400, **kwargs):
-		content = {"error": error}
-		super().__init__(content, status_code, **kwargs)
+		super().__init__({"error": error}, status_code, **kwargs)

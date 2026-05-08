@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Self
 
 from asyncpg import Connection, Pool, exceptions
@@ -18,10 +18,6 @@ from kuu.persistence._rows import (
 	to_naive,
 	validate_table_name,
 )
-
-
-def _dec_if_b(v: Any) -> str | None:
-	return v.decode() if isinstance(v, bytes) else str(v) if v else None
 
 
 class _PoolAcqCtxProxy(PoolAcquireContext):
@@ -186,30 +182,6 @@ class PostgresBackend(PersistenceBackend):
 		"time_elapsed, status, exc_type, exc_message, traceback"
 	)
 
-	@staticmethod
-	def _row_to_run(row: Any) -> RunRow:
-		"""Convert an asyncpg Record to a RunRow, making timestamps UTC-aware."""
-		started = row.get("started_at")
-		finished = row.get("finished_at")
-		return RunRow(
-			id=row["id"],
-			message_id=row["message_id"],
-			attempt=row["attempt"],
-			task=row["task"],
-			queue=row["queue"],
-			instance_id=row["instance_id"],
-			worker_pid=row["worker_pid"],
-			args=row["args"],
-			kwargs=row["kwargs"],
-			started_at=started.replace(tzinfo=timezone.utc) if started is not None else None,
-			finished_at=finished.replace(tzinfo=timezone.utc) if finished is not None else None,
-			time_elapsed=row["time_elapsed"],
-			status=row["status"],
-			exc_type=row["exc_type"],
-			exc_message=row["exc_message"],
-			traceback=row["traceback"],
-		)
-
 	async def write_runs(self, runs: list[RunRow]) -> None:
 		if not runs:
 			return
@@ -232,26 +204,7 @@ class PostgresBackend(PersistenceBackend):
 						exc_message = EXCLUDED.exc_message,
 						traceback = EXCLUDED.traceback
 				""",
-				[
-					(
-						r.message_id,
-						r.attempt,
-						r.task,
-						r.queue,
-						r.instance_id,
-						r.worker_pid,
-						_dec_if_b(r.args),
-						_dec_if_b(r.kwargs),
-						to_naive(r.started_at),
-						to_naive(r.finished_at),
-						r.time_elapsed,
-						r.status,
-						r.exc_type,
-						r.exc_message,
-						r.traceback,
-					)
-					for r in runs
-				],
+				[r.astuple() for r in runs],
 			)
 
 	async def write_logs(self, logs: list[LogRow]) -> None:
@@ -265,10 +218,7 @@ class PostgresBackend(PersistenceBackend):
 				  (message_id, attempt, ts, level, logger, message)
 					VALUES ($1, $2, $3, $4, $5, $6)
 				""",
-				[
-					(lr.message_id, lr.attempt, to_naive(lr.ts), lr.level, lr.logger, lr.message)
-					for lr in logs
-				],
+				[lr.astuple() for lr in logs],
 			)
 
 	async def query_runs(
@@ -315,7 +265,7 @@ class PostgresBackend(PersistenceBackend):
 				""",
 				*params,
 			)
-		return [self._row_to_run(r) for r in rows]
+		return [RunRow.fromrecord(r) for r in rows]
 
 	async def query_run_attempts(self, message_id: str) -> list[RunRow]:
 		assert self._pool is not None
@@ -329,7 +279,7 @@ class PostgresBackend(PersistenceBackend):
 				""",
 				message_id,
 			)
-		return [self._row_to_run(r) for r in rows]
+		return [RunRow.fromrecord(r) for r in rows]
 
 	async def query_logs(
 		self,
@@ -359,17 +309,7 @@ class PostgresBackend(PersistenceBackend):
 				limit,
 				*params,
 			)
-		return [
-			LogRow(
-				message_id=r["message_id"],
-				attempt=r["attempt"],
-				ts=r["ts"],
-				level=r["level"],
-				logger=r["logger"],
-				message=r["message"],
-			)
-			for r in rows
-		]
+		return [LogRow.fromrecord(r) for r in rows]
 
 	async def prune(self, before_ts: datetime) -> int:
 		assert self._pool is not None

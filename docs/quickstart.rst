@@ -12,7 +12,9 @@ Quickstart
 
 
    # myapp/tasks.py
+   from datetime import timedelta
    from typing import TypedDict
+
    from .app import app
 
 
@@ -26,7 +28,7 @@ Quickstart
        return {"ok": True, "charged": amount_cents}
 
 
-   @app.schedule.cron(expr="* * */4 * * *")
+   @app.every(timedelta(hours=4))
    async def refresh_balance() -> None: ...
 
 

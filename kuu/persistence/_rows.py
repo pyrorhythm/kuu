@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Literal, overload
+from typing import Any, Literal, Self, overload
 
+from asyncpg.protocol import Record
 from msgspec import Struct, field
 
 from kuu._util import utcnow
@@ -54,6 +55,67 @@ class RunRow(Struct, frozen=True):
 	exc_message: str | None = None
 	traceback: str | None = None
 
+	def astuple(self) -> tuple:
+		return (
+			self.message_id,
+			self.attempt,
+			self.task,
+			self.queue,
+			self.instance_id,
+			self.worker_pid,
+			self.args.decode()
+			if isinstance(self.args, bytes)
+			else str(self.args)
+			if self.args
+			else None,
+			self.kwargs.decode()
+			if isinstance(self.kwargs, bytes)
+			else str(self.kwargs)
+			if self.kwargs
+			else None,
+			to_naive(self.started_at),
+			to_naive(self.finished_at),
+			self.time_elapsed,
+			self.status,
+			self.exc_type,
+			self.exc_message,
+			self.traceback,
+		)
+
+	def asdict(self) -> dict:
+		return {
+			"id": self.id,
+			"message_id": self.message_id,
+			"attempt": self.attempt,
+			"task": self.task,
+			"queue": self.queue,
+			"instance_id": self.instance_id,
+			"worker_pid": self.worker_pid,
+			"args": self.args,
+			"kwargs": self.kwargs,
+			"started_at": self.started_at.isoformat() if self.started_at else None,
+			"finished_at": self.finished_at.isoformat() if self.finished_at else None,
+			"time_elapsed": self.time_elapsed.total_seconds() if self.time_elapsed else None,
+			"status": self.status,
+			"exc_type": self.exc_type,
+			"exc_message": self.exc_message,
+			"traceback": self.traceback,
+		}
+
+	@classmethod
+	def fromrecord(cls, row: Record) -> Self:
+		rd = dict(row)
+		rd.update(
+			started_at=started.replace(tzinfo=timezone.utc)
+			if (started := rd.get("started_at"))
+			else None,
+			finished_at=finished.replace(tzinfo=timezone.utc)
+			if (finished := rd.get("finished_at"))
+			else None,
+		)
+
+		return RunRow(**rd)
+
 
 class LogRow(Struct, frozen=True):
 	message_id: str = ""
@@ -62,3 +124,32 @@ class LogRow(Struct, frozen=True):
 	level: int = 0
 	logger: str = ""
 	message: str = ""
+
+	def astuple(self) -> tuple:
+		return (
+			self.message_id,
+			self.attempt,
+			to_naive(self.ts),
+			self.level,
+			self.logger,
+			self.message,
+		)
+
+	def asdict(self) -> dict:
+		return {
+			"message_id": self.message_id,
+			"attempt": self.attempt,
+			"ts": self.ts.isoformat() if self.ts else None,
+			"level": self.level,
+			"logger": self.logger,
+			"message": self.message,
+		}
+
+	@classmethod
+	def fromrecord(cls, row: Record) -> Self:
+		rd = dict(row)
+		rd.update(
+			ts=ts.replace(tzinfo=timezone.utc) if (ts := rd.get("ts")) else None,
+		)
+
+		return LogRow(**rd)

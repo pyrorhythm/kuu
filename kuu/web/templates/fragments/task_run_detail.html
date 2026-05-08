@@ -54,9 +54,9 @@
 			+'<th>#</th><th>status</th><th>started</th><th>finished</th>'
 			+'<th>elapsed</th><th class="exc-col">exc</th><th></th></tr></thead><tbody>';
 		for(const a of attempts){
-			const started = a.started_at ? ts(a.started_at) : '—';
-			const finished = a.finished_at ? ts(a.finished_at) : '—';
-			const elapsed = a.time_elapsed!=null ? a.time_elapsed.toFixed(2)+'s' : '—';
+			const started = a.started_at ? ts(a.started_at) : '-';
+			const finished = a.finished_at ? ts(a.finished_at) : '-';
+			const elapsed = a.time_elapsed!=null ? a.time_elapsed.toFixed(2)+'s' : '-';
 			const sc = sbc(a.status);
 			const exc = a.exc_type||'';
 			h += '<tr class="attempt-row" data-attempt="'+a.attempt+'" title="click to expand">'
@@ -118,7 +118,7 @@
 	function loadLogs(){
 		const body=document.getElementById('log-stream-body');
 		const surface=document.getElementById('log-stream-surface');
-		// detached or hidden — stop polling
+		// detached or hidden - stop polling
 		if(!body || !surface || surface.style.display==='none'){
 			clearTimer();
 			return;

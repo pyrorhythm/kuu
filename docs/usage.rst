@@ -18,8 +18,8 @@ Defining the App
        results=RedisResults(url="redis://localhost:6379/0"),
    )
 
-``Kuu`` owns transport (``broker``), result storage (``results``), middleware,
-the task registry and the event bus.
+``Kuu`` owns the broker, result storage (``results``), middleware, the task
+registry, event bus, and scheduler.
 
 Tasks
 -----
@@ -163,6 +163,9 @@ Brokers
 -------
 
 Three brokers are bundled, all implementing the same ``Broker`` Protocol.
+For advanced connection management (cluster, sentinel, connection pooling),
+brokers and result backends accept a pre-built ``Transport`` via their
+``transport=`` parameter.
 
 Redis Streams
 ~~~~~~~~~~~~~
@@ -366,7 +369,7 @@ Schedule jobs use composable schedule objects instead of cron expressions:
    @app.sched(every(minutes=30) & between(time(9), time(17)))
    async def office_hours_job() -> None: ...
 
-Schedule objects compose with ``&`` (AND — all must match) and ``|`` (OR —
+Schedule objects compose with ``&`` (AND - all must match) and ``|`` (OR -
 any matches):
 
 .. list-table::
@@ -379,11 +382,11 @@ any matches):
    * - ``every(*, hours, minutes, seconds, starting)``
      - Fixed interval within each day
    * - ``on(*weekdays)``
-     - Restrict to specific weekdays (Mon–Sun)
+     - Restrict to specific weekdays (Mon-Sun)
    * - ``on_day(*days)``
-     - Restrict to days of month (1–31)
+     - Restrict to days of month (1-31)
    * - ``in_month(*months)``
-     - Restrict to specific months (Jan–Dec)
+     - Restrict to specific months (Jan-Dec)
    * - ``between(start, end)``
      - Restrict to time window within each day
 
@@ -405,12 +408,7 @@ encoders/decoders can be registered via :class:`kuu.marshal.Marshal`.
 Msgpack
 ~~~~~~~
 
-Faster and more compact than JSON for binary payloads. Requires the
-``msgspec`` extra:
-
-.. code-block:: shell
-
-   uv add "kuu[msgspec]"
+Faster and more compact than JSON for binary payloads.
 
 .. code-block:: python
 
@@ -448,6 +446,121 @@ Implement the ``Serializer`` protocol:
    class MySerializer:
        def marshal(self, data) -> bytes: ...
        def unmarshal(self, data: bytes, into=None): ...
+
+Marshal / Type Coercion
+-----------------------
+
+The global :class:`kuu.marshal.marshal` singleton extends msgspec's
+encode/decode hooks with custom type support. Register encoders and
+decoders once; the broker, result backend, and persistence layer all
+pick them up automatically.
+
+.. code-block:: python
+
+   from datetime import datetime, timezone
+   from kuu.marshal import marshal
+
+   # encode datetime → ISO 8601 string
+   marshal.register(
+       datetime,
+       enc=lambda dt: dt.astimezone(timezone.utc).isoformat(),
+       dec=lambda typ, s: datetime.fromisoformat(s),
+   )
+
+   # encode Path → string
+   from pathlib import Path
+   marshal.register(Path, enc=str, dec=lambda typ, s: Path(s))
+
+Call :meth:`marshal.unregister(type)` to remove a codec.
+
+Persistence
+-----------
+
+Run and log history is stored automatically when ``[persistence] enable =
+true`` (the default). Two backends ship:
+
+- **SQLite** - zero-config, single-file (``sqlite:///./kuu.db``)
+- **PostgreSQL** - requires the ``postgres`` extra (``postgres://user:pass@host/db``)
+
+.. code-block:: toml
+
+   [default.persistence]
+   enable = true
+   dsn = "postgres://user:pass@localhost:5432/kuu"
+   schema = "kuu"
+   runs_table = "kuu_runs"
+   logs_table = "kuu_run_logs"
+   keep_days = 7
+   max_runs = 100_000
+   log_level = "INFO"
+   capture_args = true
+
+The dashboard exposes run history under each registered task. Runs older
+than ``keep_days`` are purged periodically. ``max_runs`` caps total stored
+runs.
+
+PostgreSQL Result Backend
+-------------------------
+
+When using PostgreSQL as the broker transport, you can also store task
+results in PostgreSQL via :class:`kuu.results.postgres.PostgresResults`.
+Requires the ``postgres`` extra.
+
+.. code-block:: python
+
+   from kuu.transports.postgres import PostgresTransport, PostgresConfig
+   from kuu.brokers.redis import RedisBroker  # or any broker
+   from kuu.results.postgres import PostgresResults
+
+   transport = PostgresTransport(PostgresConfig(
+       dsn="postgres://user:pass@localhost:5432/kuu",
+   ))
+   results = PostgresResults(transport=transport)
+   app = Kuu(broker=RedisBroker(url=...), results=results)
+
+``PostgresResults`` uses ``LISTEN/NOTIFY`` for instant result delivery
+instead of polling. Falls back to polling if the notification channel
+drops.
+
+Observability / Control Plane
+-----------------------------
+
+When ``kuu start`` runs without ``--preset``, it launches a *control
+plane* that forks one supervisor per preset. Each supervisor emits
+structured state snapshots (workers, queues, jobs) and task lifecycle
+events.
+
+WebSocket Uplink
+~~~~~~~~~~~~~~~~
+
+A leaf supervisor can stream events to a remote dashboard collector
+via WebSocket:
+
+.. code-block:: shell
+
+   export KUU_DASHBOARD_URL="ws://dashboard.example.com/collect"
+   export KUU_DASHBOARD_TOKEN="<auth-token>"
+   uv run kuu start -p prod
+
+Or pass it directly:
+
+.. code-block:: shell
+
+   uv run kuu start -p prod --uplink ws://dashboard.example.com/collect
+
+Test-time inspection
+~~~~~~~~~~~~~~~~~~~~
+
+The :mod:`kuu.observability` module exposes the protocol types for building
+custom tooling:
+
+.. code-block:: python
+
+   from kuu.observability import (
+       Envelope, Event, State, Hello, Bye,
+       WorkerSnapshot, QueueSnapshot, JobSnapshot, TaskInfo,
+       envelope_to_bytes, envelope_from_bytes,
+   )
 
 Prometheus Metrics
 ------------------

@@ -30,6 +30,17 @@ compat (keys land in ``[default]`` automatically).
        enable = true
        path = "/"
 
+   [default.persistence]
+       enable = true
+       dsn = "sqlite:///./kuu.db"
+       schema = ""
+       runs_table = "kuu_runs"
+       logs_table = "kuu_run_logs"
+       keep_days = 7
+       max_runs = 100_000
+       log_level = "INFO"
+       capture_args = true
+
    [default.watch]
        enable = true
        root = "."

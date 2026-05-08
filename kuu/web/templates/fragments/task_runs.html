@@ -19,7 +19,7 @@
 	</table>
 </div>
 <div class="tasks-foot" id="task-runs-foot">
-	<div class="tasks-page-info" id="task-runs-page">—</div>
+	<div class="tasks-page-info" id="task-runs-page">-</div>
 	<div style="display:flex;gap:var(--s-1)">
 		<button class="btn" id="tr-btn-prev" disabled
 			hx-get="fragments/task-runs" hx-trigger="click" hx-target="#task-runs-frag" hx-swap="innerHTML"
@@ -50,7 +50,7 @@
 				if(!d.rows) return;
 				renderRows(d.rows);
 				const pi = document.getElementById('task-runs-page');
-				if(pi) pi.textContent = d.rows.length===0 ? 'no runs' : ('showing '+_offset+'–'+(_offset+d.rows.length));
+				if(pi) pi.textContent = d.rows.length===0 ? 'no runs' : ('showing '+_offset+'-'+(_offset+d.rows.length));
 				const bp = document.getElementById('tr-btn-prev');
 				const bn = document.getElementById('tr-btn-next');
 				if(bp) bp.disabled = _offset===0;
@@ -64,17 +64,17 @@
 		if(!rows.length){ tbody.innerHTML='<tr><td colspan="7" class="placeholder">no runs</td></tr>'; return; }
 		let h='';
 		for(const r of rows){
-			const mid = r.message_id||'—';
+			const mid = r.message_id||'-';
 			const midShort = mid.length>12 ? mid.slice(0,12)+'…' : mid;
-			const elapsed = r.time_elapsed!=null ? r.time_elapsed.toFixed(2)+'s' : '—';
-			const finished = r.finished_at!=null ? new Date(r.finished_at*1000).toISOString().replace('T',' ').slice(0,19) : '—';
+			const elapsed = r.time_elapsed!=null ? r.time_elapsed.toFixed(2)+'s' : '-';
+			const finished = r.finished_at!=null ? new Date(r.finished_at*1000).toISOString().replace('T',' ').slice(0,19) : '-';
 			const sc = sb(r.status);
 			h += '<tr class="task-run-row" data-mid="'+esc(mid)+'" style="cursor:pointer">'
 				+'<td>'+esc(r.task)+'</td>'
 				+'<td><span class="status-badge '+sc+'">'+esc(r.status)+'</span></td>'
 				+'<td class="mono-cell">'+esc(midShort)+'</td>'
 				+'<td class="dim">'+r.attempt+'</td>'
-				+'<td class="mono-cell dim">'+esc((r.instance_id||'—').slice(0,12))+'…</td>'
+				+'<td class="mono-cell dim">'+esc((r.instance_id||'-').slice(0,12))+'…</td>'
 				+'<td>'+elapsed+'</td>'
 				+'<td class="dim">'+finished+'</td></tr>';
 		}

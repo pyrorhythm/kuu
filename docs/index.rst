@@ -9,7 +9,7 @@
 kuu
 ===
 
-  /kuː/ — Finnish, noun. Moon.
+  /kuː/ - Finnish, noun. Moon.
 
 A native distributed task queue for Python.
 

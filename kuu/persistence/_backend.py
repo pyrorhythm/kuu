@@ -40,7 +40,7 @@ class PersistenceBackend(Protocol):
 
 
 class NoopBackend:
-	"""backend that does nothing — used when persistence is disabled"""
+	"""backend that does nothing - used when persistence is disabled"""
 
 	async def connect(self) -> None:
 		pass

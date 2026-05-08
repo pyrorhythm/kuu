@@ -15,10 +15,8 @@
 
 ```shell
 uv add kuu
-# extras: msgspec, nats, prometheus, redis, dashboard
+# extras: dashboard, nats, postgres, prometheus, redis
 ```
-
-nothing serious in this project, just got tired of taskiq's undefined behaviour and `logging.getLogger("root")`
 
 ## quick start
 
@@ -32,6 +30,8 @@ app = Kuu(broker=RedisBroker(url=...), results=RedisResults(url=...))
 
 
 # myapp/tasks.py
+from typing import TypedDict
+from datetime import timedelta
 from .app import app
 
 
@@ -45,7 +45,7 @@ async def charge(user_id: int, amount_cents: int) -> ChargeResult:
     return {"ok": True, "charged": amount_cents}
 
 
-@app.schedule.cron(expr="* * */4 * * *")
+@app.sched(every(hours=4, starting=time(hours=1, minutes=30))) # 1:30, 5:30, 9:30...
 async def refresh_balance() -> None: ...
 
 
@@ -54,22 +54,34 @@ from .tasks import charge
 
 
 async def run() -> None:
-    # type checker will automatically infer here
-    # that handle is type of TaskHandle[ChargeResult]
-    # args/kwargs of the task also remain typed
+    # type checker infers TaskHandle[ChargeResult]
+    # args/kwargs of the task remain typed
     handle = await charge.q(user_id=1, amount_cents=500)
 
-    # type checker will infer ChargeResult
+    # type checker infers ChargeResult
     result = await handle.result(timeout=30)
 ```
 
 ```sh
 # reads ./kuunfig.toml or [tool.kuu] in ./pyproject.toml
+# starts control plane with all presets spawned
 uv run kuu start
 
-# pick a preset and override specific settings
-uv run kuu start -p prod -o concurrency=128 -o dashboard.enable=true
+# singular preset with dashboard / remote uplink
+uv run kuu start --preset ...
 ```
+
+## what's inside
+
+- **brokers**: Redis Streams, NATS JetStream, in-memory (for tests)
+- **scheduler**: interval jobs (`@app.every`) and composable cron-like schedules (`@app.sched`)
+- **middleware**: logging, retry with exponential backoff + jitter, timeout, plus custom hooks
+- **events**: pub/sub signals for task lifecycle (`task_enqueued` .. `task_dead`)
+- **serialization**: JSON (msgspec), Msgpack, Pickle, with extensible type coercion via `marshal`
+- **persistence**: SQLite (zero-config) and PostgreSQL backends for run/log history
+- **dashboard**: Starlette+HTMX web UI with live worker/queue stats and task management
+- **prometheus**: multiprocess metrics with worker-side emitter and client-side middleware
+- **hot reload**: watch filesystem changes, restart worker pool on settled batches
 
 ## config
 
@@ -80,36 +92,44 @@ unset fields fall back to `[default]`. a flat config (no `[default]` wrapper) st
 
 ```toml
 [default]
-app = "myapp.module:instance"            # dotted path to the Kuu instance
-task_modules = ["myapp.tasks"]           # modules that register tasks
+queues = []              # consume from; empty = auto-discover from registry
+processes = 1            # worker subprocesses to spawn
+concurrency = 64         # max concurrent tasks per worker
+prefetch = 16            # batch size; defaults to max(1, concurrency // 4)
+shutdown_timeout = 30.0  # seconds to wait for in-flight tasks on stop
 
-queues = []                              # consume from; empty = auto-discover from registry
-processes = 1                            # worker subprocesses to spawn
-concurrency = 64                         # max concurrent tasks per worker
-prefetch = 16                            # batch size; defaults to max(1, concurrency // 4)
-shutdown_timeout = 30.0                  # seconds to wait for in-flight tasks on stop
-
-[metrics]
+[default.metrics]
 enable = false
 host = "0.0.0.0"
 port = 9191
 
-[dashboard]
+[default.dashboard]
 enable = false
 host = "0.0.0.0"
 port = 8181
 path = "/dashboard"
 
-[scheduler]
-enable = false                           # run scheduler loop in-process; jobs declared via app.schedule
+scheduler.enable = false    # run scheduler loop in-process; jobs declared via app.every / app.sched
 
-[watch]
-enable = false                           # reload workers on filesystem changes
-root = "."                               # path to watch
-respect_gitignore = true                 # skip files matched by .gitignore
-exclude = [".git/**"]                    # extra globs to exclude
+[default.watch]
+enable = false              # reload workers on filesystem changes
+root = "."                  # path to watch
+respect_gitignore = true    # skip files matched by .gitignore
+exclude = [".git/**"]       # extra globs to exclude
 reload_delay = 0.25
 reload_debounce = 0.5
+
+[default.persistence]
+enable = true               # store run/log history
+dsn = "sqlite:///./kuu.db"  # sqlite (default) or postgres://...;
+# also can be provided via KUU_PERSISTENCE_DSN env var
+schema = ""                 # postgres schema; empty = default
+runs_table = "kuu_runs"
+logs_table = "kuu_run_logs"
+keep_days = 7               # auto-purge runs older than this
+max_runs = 100_000          # hard cap on stored runs
+log_level = "INFO"
+capture_args = true         # capture task args/kwargs in run detail
 
 [presets.prod]
 processes = 8
