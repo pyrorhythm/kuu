@@ -359,8 +359,8 @@ class KuuOTELInstrumentor:
 		self._otel_metrics: OtelMetrics | None = None
 		self._logging_bridge: OtelLoggingBridge | None = None
 
-	def instrument(self) -> None:
-		resource = _auto_setup_sdk()
+	def instrument(self, *, setup_sdk: bool = True) -> None:
+		resource = _auto_setup_sdk() if setup_sdk else None
 
 		self._otel_middleware = OtelTracingMiddleware(
 			tracer_name=self._tracer_name,
