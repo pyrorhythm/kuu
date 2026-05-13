@@ -24,7 +24,7 @@ class LoggingMiddleware:
 		msg = ctx.message
 		started = time.perf_counter()
 		self.log.info(
-			"task.start name=%s sched_id=%s queue=%s attempt=%d",
+			"event=task.start name=%s sched_id=%s queue=%s attempt=%d",
 			msg.task,
 			msg.id,
 			msg.queue,
@@ -34,7 +34,7 @@ class LoggingMiddleware:
 			result = await call_next()
 		except Exception as e:
 			self.log.warning(
-				"task.fail name=%s sched_id=%s duration=%.3fs exc=%s",
+				"event=task.fail name=%s sched_id=%s duration=%.3fs exc=%s",
 				msg.task,
 				msg.id,
 				time.perf_counter() - started,
@@ -42,7 +42,7 @@ class LoggingMiddleware:
 			)
 			raise
 		self.log.info(
-			"task.ok name=%s sched_id=%s duration=%.3fs",
+			"event=task.ok name=%s sched_id=%s duration=%.3fs",
 			msg.task,
 			msg.id,
 			time.perf_counter() - started,

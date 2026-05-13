@@ -41,10 +41,10 @@ class TaskHandle[Res]:
 			raise NotConnected("no result backend configured on Kuu(results=...)")
 		r = await self.app.results.get(self.key)
 		if r is None:
-			return False, typing.cast("Res", None)
+			return False, typing.cast(Res, None)
 		if r.status == "error":
 			raise TaskError(r.error or "task failed")
-		return True, typing.cast("Res", self.app.results.decode(r))
+		return True, typing.cast(Res, self.app.results.decode(r))
 
 	async def result(self, timeout: float | None = None, poll: float = 0.2) -> Res:
 		"""
