@@ -29,7 +29,7 @@ class _PoolAcqCtxProxy(PoolAcquireContext):
 			await conn.set_type_codec(
 				typename=t,
 				schema="pg_catalog",
-				encoder=_m.json_encode,
+				encoder=_m.json_encode_str,
 				decoder=_m.json_decode,
 			)
 		self.connection = conn

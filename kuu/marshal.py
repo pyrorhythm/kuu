@@ -69,6 +69,12 @@ class Marshal:
 			return _json.decode(data, dec_hook=self._dec_hook)
 		return _json.decode(data, type=type, dec_hook=self._dec_hook)
 
+	def json_encode_str(self, obj: Any) -> str:
+		enc = self._json_enc
+		if enc is None:
+			enc = self._json_enc = _json.Encoder(enc_hook=self._enc_hook)
+		return enc.encode(obj).decode()
+
 	def msgpack_encode(self, obj: Any) -> bytes:
 		enc = self._msgpack_enc
 		if enc is None:
