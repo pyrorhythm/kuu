@@ -7,27 +7,20 @@ from typing import Any
 
 from opentelemetry import context as otel_context
 from opentelemetry import metrics, propagate, trace
-from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
-from opentelemetry.exporter.otlp.proto.http.metric_exporter import (
-	OTLPMetricExporter,
-)
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
-	OTLPSpanExporter,
-)
 from opentelemetry.instrumentation.logging.handler import LoggingHandler
 from opentelemetry.sdk._logs import LoggerProvider
 from opentelemetry.sdk._logs._internal.export import BatchLogRecordProcessor
 from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.export import (
-	PeriodicExportingMetricReader,
-)
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace import SpanKind, Status, StatusCode, Tracer
 
 if typing.TYPE_CHECKING:
-	from opentelemetry.sdk.resources import Resource
+	from opentelemetry.sdk._logs._internal.export import LogRecordExporter
+	from opentelemetry.sdk.metrics.export import MetricExporter
+	from opentelemetry.sdk.trace.export import SpanExporter
 
 	from .app import Kuu
 	from .context import Context
@@ -158,11 +151,11 @@ class OtelMetrics:
 	Wires OTEL metrics onto Kuu task lifecycle events.
 
 	Instruments created (all under ``meter_name`` scope):
-		- ``kuu.task.enqueued`` (Counter) — tasks enqueued
-		- ``kuu.task.processed`` (Counter) — tasks processed, with ``status`` label
-		- ``kuu.task.duration`` (Histogram, seconds) — task execution duration
-		- ``kuu.task.in_flight`` (UpDownCounter) — tasks currently executing
-		- ``kuu.task.retried`` (Counter) — retry attempts
+		- ``kuu.task.enqueued`` (Counter) : tasks enqueued
+		- ``kuu.task.processed`` (Counter) : tasks processed, with ``status`` label
+		- ``kuu.task.duration`` (Histogram, seconds) : task execution duration
+		- ``kuu.task.in_flight`` (UpDownCounter) : tasks currently executing
+		- ``kuu.task.retried`` (Counter) : retry attempts
 	"""
 
 	def __init__(
@@ -255,13 +248,21 @@ class OtelMetrics:
 
 
 class OtelLoggingBridge:
-	"""Bridges Python's ``logging`` to OpenTelemetry log export via OTLP.
+	"""Bridges Python's ``logging`` to an OpenTelemetry ``LoggerProvider``.
 
 	Attaches an OTel ``LoggingHandler`` to the named stdlib logger so that
-	any log records emitted through it are exported to the configured OTLP
-	endpoint.  Does **not** configure any particular logging frontend ->
-	use ``logging``, ``structlog``, or anything else that ultimately
-	produces ``logging.LogRecord`` instances.
+	any log records emitted through it are forwarded to the provider.  Does
+	**not** configure any particular logging frontend : use ``logging``,
+	``structlog``, or anything else that ultimately produces
+	``logging.LogRecord`` instances.
+
+	Provider resolution order (first wins):
+	  1. ``logger_provider`` passed to :meth:`setup`.
+	  2. ``log_exporter`` passed to :meth:`setup` : a new ``LoggerProvider``
+	     is created around it.
+	  3. Falls back to OTLP HTTP (``OTLPLogExporter``) only when
+	     ``OTEL_EXPORTER_OTLP_ENDPOINT`` is set and neither of the above
+	     was supplied.
 	"""
 
 	def __init__(
@@ -274,45 +275,81 @@ class OtelLoggingBridge:
 		self._logger_name = logger_name
 		self._provider: LoggerProvider | None = None
 		self._handler: LoggingHandler | None = None
+		self._owns_provider: bool = False
 
 	def setup(
 		self,
 		resource: Resource | None = None,
+		*,
+		logger_provider: LoggerProvider | None = None,
+		log_exporter: LogRecordExporter | None = None,
 	) -> logging.Logger:
-		res = resource or Resource.create({})
-		self._provider = LoggerProvider(resource=res)
-		self._provider.add_log_record_processor(BatchLogRecordProcessor(OTLPLogExporter()))
-		self._handler = LoggingHandler(level=self._level, logger_provider=self._provider)
+		if logger_provider is not None:
+			self._provider = logger_provider
+			self._owns_provider = False
+		else:
+			exporter = log_exporter
+			if exporter is None and os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT"):
+				from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
 
+				exporter = OTLPLogExporter()
+
+			if exporter is not None:
+				res = resource or Resource.create({})
+				self._provider = LoggerProvider(resource=res)
+				self._provider.add_log_record_processor(BatchLogRecordProcessor(exporter))
+				self._owns_provider = True
+
+		if self._provider is None:
+			log.debug("No log exporter or provider supplied; skipping OTel logging bridge")
+			return logging.getLogger(self._logger_name)
+
+		self._handler = LoggingHandler(level=self._level, logger_provider=self._provider)
 		logger = logging.getLogger(self._logger_name)
 		logger.addHandler(self._handler)
 		log.info("OTel logging bridge attached to logger %r", self._logger_name)
 		return logger
 
 	def shutdown(self) -> None:
-		"""Shut down the log provider, flushing any pending records."""
-		if self._provider is not None:
+		if self._handler is not None:
+			logging.getLogger(self._logger_name).removeHandler(self._handler)
+			self._handler = None
+		if self._owns_provider and self._provider is not None:
 			self._provider.shutdown()
+		self._provider = None
 
 
-def _auto_setup_sdk(endpoint: str | None = None) -> Resource | None:
+def _auto_setup_sdk(
+	endpoint: str | None = None,
+	*,
+	span_exporter: SpanExporter | None = None,
+	metric_exporter: MetricExporter | None = None,
+) -> Resource | None:
 	endpoint = endpoint or os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-	if not endpoint:
+
+	if span_exporter is None and metric_exporter is None and not endpoint:
 		log.debug("OTEL_EXPORTER_OTLP_ENDPOINT not set; skipping auto-setup")
 		return None
 
 	service_name = os.getenv("OTEL_SERVICE_NAME", "kuu")
-
-	from opentelemetry.sdk.resources import Resource
-
 	resource = Resource.create({"service.name": service_name})
-	log.info("OTel auto-setup: endpoint=%s service=%s", endpoint, service_name)
+	log.info("OTel auto-setup: service=%s", service_name)
+
+	if span_exporter is None:
+		from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
+		span_exporter = OTLPSpanExporter(endpoint=endpoint)
 
 	tp = TracerProvider(resource=resource)
-	tp.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint)))
+	tp.add_span_processor(BatchSpanProcessor(span_exporter))
 	trace.set_tracer_provider(tp)
 
-	reader = PeriodicExportingMetricReader(OTLPMetricExporter(endpoint=endpoint))
+	if metric_exporter is None:
+		from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+
+		metric_exporter = OTLPMetricExporter(endpoint=endpoint)
+
+	reader = PeriodicExportingMetricReader(metric_exporter)
 	mp = MeterProvider(resource=resource, metric_readers=[reader])
 	metrics.set_meter_provider(mp)
 
@@ -323,19 +360,37 @@ class KuuOTELInstrumentor:
 	"""
 	Wires OTEL instrumentation (traces + metrics + logs) into a Kuu app.
 
-	Usage::
+	Basic usage (uses globally configured OTel providers: bring your own
+	SDK setup)::
 
-	    from kuu import Kuu
-	    from kuu.otel import KuuOTELInstrumentor
+	    KuuOTELInstrumentor(app=app).instrument(setup_sdk=False)
 
-	    app = Kuu(broker=...)
+	Auto-setup with OTLP HTTP (reads ``OTEL_EXPORTER_OTLP_ENDPOINT``)::
+
 	    KuuOTELInstrumentor(app=app).instrument()
 
-	This one call:
-	  1. Auto-configures OTel SDK (if OTEL_EXPORTER_OTLP_ENDPOINT is set).
-	  2. Inserts ``OtelTracingMiddleware`` at the front of the middleware chain.
-	  3. Wires ``OtelMetrics`` onto app.events signals.
-	  4. Bridges stdlib ``logging`` to OTLP via ``OtelLoggingBridge``.
+	Bring your own exporters (e.g. gRPC)::
+
+	    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+	    from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+	    from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+
+	    KuuOTELInstrumentor(
+	        app=app,
+	        span_exporter=OTLPSpanExporter(...),
+	        metric_exporter=OTLPMetricExporter(...),
+	        log_exporter=OTLPLogExporter(...),
+	    ).instrument()
+
+	``instrument()`` will:
+	  1. Configure OTel SDK providers when exporters are supplied or
+	     ``OTEL_EXPORTER_OTLP_ENDPOINT`` is set (skipped with
+	     ``setup_sdk=False``).
+	  2. Insert ``OtelTracingMiddleware`` at the front of the middleware
+	     chain.
+	  3. Wire ``OtelMetrics`` onto app.events signals.
+	  4. Bridge stdlib ``logging`` to the log provider when a log exporter
+	     or ``OTEL_EXPORTER_OTLP_ENDPOINT`` is available.
 	"""
 
 	def __init__(
@@ -347,6 +402,9 @@ class KuuOTELInstrumentor:
 		propagate: bool = True,
 		log_level: int = logging.INFO,
 		logger_name: str = "kuu",
+		span_exporter: SpanExporter | None = None,
+		metric_exporter: MetricExporter | None = None,
+		log_exporter: LogRecordExporter | None = None,
 	):
 		self._app = app
 		self._tracer_name = tracer_name
@@ -354,13 +412,21 @@ class KuuOTELInstrumentor:
 		self._propagate = propagate
 		self._log_level = log_level
 		self._logger_name = logger_name
+		self._span_exporter = span_exporter
+		self._metric_exporter = metric_exporter
+		self._log_exporter = log_exporter
 
 		self._otel_middleware: OtelTracingMiddleware | None = None
 		self._otel_metrics: OtelMetrics | None = None
 		self._logging_bridge: OtelLoggingBridge | None = None
 
 	def instrument(self, *, setup_sdk: bool = True) -> None:
-		resource = _auto_setup_sdk() if setup_sdk else None
+		resource: Resource | None = None
+		if setup_sdk:
+			resource = _auto_setup_sdk(
+				span_exporter=self._span_exporter,
+				metric_exporter=self._metric_exporter,
+			)
 
 		self._otel_middleware = OtelTracingMiddleware(
 			tracer_name=self._tracer_name,
@@ -377,7 +443,7 @@ class KuuOTELInstrumentor:
 			level=self._log_level,
 			logger_name=self._logger_name,
 		)
-		self._logging_bridge.setup(resource=resource)
+		self._logging_bridge.setup(resource=resource, log_exporter=self._log_exporter)
 
 	def uninstrument(self) -> None:
 		if self._otel_middleware is not None:
