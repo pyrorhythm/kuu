@@ -11,6 +11,7 @@ from watchfiles import Change, DefaultFilter
 
 from kuu._types import _FnAsync
 from kuu.config import Settings, WatchSettings
+from kuu.marshal import marshal
 
 type Changes = set[tuple[Change, str]]
 type CallbackFn = _FnAsync[[Changes], None]
@@ -44,7 +45,13 @@ class Watcher:
 			if stop_event.is_set():
 				break
 
-			log.info("event=watcher.changes_detected files=%d", len(changes))
+			filenames = [n for _, n in changes]
+
+			log.info(
+				"event=watcher.changes_detected file.count=%d file.names=%s",
+				len(changes),
+				marshal.json_encode_str(filenames),
+			)
 
 			await self._callback(changes)
 
