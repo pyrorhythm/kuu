@@ -44,7 +44,7 @@ class Watcher:
 			if stop_event.is_set():
 				break
 
-			log.info("detected changes in %d file(s)", len(changes))
+			log.info("event=watcher.changes_detected files=%d", len(changes))
 
 			await self._callback(changes)
 

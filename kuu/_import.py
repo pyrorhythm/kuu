@@ -26,7 +26,7 @@ def add_cwd_in_path() -> Generator[None]:
 			try:
 				sys.path.remove(str(cwd))
 			except ValueError:
-				logger.warning(f"cannot remove '{cwd}' from sys.path")
+				logger.warning("event=import.cwd_remove_failed cwd=%s", cwd)
 
 
 def import_object(object_spec: str, app_dir: str | None = None) -> Any:
@@ -54,8 +54,7 @@ def import_from_modules(modules: list[str]) -> None:
 			with add_cwd_in_path():
 				import_module(module)
 		except ImportError as err:
-			logger.warning(f"cannot import {module}. Cause:")
-			logger.exception(err)
+			logger.warning("event=import.module_failed module=%s error=%s", module, err)
 
 
 def import_tasks(modules: list[str], pattern: str | Sequence[str], fs_discover: bool) -> None:
@@ -115,5 +114,5 @@ def get_type_from_fqn(_result: str | bytes | None) -> Any:
 	try:
 		return import_object(_decoded_result)
 	except Exception as exc:
-		logger.warning("get_type_from_fqn: import failed for %r: %s", _decoded_result, exc)
+		logger.warning("event=import.type_from_fqn_failed fqn=%s error=%s", _decoded_result, exc)
 		return None

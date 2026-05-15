@@ -145,22 +145,22 @@ class PostgresResults(ResultBackend):
                         "where expires_at is not null and expires_at < now()"
                     )
             except Exception:
-                log.warning("pg cleanup tick failed", exc_info=True)
+                log.warning("event=pg.cleanup_failed", exc_info=True)
 
     async def _listen_loop(self) -> None:
-        log.debug("LISTEN_LOOP: starting")
+        log.debug("event=pg.listen_starting")
 
         def _on_notify(_conn, _pid, _chan, payload) -> None:
             try:
                 msg = json.loads(payload)
                 key = msg["key"]
-                log.debug("NOTIFY received: key=%s, payload=%s", key, payload)
+                log.debug("event=pg.notify_received key=%s payload=%s", key, payload)
             except (json.JSONDecodeError, KeyError, TypeError):
-                log.debug("bad NOTIFY payload: %s", payload)
+                log.debug("event=pg.notify_bad_payload payload=%s", payload)
                 return
             evt = self._sf.get(key)
             if evt is not None:
-                log.debug("NOTIFY: setting event for key=%s", key)
+                log.debug("event=pg.notify_setting_event key=%s", key)
                 # Thread-safe: use call_soon_threadsafe since this runs in asyncpg's thread
                 try:
                     loop = asyncio.get_running_loop()
@@ -169,28 +169,28 @@ class PostgresResults(ResultBackend):
                     # No running loop, fallback to direct set
                     evt.set()
             else:
-                log.debug("NOTIFY: no event for key=%s (sf keys: %s)", key, list(self._sf.keys()))
+                log.debug("event=pg.notify_no_event key=%s sf_keys=%s", key, list(self._sf.keys()))
 
         async with self._transport.acq() as conn:
             await conn.add_listener(_NOTIFY_CHANNEL, _on_notify)
             self._listen_ready.set()
-            log.debug("LISTEN_LOOP: listener registered, waiting for cancel")
+            log.debug("event=pg.listen_registered")
             try:
                 # Keep this task alive until cancelled
                 await anyio.sleep_forever()
             except CancelledError:
-                log.debug("LISTEN_LOOP: cancelled, removing listener")
+                log.debug("event=pg.listen_cancelled")
             finally:
                 if not conn.is_closed():
                     await conn.remove_listener(_NOTIFY_CHANNEL, _on_notify)
-        log.debug("LISTEN_LOOP: exited")
+        log.debug("event=pg.listen_exited")
 
     @_ensure_connected
     async def get(
         self, key: str, listen_timeout: float = -1, **kwargs
     ) -> Result | None:
         use_timeout = listen_timeout >= 0
-        log.debug("RESULTS GET: key=%s, listen_timeout=%s, sf_keys=%s", key, listen_timeout, list(self._sf.keys()))
+        log.debug("event=pg.get_start key=%s listen_timeout=%s sf_keys=%s", key, listen_timeout, list(self._sf.keys()))
 
         async with self._transport.acq() as conn:
             row = await conn.fetchrow(
@@ -199,7 +199,7 @@ class PostgresResults(ResultBackend):
                 key,
             )
         if row is not None:
-            log.debug("RESULTS GET: immediate hit for key=%s", key)
+            log.debug("event=pg.get_immediate_hit key=%s", key)
             return Result(
                 status=row["status"],
                 value=row["value"],
@@ -208,13 +208,13 @@ class PostgresResults(ResultBackend):
             )
 
         evt = self._sf.get(key)
-        log.debug("RESULTS GET: evt for key=%s exists=%s", key, evt is not None)
+        log.debug("event=pg.get_event_check key=%s exists=%s", key, evt is not None)
 
         if evt is None:
             # we are the first listener; create an event and try to fast-acquire
             evt = anyio.Event()
             self._sf[key] = evt
-            log.debug("RESULTS GET: created event for key=%s", key)
+            log.debug("event=pg.get_event_created key=%s", key)
 
             async with self._transport.acq() as conn:
                 row = await conn.fetchrow(
@@ -224,7 +224,7 @@ class PostgresResults(ResultBackend):
                 )
 
             if row is not None:
-                log.debug("RESULTS GET: fast-acquire hit for key=%s", key)
+                log.debug("event=pg.get_fast_acquire key=%s", key)
                 evt.set()  # ensure any waiters are woken
                 return Result(
                     status=row["status"],
@@ -234,14 +234,14 @@ class PostgresResults(ResultBackend):
                 )
 
         # else we are second+, event already exists; waiting
-        log.debug("RESULTS GET: waiting on event for key=%s (timeout=%s)", key, listen_timeout)
+        log.debug("event=pg.get_waiting key=%s timeout=%s", key, listen_timeout)
 
         try:
             with anyio.fail_after(listen_timeout if use_timeout else None):
                 await evt.wait()
-            log.debug("RESULTS GET: event fired for key=%s", key)
+            log.debug("event=pg.get_event_fired key=%s", key)
         except TimeoutError:
-            log.debug("RESULTS GET: timeout for key=%s", key)
+            log.debug("event=pg.get_timeout key=%s", key)
             return None
 
         async with self._transport.acq() as conn:
@@ -251,9 +251,9 @@ class PostgresResults(ResultBackend):
                 key,
             )
         if row is None:
-            log.debug("RESULTS GET: no row after event for key=%s", key)
+            log.debug("event=pg.get_no_row key=%s", key)
             return None
-        log.debug("RESULTS GET: returning result for key=%s", key)
+        log.debug("event=pg.get_returning key=%s", key)
         return Result(
             status=row["status"],
             value=row["value"],
@@ -263,7 +263,7 @@ class PostgresResults(ResultBackend):
 
     @_ensure_connected
     async def set(self, key: str, result: Result, ttl: float | None = None) -> None:
-        log.debug("RESULTS SET: key=%s, status=%s", key, result.status)
+        log.debug("event=pg.set_start key=%s status=%s", key, result.status)
         async with self._transport.acq() as conn:
             await conn.execute(
                 "insert into kuu.task_results "
@@ -279,7 +279,7 @@ class PostgresResults(ResultBackend):
                 result.type,
                 ttl or self.ttl,
             )
-        log.debug("RESULTS SET: stored key=%s", key)
+            log.debug("event=pg.set_stored key=%s", key)
 
     @_ensure_connected
     async def set_not_exists(

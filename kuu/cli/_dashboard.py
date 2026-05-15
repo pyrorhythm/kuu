@@ -49,7 +49,7 @@ async def _serve_collector(host: str, port: int, path: str) -> None:
 	cfg = uvicorn.Config(asgi, host=host, port=port, log_level="warning")
 	server = uvicorn.Server(cfg)
 	log.info(
-		"dashboard collector serving on http://%s:%d%s (ws ingest at %s_ingest)",
+		"event=cli.dashboard.serving host=%s port=%d path=%s ingest_path=%s",
 		host,
 		port,
 		path,

@@ -102,11 +102,11 @@ class PresetSupervisor:
 
 	async def _signal_listener(self) -> None:
 		if threading.current_thread() is not threading.main_thread():
-			log.debug("not on main thread; skipping signal handler installation")
+			log.debug("event=supervisor.not_main_thread")
 			return
 		with anyio.open_signal_receiver(signal.SIGINT, signal.SIGTERM) as signals:
 			async for signum in signals:
-				log.info("received signal %d, initiating shutdown", signum)
+				log.info("event=supervisor.shutdown_signal signum=%d", signum)
 				self._bye_reason = "sigint" if signum == signal.SIGINT else "sigterm"
 				self._stop_event.set()
 				return
@@ -115,7 +115,7 @@ class PresetSupervisor:
 		"""run the supervisor until SIGINT/SIGTERM or ``_stop_event`` fires"""
 
 		log.info(
-			"starting supervisor preset=%s instance=%s processes=%d watcher=%s dashboard=%s metrics=%s scheduler=%s",
+			"event=supervisor.starting preset=%s instance=%s processes=%d watcher=%s dashboard=%s metrics=%s scheduler=%s",
 			self.preset,
 			self.instance_id,
 			self.config.processes,
@@ -143,9 +143,9 @@ class PresetSupervisor:
 					tg.start_soon(self._command_loop)
 				await self._stop_event.wait()
 				tg.cancel_scope.cancel()
-		except Exception:
+		except Exception as e:
 			self._bye_reason = "crash"
-			log.exception("supervisor loop failed")
+			log.exception("event=supervisor.loop_failed error=%s", e)
 		finally:
 			self._stop_event.set()
 			if self._events_sink is not None:
@@ -167,8 +167,8 @@ class PresetSupervisor:
 					body=body,
 				)
 			)
-		except Exception:
-			log.exception("events sink emit failed")
+		except Exception as e:
+			log.exception("event=supervisor.events_sink_failed error=%s", e)
 
 	def _emit_hello(self) -> None:
 		self._emit(self._build_hello())
@@ -219,10 +219,10 @@ class PresetSupervisor:
 					await anyio.lowlevel.checkpoint()
 				else:
 					await anyio.sleep(0.1)
-			except Exception:
+			except Exception as e:
 				if self._stop_event.is_set():
 					break
-				log.exception("worker event forwarder error")
+				log.exception("event=supervisor.event_forwarder_error error=%s", e)
 				await anyio.sleep(0.5)
 
 	def _emit_event(self, we: Event) -> None:
@@ -238,8 +238,8 @@ class PresetSupervisor:
 					body=we,
 				)
 			)
-		except Exception:
-			log.exception("events sink emit failed (event)")
+		except Exception as e:
+			log.exception("event=supervisor.events_sink_emit_failed error=%s", e)
 
 	# === command rpc
 
@@ -256,8 +256,8 @@ class PresetSupervisor:
 			response = await self._dispatch_command(cmd)
 			try:
 				self._cmd_out.put_nowait(response)
-			except Exception:
-				log.exception("cmd_out put failed")
+			except Exception as e:
+				log.exception("event=supervisor.cmd_out_failed error=%s", e)
 
 	async def _dispatch_command(self, cmd: Cmd) -> CmdResponse:
 		match cmd:
@@ -367,8 +367,8 @@ class PresetSupervisor:
 					)
 				)
 			return out
-		except Exception:
-			log.exception("could not build tasks for hello")
+		except Exception as e:
+			log.exception("event=supervisor.build_hello_failed error=%s", e)
 			return []
 
 	def _ensure_app(self) -> typing.Any:
@@ -380,8 +380,8 @@ class PresetSupervisor:
 
 			self._app = import_object(self.config.app)  # type:ignore
 			import_tasks(self.config.task_modules, pattern=(), fs_discover=False)
-		except Exception:
-			log.exception("could not import app")
+		except Exception as e:
+			log.exception("event=supervisor.import_failed error=%s", e)
 		return self._app
 
 	def _build_broker_info(self) -> BrokerInfo:
@@ -391,8 +391,8 @@ class PresetSupervisor:
 		try:
 			broker = app.broker
 			return BrokerInfo(type=type(broker).__name__, key=broker_key(broker))
-		except Exception:
-			log.exception("could not introspect broker for hello")
+		except Exception as e:
+			log.exception("event=supervisor.broker_introspect_failed error=%s", e)
 			return BrokerInfo(type="unknown", key="")
 
 	async def _build_state_async(self) -> State:
@@ -416,7 +416,7 @@ class PresetSupervisor:
 			try:
 				known_queues |= set(app.registry.queues() or [app.default_queue])
 			except Exception:
-				log.warning("_build_queues: failed to read queues from registry")
+				log.warning("event=supervisor.queues_registry_failed")
 
 		out: dict[str, QueueSnapshot] = {}
 		for q in known_queues:
@@ -435,7 +435,7 @@ class PresetSupervisor:
 		try:
 			return await probe(queue)
 		except Exception:
-			log.debug("_probe_depth: probe failed for queue %r", queue)
+			log.debug("event=supervisor.probe_depth_failed queue=%s", queue)
 			return None
 
 	def _build_jobs(self) -> list[JobSnapshot]:
@@ -450,8 +450,8 @@ class PresetSupervisor:
 				JobSnapshot(id=j.id, task=j.task_name, next_run=j.next_run.timestamp())
 				for j in app.schedule.jobs
 			]
-		except Exception:
-			log.exception("could not snapshot scheduler jobs")
+		except Exception as e:
+			log.exception("event=supervisor.jobs_snapshot_failed error=%s", e)
 			return []
 
 	# === prometheus
@@ -474,7 +474,7 @@ class PresetSupervisor:
 			multiprocess_dir=self._metrics_dir,
 		)
 		log.info(
-			"prometheus aggregator on %s:%d (dir=%s)",
+			"event=supervisor.prometheus_serving host=%s port=%d dir=%s",
 			metrics_config.host,
 			metrics_config.port,
 			self._metrics_dir,
@@ -486,8 +486,8 @@ class PresetSupervisor:
 		if srv is not None:
 			try:
 				srv.shutdown()
-			except Exception:
-				log.exception("failed to shut down metrics server")
+			except Exception as e:
+				log.exception("event=supervisor.metrics_shutdown_failed error=%s", e)
 		if self._metrics_dir:
 			shutil.rmtree(self._metrics_dir, ignore_errors=True)
 			self._metrics_dir = None

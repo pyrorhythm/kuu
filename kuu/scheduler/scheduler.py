@@ -103,7 +103,7 @@ class Scheduler:
 
 	async def _loop(self) -> None:
 		if not self.jobs:
-			log.warning("scheduler started with no jobs")
+			log.warning("event=scheduler.no_jobs")
 		while True:
 			now = utcnow()
 			if not self.jobs:
@@ -124,6 +124,6 @@ class Scheduler:
 							headers=job.headers,
 							max_attempts=job.max_attempts,
 						)
-					except Exception:
-						log.exception("scheduler: enqueue %s failed", job.id)
+					except Exception as e:
+						log.exception("event=scheduler.enqueue_failed job=%s error=%s", job.id, e)
 					job.schedule_next(now)

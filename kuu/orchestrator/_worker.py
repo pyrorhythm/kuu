@@ -78,7 +78,7 @@ class WorkerPool:
 		for i in range(self._config.processes):
 			if self._stop_event.is_set():
 				break
-			log.info("starting worker process %d/%d", i + 1, self._config.processes)
+			log.info("event=worker_pool.starting index=%d total=%d", i + 1, self._config.processes)
 			p = self._mp_ctx.Process(
 				target=_run_worker,
 				args=(self._config, self.events_queue),
@@ -91,7 +91,7 @@ class WorkerPool:
 		if not self._processes:
 			return
 
-		log.info("stopping %d worker process(es)", len(self._processes))
+		log.info("event=worker_pool.stopping count=%d", len(self._processes))
 		processes = self._processes
 		self._processes = []
 
@@ -110,7 +110,7 @@ class WorkerPool:
 
 		for p in processes:
 			if p.is_alive():
-				log.warning("worker %s did not terminate gracefully, killing", p.pid)
+				log.warning("event=worker_pool.killing pid=%s", p.pid)
 				p.kill()
 				p.join(timeout=5)
 
@@ -121,12 +121,12 @@ class WorkerPool:
 				if p.pid is not None:
 					try:
 						mark_worker_dead(p.pid)
-					except Exception:
-						log.exception("mark_worker_dead failed for pid=%s", p.pid)
+					except Exception as e:
+						log.exception("event=worker_pool.mark_dead_failed pid=%s error=%s", p.pid, e)
 
 
 def _run_worker(config: Settings, events_queue: mp.Queue | None = None) -> None:
-	log.info("worker process starting")
+	log.info("event=worker_pool.process_starting")
 	app = import_object(config.app)  # type:ignore
 	import_tasks(config.task_modules, "", False)
 
@@ -149,7 +149,7 @@ def _run_worker(config: Settings, events_queue: mp.Queue | None = None) -> None:
 			from kuu.observability import _log_capture
 
 			_log_capture.shutdown()
-	log.info("worker process exiting")
+	log.info("event=worker_pool.process_exiting")
 
 
 def _resolve_log_level(name: str) -> int:

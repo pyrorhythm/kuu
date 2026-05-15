@@ -106,7 +106,7 @@ class ControlPlane:
 	async def start(self) -> None:
 		instances = self._instances()
 		log.info(
-			"starting control plane presets=%s",
+			"event=control_plane.starting presets=%s",
 			[name for name, _ in instances],
 		)
 		try:
@@ -124,8 +124,8 @@ class ControlPlane:
 					tg.start_soon(self._serve_dashboard)
 				await self._stop_event.wait()
 				tg.cancel_scope.cancel()
-		except Exception:
-			log.exception("control plane loop failed")
+		except Exception as e:
+			log.exception("event=control_plane.loop_failed error=%s", e)
 		finally:
 			self._stop_event.set()
 			self._source.close()
@@ -150,14 +150,14 @@ class ControlPlane:
 			)
 			p.start()
 			self._procs.append((preset, p))
-			log.info("spawned supervisor preset=%s pid=%s instance=%s", preset, p.pid, instance_id)
+			log.info("event=control_plane.spawned_supervisor preset=%s pid=%s instance=%s", preset, p.pid, instance_id)
 
 	async def _signal_listener(self) -> None:
 		if threading.current_thread() is not threading.main_thread():
 			return
 		with anyio.open_signal_receiver(signal.SIGINT, signal.SIGTERM) as signals:
 			async for signum in signals:
-				log.info("received signal %d, shutting down", signum)
+				log.info("event=control_plane.shutdown_signal signum=%d", signum)
 				self._stop_event.set()
 				return
 
@@ -167,7 +167,7 @@ class ControlPlane:
 			match env.body:
 				case Hello() as h:
 					log.info(
-						"hello instance=%s preset=%s broker=%s/%s pid=%d",
+						"event=control_plane.hello instance=%s preset=%s broker=%s/%s pid=%d",
 						env.instance,
 						h.preset,
 						h.broker.type,
@@ -175,7 +175,7 @@ class ControlPlane:
 						h.pid,
 					)
 				case Bye() as b:
-					log.info("bye   instance=%s reason=%s", env.instance, b.reason)
+					log.info("event=control_plane.bye instance=%s reason=%s", env.instance, b.reason)
 				case Event() as e:
 					if self._dashboard is not None:
 						self._dashboard.stats.ingest(e.kind, e.task, env.ts)
@@ -194,10 +194,10 @@ class ControlPlane:
 			roster = self._registry.all()
 			if roster:
 				log.debug(
-					"roster: %s",
-					", ".join(
-						f"{e.hello.preset}/{e.instance_id[:8]}"
-						f"({len(e.last_state.workers) if e.last_state else 0}w)"
+					"event=control_plane.roster roster=%s",
+				", ".join(
+					f"{e.hello.preset}/{e.instance_id[:8]}"
+					f"({len(e.last_state.workers) if e.last_state else 0}w)"
 						for e in roster
 					),
 				)
@@ -207,7 +207,7 @@ class ControlPlane:
 	async def _stop_children(self) -> None:
 		if not self._procs:
 			return
-		log.info("stopping %d supervisor process(es)", len(self._procs))
+			log.info("event=control_plane.stopping_supervisors count=%d", len(self._procs))
 
 		def _terminate_and_wait() -> None:
 			import time as _time
@@ -222,7 +222,7 @@ class ControlPlane:
 					p.join(timeout=remaining)
 			for _, p in self._procs:
 				if p.is_alive():
-					log.warning("supervisor %s did not terminate, killing", p.pid)
+					log.warning("event=control_plane.killing_supervisor pid=%s", p.pid)
 					p.kill()
 					p.join(timeout=5)
 
@@ -270,16 +270,16 @@ class ControlPlane:
 					await anyio.lowlevel.checkpoint()
 				else:
 					await anyio.sleep(0.05)
-			except Exception:
+			except Exception as e:
 				if self._stop_event.is_set():
 					break
-				log.exception("command response loop error")
+				log.exception("event=control_plane.cmd_response_error error=%s", e)
 				await anyio.sleep(0.5)
 
 	def _create_persist_worker(self) -> PersistenceWorker | None:
 		cfg = self.kuunfig.default.persistence
 		if not cfg.enable:
-			log.info("persistence: disabled")
+			log.info("event=control_plane.persistence_disabled")
 			return None
 		backend = create_backend(cfg)
 		return PersistenceWorker(backend, cfg)
@@ -296,8 +296,8 @@ class ControlPlane:
 			return
 		try:
 			from kuu.web.dashboard import Dashboard
-		except ImportError:
-			log.exception("dashboard dependencies missing; install kuu[dashboard]")
+		except ImportError as e:
+			log.exception("event=control_plane.dashboard_missing error=%s", e)
 			return
 
 		import os as _os
@@ -332,7 +332,7 @@ class ControlPlane:
 		)
 		server = uvicorn.Server(cfg)
 		log.info(
-			"dashboard serving on http://%s:%d%s",
+			"event=control_plane.dashboard_serving host=%s port=%d path=%s",
 			dash_cfg.host,
 			dash_cfg.port,
 			dash_cfg.path,
@@ -366,7 +366,7 @@ class ControlPlane:
 			multiprocess_dir=self._metrics_dir,
 		)
 		log.info(
-			"prometheus aggregator on %s:%d (dir=%s)",
+			"event=control_plane.prometheus_serving host=%s port=%d dir=%s",
 			metrics_cfg.host,
 			metrics_cfg.port,
 			self._metrics_dir,
@@ -378,8 +378,8 @@ class ControlPlane:
 		if srv is not None:
 			try:
 				srv.shutdown()
-			except Exception:
-				log.exception("failed to shut down metrics server")
+			except Exception as e:
+				log.exception("event=control_plane.metrics_shutdown_failed error=%s", e)
 		if self._metrics_dir:
 			shutil.rmtree(self._metrics_dir, ignore_errors=True)
 			self._metrics_dir = None

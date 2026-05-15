@@ -135,8 +135,8 @@ class PersistenceWorker:
 			]
 			try:
 				await self._backend.write_runs(rows)
-			except Exception:
-				log.exception("persistence: write_runs failed, dropped %d rows", len(rows))
+			except Exception as e:
+				log.exception("event=persistence.write_runs_failed dropped=%d error=%s", len(rows), e)
 
 		log_batch = self._log_batch
 		self._log_batch = []
@@ -154,14 +154,14 @@ class PersistenceWorker:
 			]
 			try:
 				await self._backend.write_logs(rows)
-			except Exception:
-				log.exception("persistence: write_logs failed, dropped %d rows", len(rows))
+			except Exception as e:
+				log.exception("event=persistence.write_logs_failed dropped=%d error=%s", len(rows), e)
 
 		self._last_flush = _time.monotonic()
 
 		if self._dropped_events or self._dropped_logs:
 			log.warning(
-				"persistence queue overflow: dropped_events=%d dropped_logs=%d",
+				"event=persistence.queue_overflow dropped_events=%d dropped_logs=%d",
 				self._dropped_events,
 				self._dropped_logs,
 			)
@@ -249,9 +249,9 @@ class PersistenceWorker:
 				deleted = await self._backend.prune(cutoff)
 				if deleted > 0:
 					log.info(
-						"persistence: pruned %d runs older than %d days",
+						"event=persistence.pruned deleted=%d keep_days=%d",
 						deleted,
 						self._cfg.keep_days,
 					)
-			except Exception:
-				log.exception("persistence: prune failed")
+			except Exception as e:
+				log.exception("event=persistence.prune_failed error=%s", e)

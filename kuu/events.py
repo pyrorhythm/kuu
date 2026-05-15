@@ -36,8 +36,8 @@ class Signal:
 				r = h(*args, **kw)
 				if inspect.isawaitable(r):
 					await r
-			except Exception:
-				log.exception("event handler %s failed on %s", h, self.name)
+			except Exception as e:
+				log.exception("event=events.handler_failed handler=%s signal=%s error=%s", h, self.name, e)
 
 		async with anyio.create_task_group() as tg:
 			for h in self._handlers:

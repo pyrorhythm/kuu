@@ -1,14 +1,13 @@
 <div class="surface-head" style="border-bottom:1px solid var(--hair);margin:-1px">
 	<div style="margin-left:auto;display:flex;gap:var(--s-2)">
-		<select id="tr-filter-status" class="filter-select" hx-get="fragments/task-runs" hx-trigger="change" hx-target="#task-runs-frag" hx-swap="innerHTML" name="status">
+		<select id="tr-filter-status" class="filter-select" name="status">
 			<option value="">all status</option>
 			<option value="succeeded">succeeded</option>
 			<option value="failed">failed</option>
 			<option value="retried">retried</option>
 			<option value="dead">dead</option>
 		</select>
-		<input id="tr-filter-task" class="filter-input" placeholder="task name…" style="width:160px"
-			hx-get="fragments/task-runs" hx-trigger="keyup changed delay:300ms" hx-target="#task-runs-frag" hx-swap="innerHTML" name="task">
+		<input id="tr-filter-task" class="filter-input" placeholder="task name…" style="width:160px" name="task">
 	</div>
 </div>
 <div class="surface-body flush" style="padding-top:0">
@@ -16,19 +15,14 @@
 		<thead><tr>
 			<th>task</th><th>status</th><th>message id</th><th>attempt</th>
 			<th>instance</th><th>elapsed</th><th>finished</th></tr></thead>
+		<tbody id="task-runs-tbody"></tbody>
 	</table>
 </div>
 <div class="tasks-foot" id="task-runs-foot">
 	<div class="tasks-page-info" id="task-runs-page">-</div>
 	<div style="display:flex;gap:var(--s-1)">
-		<button class="btn" id="tr-btn-prev" disabled
-			hx-get="fragments/task-runs" hx-trigger="click" hx-target="#task-runs-frag" hx-swap="innerHTML"
-			hx-include="#tr-filter-status,#tr-filter-task" hx-vals='{"offset":"prev"}'>
-			&larr; prev</button>
-		<button class="btn" id="tr-btn-next" disabled
-			hx-get="fragments/task-runs" hx-trigger="click" hx-target="#task-runs-frag" hx-swap="innerHTML"
-			hx-include="#tr-filter-status,#tr-filter-task" hx-vals='{"offset":"next"}'>
-			next &rarr;</button>
+		<button class="btn" id="tr-btn-prev" disabled>&larr; prev</button>
+		<button class="btn" id="tr-btn-next" disabled>next &rarr;</button>
 	</div>
 </div>
 
@@ -94,15 +88,18 @@
 	}
 	function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
 
-	document.getElementById('task-runs-frag').addEventListener('htmx:afterSettle', function(evt){
-		_offset = 0;
-		loadRuns();
-	});
+
 	document.getElementById('tr-btn-prev').addEventListener('click',function(e){
 		e.preventDefault(); _offset=Math.max(0,_offset-LIMIT); loadRuns();
 	});
 	document.getElementById('tr-btn-next').addEventListener('click',function(e){
 		e.preventDefault(); _offset+=LIMIT; loadRuns();
+	});
+	document.getElementById('tr-filter-status').addEventListener('change',function(){
+		_offset=0; loadRuns();
+	});
+	document.getElementById('tr-filter-task').addEventListener('input',function(){
+		_offset=0; loadRuns();
 	});
 	loadRuns();
 })();

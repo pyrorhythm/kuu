@@ -24,7 +24,7 @@ class SchedulerRunner:
 		import_tasks(self._config.task_modules, "", False)
 
 		scheduler = app.schedule
-		log.info("scheduler running with %d job(s)", len(scheduler.jobs))
+		log.info("event=scheduler_runner.running jobs=%d", len(scheduler.jobs))
 
 		async def _run() -> None:
 			await scheduler.run(install_signals=False)

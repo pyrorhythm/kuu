@@ -43,13 +43,13 @@ def info(
 ):
 	q = load_app(app_spec)
 	import_tasks(task_modules, "", False)
-	log.info(f"queues: {sorted(q.registry.queues())}")
+	log.info("event=cli.info.queues queues=%s", sorted(q.registry.queues()))
 	for name in sorted(q.registry.names()):
 		t = q.registry.get(name)
 		if t is None:
 			continue
 		log.info(
-			"%s\tqueue=%s max_attempts=%s timeout=%s",
+			"event=cli.info.task task=%s queue=%s max_attempts=%s timeout=%s",
 			name,
 			t.task_queue,
 			t.max_attempts,

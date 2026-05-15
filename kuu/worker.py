@@ -71,7 +71,9 @@ class Worker:
 				with anyio.move_on_after(self.shutdown_timeout) as drain:
 					await self._idle.wait()
 				if drain.cancel_called:
-					log.warning("shutdown timeout, cancelling %d in-flight", self._inflight)
+					log.warning(
+						"event=worker.shutdown_timeout cancelled_inflight=%d", self._inflight
+					)
 					handlers.cancel_scope.cancel()
 		finally:
 			await self.app.broker.close()
@@ -110,7 +112,7 @@ class Worker:
 	async def _handle_inner(self, delivery: Delivery, msg: Any, task: Any, ctx: Context) -> None:
 
 		log.debug(
-			"WORKER HANDLE: task=%s, key=%s, attempt=%s", msg.task, result_key(msg), msg.attempt
+			"event=worker.handle task=%s key=%s attempt=%s", msg.task, result_key(msg), msg.attempt
 		)
 
 		with anyio.CancelScope(shield=True):
@@ -122,10 +124,10 @@ class Worker:
 		key = result_key(msg)
 
 		if results is not None and results.replay:
-			log.debug("WORKER HANDLE: checking replay for key=%s", key)
+			log.debug("event=worker.handle.replay_check key=%s", key)
 			cached = await results.get(key, listen_timeout=0)
 			if cached is not None and cached.status == "ok":
-				log.debug("WORKER HANDLE: replay hit for key=%s", key)
+				log.debug("event=worker.handle.replay_hit key=%s", key)
 				with anyio.CancelScope(shield=True):
 					await self._finalize(delivery, msg, Ok(0.0))
 				self._inflight -= 1
@@ -155,9 +157,9 @@ class Worker:
 				return r
 
 			started = time.perf_counter()
-			log.debug("WORKER HANDLE: executing task=%s", msg.task)
+			log.debug("event=worker.handle.executing_task task=%s", msg.task)
 			value = await run_chain(ctx, self.app.middleware, _terminal)
-			log.debug("WORKER HANDLE: task=%s completed, storing result", msg.task)
+			log.debug("event=worker.handle.task_completed task=%s", msg.task)
 			with anyio.CancelScope(shield=True):
 				if results is not None:
 					payload, type_fqn = results.encode(value)
@@ -166,7 +168,7 @@ class Worker:
 						Result(status="ok", value=payload, type=type_fqn),
 						ttl=results.ttl,
 					)
-					log.debug("WORKER HANDLE: result stored for key=%s", key)
+					log.debug("event=worker.handle.result_stored key=%s", key)
 			outcome = Ok(time.perf_counter() - started)
 		except RetryErr as r:
 			outcome = Retry(

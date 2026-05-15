@@ -301,13 +301,13 @@ class OtelLoggingBridge:
 				self._owns_provider = True
 
 		if self._provider is None:
-			log.debug("No log exporter or provider supplied; skipping OTel logging bridge")
+			log.debug("event=otel.no_provider")
 			return logging.getLogger(self._logger_name)
 
 		self._handler = LoggingHandler(level=self._level, logger_provider=self._provider)
 		logger = logging.getLogger(self._logger_name)
 		logger.addHandler(self._handler)
-		log.info("OTel logging bridge attached to logger %r", self._logger_name)
+		log.info("event=otel.bridge_attached logger=%s", self._logger_name)
 		return logger
 
 	def shutdown(self) -> None:
@@ -328,12 +328,12 @@ def _auto_setup_sdk(
 	endpoint = endpoint or os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 
 	if span_exporter is None and metric_exporter is None and not endpoint:
-		log.debug("OTEL_EXPORTER_OTLP_ENDPOINT not set; skipping auto-setup")
+		log.debug("event=otel.no_endpoint")
 		return None
 
 	service_name = os.getenv("OTEL_SERVICE_NAME", "kuu")
 	resource = Resource.create({"service.name": service_name})
-	log.info("OTel auto-setup: service=%s", service_name)
+	log.info("event=otel.auto_setup service=%s", service_name)
 
 	if span_exporter is None:
 		from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter

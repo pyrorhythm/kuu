@@ -36,8 +36,8 @@ class DashboardRunner:
 
 			from kuu._import import import_object, import_tasks
 			from kuu.web.dashboard import Dashboard
-		except ImportError:
-			log.exception("dashboard dependencies missing; install kuu[dashboard]")
+		except ImportError as e:
+			log.exception("event=dashboard_runner.dependencies_missing error=%s", e)
 			return
 
 		kuu = import_object(self._config.app)  # type:ignore
@@ -59,7 +59,7 @@ class DashboardRunner:
 		)
 		server = uvicorn.Server(cfg)
 		log.info(
-			"dashboard serving on http://%s:%d%s",
+			"event=dashboard_runner.serving host=%s port=%d path=%s",
 			dash_config.host,
 			dash_config.port,
 			dash_config.path,

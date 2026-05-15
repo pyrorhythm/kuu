@@ -74,13 +74,13 @@ class WsUplink:
 						if self._last_hello is not None:
 							await ws.send_bytes(self._last_hello)
 						async for frame in self._recv:
-							log.debug("uplink received %s", frame)
+							log.debug("event=uplink.received frame=%s", frame)
 							if stop_event.is_set():
 								break
 							await ws.send_bytes(frame)
-							log.debug("uplink sent %s", frame)
+							log.debug("event=uplink.sent frame=%s", frame)
 				except Exception as exc:
-					log.warning("uplink disconnected: %s; retrying in %.1fs", exc, backoff)
+					log.warning("event=uplink.disconnected error=%s retry_in=%.1fs", exc, backoff)
 					with anyio.move_on_after(backoff):
 						await stop_event.wait()
 					if stop_event.is_set():
@@ -94,8 +94,8 @@ class WsUplink:
 	def _enqueue(self, env: Envelope) -> None:
 		try:
 			data = envelope_to_bytes(env)
-		except Exception:
-			log.exception("envelope encode failed")
+		except Exception as e:
+			log.exception("event=uplink.encode_failed error=%s", e)
 			return
 		if isinstance(env.body, Hello):
 			self._last_hello = data
@@ -103,8 +103,8 @@ class WsUplink:
 			self._send.send_nowait(data)
 		except anyio.WouldBlock:
 			pass  # drop on backpressure
-		except Exception:
-			log.exception("uplink enqueue failed")
+		except Exception as e:
+			log.exception("event=uplink.enqueue_failed error=%s", e)
 
 	async def _run_ws(self, stop_event: anyio.Event) -> None:
 		"""maintain the ws connection until ``stop_event`` fires"""
@@ -113,14 +113,14 @@ class WsUplink:
 		try:
 			from websockets.asyncio.client import connect as ws_connect
 		except ImportError:
-			log.error("websockets package not installed; uplink disabled")
+			log.error("event=uplink.no_websockets")
 			return
 
 		backoff = _BACKOFF_INITIAL
 		headers = self._auth_headers()
 		while not stop_event.is_set():
 			try:
-				log.info("uplink connecting to %s", self._url)
+				log.info("event=uplink.connecting url=%s", self._url)
 				async with ws_connect(
 					self._url,
 					max_size=2**20,
@@ -130,14 +130,14 @@ class WsUplink:
 					if self._last_hello is not None:
 						await ws.send(self._last_hello)
 					async for frame in self._recv:
-						log.debug("uplink received %s", frame)
+						log.debug("event=uplink.received frame=%s", frame)
 						if stop_event.is_set():
 							break
 						await ws.send(frame)
-						log.debug("uplink sent %s", frame)
+						log.debug("event=uplink.sent frame=%s", frame)
 				return
 			except Exception as exc:
-				log.warning("uplink disconnected: %s; retrying in %.1fs", exc, backoff)
+				log.warning("event=uplink.disconnected error=%s retry_in=%.1fs", exc, backoff)
 				with anyio.move_on_after(backoff):
 					await stop_event.wait()
 				if stop_event.is_set():
