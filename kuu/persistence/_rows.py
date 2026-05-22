@@ -13,6 +13,13 @@ _TABLE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
 
 RunStatus = Literal["enqueued", "started", "succeeded", "failed", "retried", "dead"]
 
+_FINISH_STATUS: dict[str, RunStatus] = {
+	"succeeded": "succeeded",
+	"failed": "failed",
+	"retried": "retried",
+	"dead": "dead",
+}
+
 
 def parse_pg_dsn(dsn: str) -> str:
 	if dsn.startswith("postgres://"):
@@ -35,6 +42,75 @@ def validate_table_name(name: str) -> str:
 	if not _TABLE_RE.match(name):
 		raise ValueError(f"invalid table/schema name {name!r}; must match {_TABLE_RE.pattern}")
 	return name
+
+
+class PendingRun(Struct, frozen=True):
+	message_id: str = ""
+	attempt: int = 0
+	task: str = ""
+	queue: str = ""
+	instance_id: str = ""
+	worker_pid: int = 0
+	args: Any = None
+	kwargs: Any = None
+	started_at: datetime | None = None
+	finished_at: datetime | None = None
+	time_elapsed: timedelta | None = None
+	status: RunStatus = "succeeded"
+	exc_type: str | None = None
+	exc_message: str | None = None
+	traceback: str | None = None
+
+	def to_row(self) -> RunRow:
+		return RunRow(
+			message_id=self.message_id,
+			attempt=self.attempt,
+			task=self.task,
+			queue=self.queue,
+			instance_id=self.instance_id,
+			worker_pid=self.worker_pid,
+			args=self.args,
+			kwargs=self.kwargs,
+			started_at=self.started_at,
+			finished_at=self.finished_at,
+			time_elapsed=self.time_elapsed,
+			status=self.status,
+			exc_type=self.exc_type,
+			exc_message=self.exc_message,
+			traceback=self.traceback,
+		)
+
+	def finish(
+		self,
+		*,
+		kind: str,
+		finish_ts: datetime,
+		args: Any = None,
+		kwargs: Any = None,
+		exc_type: str | None = None,
+		exc_message: str | None = None,
+		traceback: str | None = None,
+	) -> PendingRun:
+		elapsed = None
+		if self.started_at is not None:
+			elapsed = finish_ts - self.started_at
+		return PendingRun(
+			message_id=self.message_id,
+			attempt=self.attempt,
+			task=self.task,
+			queue=self.queue,
+			instance_id=self.instance_id,
+			worker_pid=self.worker_pid,
+			args=args if args is not None else self.args,
+			kwargs=kwargs if kwargs is not None else self.kwargs,
+			started_at=self.started_at,
+			finished_at=finish_ts,
+			time_elapsed=elapsed,
+			status=_FINISH_STATUS.get(kind, "failed"),
+			exc_type=exc_type,
+			exc_message=exc_message,
+			traceback=traceback,
+		)
 
 
 class RunRow(Struct, frozen=True):
@@ -63,16 +139,8 @@ class RunRow(Struct, frozen=True):
 			self.queue,
 			self.instance_id,
 			self.worker_pid,
-			self.args.decode()
-			if isinstance(self.args, bytes)
-			else str(self.args)
-			if self.args
-			else None,
-			self.kwargs.decode()
-			if isinstance(self.kwargs, bytes)
-			else str(self.kwargs)
-			if self.kwargs
-			else None,
+			self.args,
+			self.kwargs,
 			to_naive(self.started_at),
 			to_naive(self.finished_at),
 			self.time_elapsed,

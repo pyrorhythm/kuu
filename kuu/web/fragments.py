@@ -7,14 +7,15 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse
 
 from kuu.app import Kuu
-from kuu.brokers.redis import RedisBroker
+from kuu.brokers.memory import MemoryBroker
+from kuu.brokers.nats import NatsBroker
 from kuu.observability import InstanceRegistry
 from kuu.orchestrator.main import PresetSupervisor
 from kuu.scheduler.scheduler import Scheduler
 from kuu.web.stats import StatsCollector
 
 if typing.TYPE_CHECKING:
-	from kuu.persistence._backend import PersistenceBackend
+	from kuu.persistence import PersistenceBackend
 
 
 class DashboardFragmentsMixin:
@@ -205,20 +206,26 @@ class DashboardFragmentsMixin:
 		broker = self.app.broker
 		out: dict = {}
 
-		if isinstance(broker, RedisBroker):
-			try:
-				await broker.connect()
-				queues = self.app.registry.queues() or {self.app.default_queue}
-				depths: dict = {}
-				for q in queues:
-					s = await broker.r.xlen(broker._stream(q))
-					z = await broker.r.zcard(broker._zset(q))
-					depths[q] = {"stream": s, "scheduled": z}
+		try:
+			await broker.connect()
+			queues = self.app.registry.queues() or {self.app.default_queue}
+			depths: dict = {}
+			for q in queues:
+				breakdown = await broker.queue_breakdown(q)
+				if breakdown is not None:
+					depths[q] = breakdown
+				else:
+					depth = await broker.queue_depth(q)
+					if depth is not None:
+						depths[q] = {"total": depth}
+			if depths:
 				out["queues"] = depths
-			except Exception:
-				pass
-		elif hasattr(broker, "_scheduled"):
-			out["scheduled"] = len(broker._scheduled)
-		if hasattr(broker, "_pending"):
-			out["pending"] = len(broker._pending)
+		except Exception:
+			pass
+
+		if isinstance(broker, NatsBroker):
+			out["scheduled"] = broker.scheduled_count
+		elif isinstance(broker, MemoryBroker):
+			out["scheduled"] = broker.scheduled_count
+			out["pending"] = broker.pending_count
 		return out

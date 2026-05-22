@@ -1,12 +1,43 @@
 from __future__ import annotations
 
-import time
 from typing import Any
 
 import structlog
 
 from ..context import Context
 from .base import Next
+from ._task_log import TaskLogSink, run_process_task_logging
+
+
+class _StructlogTaskLogSink(TaskLogSink):
+	def __init__(self, logger: structlog.BoundLogger) -> None:
+		self._log = logger
+
+	def task_start(self, *, task_name: str, sched_id: str, queue: str, attempt: int) -> None:
+		self._log.info(
+			"task.start",
+			task_name=task_name,
+			sched_id=sched_id,
+			queue=queue,
+			attempt=attempt,
+		)
+
+	def task_ok(self, *, task_name: str, sched_id: str, duration: float) -> None:
+		self._log.info(
+			"task.ok",
+			task_name=task_name,
+			sched_id=sched_id,
+			duration=duration,
+		)
+
+	def task_fail(self, *, task_name: str, sched_id: str, duration: float, exc_type: str) -> None:
+		self._log.warning(
+			"task.fail",
+			task_name=task_name,
+			sched_id=sched_id,
+			duration=duration,
+			exc_type=exc_type,
+		)
 
 
 class StructlogMiddleware:
@@ -20,35 +51,7 @@ class StructlogMiddleware:
 	"""
 
 	def __init__(self, logger: structlog.BoundLogger):
-		self.log = logger
+		self._sink = _StructlogTaskLogSink(logger)
 
 	async def __call__(self, ctx: Context, call_next: Next) -> Any:
-		if ctx.phase != "process":
-			return await call_next()
-		msg = ctx.message
-		started = time.perf_counter()
-		self.log.info(
-			"task.start",
-			task_name=msg.task,
-			sched_id=str(msg.id),
-			queue=msg.queue,
-			attempt=msg.attempt,
-		)
-		try:
-			result = await call_next()
-		except Exception as e:
-			self.log.warning(
-				"task.fail",
-				task_name=msg.task,
-				sched_id=str(msg.id),
-				duration=time.perf_counter() - started,
-				exc_type=type(e).__name__,
-			)
-			raise
-		self.log.info(
-			"task.ok",
-			task_name=msg.task,
-			sched_id=str(msg.id),
-			duration=time.perf_counter() - started,
-		)
-		return result
+		return await run_process_task_logging(ctx, call_next, self._sink)

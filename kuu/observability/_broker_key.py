@@ -15,9 +15,9 @@ def broker_key(obj: Any) -> str:
 def _unwrap_broker(obj: Any) -> Any:
 	cls = type(obj).__name__
 	if cls == "RedisBroker":
-		return obj._redis
+		return obj.transport
 	if cls == "NatsBroker":
-		return obj.t
+		return obj.transport
 	if cls == "PostgresBroker":
 		return getattr(obj, "_pg", None) or getattr(obj, "t", obj)
 	return obj

@@ -38,28 +38,32 @@ class RedisResults(ResultBackend):
 		self.store_errors = store_errors
 		self.prefix = prefix
 		if transport is not None:
-			self._redis = transport
+			self._transport = transport
 			self._owns_transport = False
 		else:
-			self._redis = RedisTransport(StandaloneConfig(url=url))
+			self._transport = RedisTransport(StandaloneConfig(url=url))
 			self._owns_transport = True
 
 	@property
+	def transport(self) -> RedisTransport:
+		return self._transport
+
+	@property
 	def r(self):
-		assert self._redis.r is not None
-		return self._redis.r
+		assert self._transport.r is not None
+		return self._transport.r
 
 	def _k(self, key: str) -> str:
-		return self._redis.result_key(self.prefix, key)
+		return self._transport.result_key(self.prefix, key)
 
 	async def connect(self) -> None:
-		if self._redis.r is not None:
+		if self._transport.r is not None:
 			return
-		await self._redis.connect()
+		await self._transport.connect()
 
 	async def close(self) -> None:
 		if self._owns_transport:
-			await self._redis.close()
+			await self._transport.close()
 
 	@_ensure_connected
 	async def get(self, key: str, **kwargs) -> Result | None:

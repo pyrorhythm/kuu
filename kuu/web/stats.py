@@ -33,6 +33,8 @@ class StatsCollector:
 
 		if connect_app_events and app is not None:
 			app.events.task_enqueued.connect(self._on_enqueued)
+			app.events.task_received.connect(self._on_received)
+			app.events.task_started.connect(self._on_started)
 			app.events.task_succeeded.connect(self._on_succeeded)
 			app.events.task_failed.connect(self._on_failed)
 			app.events.task_retried.connect(self._on_retried)
@@ -44,6 +46,12 @@ class StatsCollector:
 
 	def _on_enqueued(self, msg: Message) -> None:
 		self._bump("enqueued", msg)
+
+	def _on_received(self, msg: Message) -> None:
+		self._bump("received", msg)
+
+	def _on_started(self, msg: Message) -> None:
+		self._bump("started", msg)
 
 	def _on_succeeded(self, msg: Message, elapsed: float) -> None:
 		self._bump("succeeded", msg)
@@ -67,6 +75,8 @@ class StatsCollector:
 		out: dict = {
 			"times": [],
 			"enqueued": [],
+			"received": [],
+			"started": [],
 			"succeeded": [],
 			"failed": [],
 			"retried": [],
@@ -81,6 +91,6 @@ class StatsCollector:
 			t0 = start + i * bucket_sec
 			t1 = t0 + bucket_sec
 			out["times"].append(t1.isoformat())
-			for k in ("enqueued", "succeeded", "failed", "retried", "dead"):
+			for k in ("enqueued", "received", "started", "succeeded", "failed", "retried", "dead"):
 				out[k].append(sum(1 for e in window if t0 <= e.ts < t1 and e.event == k))
 		return out

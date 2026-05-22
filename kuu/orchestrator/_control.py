@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import logging
 import multiprocessing as mp
-import os
-import shutil
 import signal
 import threading
 import typing
@@ -27,11 +25,11 @@ from kuu.observability import (
 	State,
 )
 from kuu.observability._protocol import LogBatch
+from kuu._queue_drain import drain_sync_queue
+from kuu.orchestrator._serve import MetricsServer, serve_uvicorn_until_stop
 from kuu.persistence import PersistenceWorker, create_backend
 
 if typing.TYPE_CHECKING:
-	from wsgiref.simple_server import WSGIServer
-
 	from kuu.web.dashboard import Dashboard
 
 log = logging.getLogger("kuu.control_plane")
@@ -84,8 +82,7 @@ class ControlPlane:
 	_cmd_results: dict[str, CmdResponse]
 
 	_stop_event: anyio.Event
-	_metrics_dir: str | None = None
-	_metrics_server: WSGIServer | None = None
+	_metrics: MetricsServer
 	_persist_worker: PersistenceWorker | None = None
 
 	def __init__(self, kuunfig: Kuunfig) -> None:
@@ -101,6 +98,7 @@ class ControlPlane:
 		self._cmd_pending = {}
 		self._cmd_results = {}
 		self._stop_event = anyio.Event()
+		self._metrics = MetricsServer()
 		self._persist_worker = self._create_persist_worker()
 
 	async def start(self) -> None:
@@ -130,7 +128,7 @@ class ControlPlane:
 			self._stop_event.set()
 			self._source.close()
 			await self._stop_children()
-			self._stop_metrics_server()
+			self._metrics.stop()
 
 	def _instances(self) -> list[tuple[str, Settings]]:
 		if self.kuunfig.presets:
@@ -207,7 +205,7 @@ class ControlPlane:
 	async def _stop_children(self) -> None:
 		if not self._procs:
 			return
-			log.info("event=control_plane.stopping_supervisors count=%d", len(self._procs))
+		log.info("event=control_plane.stopping_supervisors count=%d", len(self._procs))
 
 		def _terminate_and_wait() -> None:
 			import time as _time
@@ -250,31 +248,22 @@ class ControlPlane:
 		return self._cmd_results.pop(rid)
 
 	async def _cmd_response_loop(self) -> None:
-		from queue import Empty as _QueueEmpty
+		def _handle(resp: CmdResponse) -> None:
+			ev = self._cmd_pending.pop(resp.request_id, None)
+			if ev is not None:
+				self._cmd_results[resp.request_id] = resp
+				ev.set()
 
-		while not self._stop_event.is_set():
-			try:
-				did_work = False
-				for _ in range(50):
-					try:
-						resp = self._cmd_responses.get_nowait()
-						did_work = True
-					except _QueueEmpty:
-						break
-					ev = self._cmd_pending.pop(resp.request_id, None)
-					if ev is not None:
-						self._cmd_results[resp.request_id] = resp
-						ev.set()
-
-				if did_work:
-					await anyio.lowlevel.checkpoint()
-				else:
-					await anyio.sleep(0.05)
-			except Exception as e:
-				if self._stop_event.is_set():
-					break
-				log.exception("event=control_plane.cmd_response_error error=%s", e)
-				await anyio.sleep(0.5)
+		await drain_sync_queue(
+			self._cmd_responses,
+			_handle,
+			stop_event=self._stop_event,
+			batch_size=50,
+			idle_sleep=0.05,
+			error_sleep=0.5,
+			logger=log,
+			error_event="event=control_plane.cmd_response_error",
+		)
 
 	def _create_persist_worker(self) -> PersistenceWorker | None:
 		cfg = self.kuunfig.default.persistence
@@ -288,7 +277,7 @@ class ControlPlane:
 		pw = self._persist_worker
 		if pw is None:
 			return None
-		return pw._backend  # type: ignore[attr-defined]
+		return pw.backend
 
 	def _build_dashboard(self) -> None:
 		dash_cfg = self.kuunfig.default.dashboard
@@ -314,39 +303,13 @@ class ControlPlane:
 		dash = self._dashboard
 		if dash is None:
 			return
-		import uvicorn
-
-		dash_cfg = self.kuunfig.default.dashboard
-		asgi_app = dash.build_app()
-		if dash_cfg.path and dash_cfg.path != "/":
-			from starlette.applications import Starlette
-			from starlette.routing import Mount
-
-			asgi_app = Starlette(routes=[Mount(dash_cfg.path, app=asgi_app)])
-
-		cfg = uvicorn.Config(
-			asgi_app,
-			host=dash_cfg.host,
-			port=dash_cfg.port,
-			log_level="warning",
+		await serve_uvicorn_until_stop(
+			dash.build_app(),
+			self.kuunfig.default.dashboard,
+			self._stop_event,
+			shutdown_timeout=5.0,
+			log_event="event=control_plane.dashboard_serving",
 		)
-		server = uvicorn.Server(cfg)
-		log.info(
-			"event=control_plane.dashboard_serving host=%s port=%d path=%s",
-			dash_cfg.host,
-			dash_cfg.port,
-			dash_cfg.path,
-		)
-		try:
-			async with anyio.create_task_group() as tg:
-				tg.start_soon(server.serve)
-				await self._stop_event.wait()
-				tg.cancel_scope.cancel()
-		finally:
-			with anyio.move_on_after(delay=5.0):
-				await server.shutdown()
-			if server.started:
-				server.force_exit = True
 
 	async def _start_metrics_server(self, instances: list[tuple[str, Settings]]) -> None:
 		metrics_cfg = next(
@@ -355,31 +318,7 @@ class ControlPlane:
 		)
 		if metrics_cfg is None:
 			return
-
-		from kuu.prometheus import serve
-
-		self._metrics_dir = await anyio.mkdtemp(prefix="kuu-prom-")
-		os.environ["PROMETHEUS_MULTIPROC_DIR"] = self._metrics_dir
-		self._metrics_server, _ = serve(
-			host=metrics_cfg.host,
-			port=metrics_cfg.port,
-			multiprocess_dir=self._metrics_dir,
+		await self._metrics.start(
+			metrics_cfg,
+			log_event="event=control_plane.prometheus_serving",
 		)
-		log.info(
-			"event=control_plane.prometheus_serving host=%s port=%d dir=%s",
-			metrics_cfg.host,
-			metrics_cfg.port,
-			self._metrics_dir,
-		)
-
-	def _stop_metrics_server(self) -> None:
-		srv = self._metrics_server
-		self._metrics_server = None
-		if srv is not None:
-			try:
-				srv.shutdown()
-			except Exception as e:
-				log.exception("event=control_plane.metrics_shutdown_failed error=%s", e)
-		if self._metrics_dir:
-			shutil.rmtree(self._metrics_dir, ignore_errors=True)
-			self._metrics_dir = None

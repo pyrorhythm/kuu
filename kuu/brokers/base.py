@@ -16,7 +16,7 @@ class Delivery[Receipt]:
 
 
 class Broker[Receipt](Protocol):
-	"""Transport for enqueuing and consuming task messages."""
+	"""Broker for enqueuing and consuming task messages."""
 
 	async def connect(self) -> None:
 		"""Open the broker connection."""
@@ -67,5 +67,13 @@ class Broker[Receipt](Protocol):
 
 		Returns ``None`` when the broker cannot report depth cheaply.
 		Implementations should not block; expensive probes belong elsewhere.
+		"""
+		return None
+
+	async def queue_breakdown(self, queue: str) -> dict[str, int] | None:
+		"""Per-queue depth split when the broker supports it (e.g. live vs scheduled).
+
+		Returns ``None`` when the broker has no meaningful breakdown beyond
+		:meth:`queue_depth`.
 		"""
 		return None

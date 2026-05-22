@@ -22,7 +22,7 @@ from kuu.web.stats import StatsCollector
 
 if typing.TYPE_CHECKING:
 	from kuu.orchestrator._control import ControlPlane
-	from kuu.persistence._backend import PersistenceBackend
+	from kuu.persistence import PersistenceBackend
 
 
 class DashbordAPIMixin:

@@ -40,10 +40,6 @@ __all__ = [
 log = logging.getLogger("kuu.otel")
 
 
-def _span_kind_for_phase(phase: str) -> SpanKind:
-	return SpanKind.PRODUCER if phase == "enqueue" else SpanKind.CONSUMER
-
-
 def _span_name(ctx: Context) -> str:
 	task_name = ctx.task.task_name if ctx.task else ctx.message.task
 	verb = "publish" if ctx.phase == "enqueue" else "process"
@@ -103,6 +99,7 @@ class OtelTracingMiddleware:
 			return await self._enqueue(ctx, call_next)
 		if ctx.phase == "process":
 			return await self._process(ctx, call_next)
+		return await call_next()
 
 	async def _enqueue(self, ctx: Context, call_next: Next) -> Any:
 		span = self.tracer.start_span(

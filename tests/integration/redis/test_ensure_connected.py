@@ -84,7 +84,7 @@ async def test_partial_connect_script_load_fails(redis_transport: RedisTransport
 
 	original_script_load = None
 	call_count = 0
-	orig_connect = broker._redis.connect
+	orig_connect = broker._transport.connect
 
 	async def _patched_connect():
 		await orig_connect()
@@ -98,12 +98,12 @@ async def test_partial_connect_script_load_fails(redis_transport: RedisTransport
 		broker.r.script_load = original_script_load  # type: ignore[assignment]
 		raise RuntimeError("simulated script_load failure")
 
-	broker._redis.connect = _patched_connect  # type: ignore[assignment]
+	broker._transport.connect = _patched_connect  # type: ignore[assignment]
 
 	with pytest.raises(RuntimeError, match="simulated"):
 		await broker.connect()
 
-	assert broker._redis.r is not None
+	assert broker._transport.r is not None
 	assert broker._move_sha is None
 
 	await broker.close()
@@ -112,8 +112,8 @@ async def test_partial_connect_script_load_fails(redis_transport: RedisTransport
 async def test_connect_reloads_script_when_sha_missing(redis_transport: RedisTransport):
 	broker = _broker(redis_transport, "force")
 
-	await broker._redis.connect()
-	assert broker._redis.r is not None
+	await broker._transport.connect()
+	assert broker._transport.r is not None
 	assert broker._move_sha is None
 
 	await broker.connect()
@@ -128,8 +128,8 @@ async def test_ensure_connected_recovers_from_partial_connect(
 ):
 	broker = _broker(redis_transport, "retry")
 
-	await broker._redis.connect()
-	assert broker._redis.r is not None
+	await broker._transport.connect()
+	assert broker._transport.r is not None
 	assert broker._move_sha is None
 
 	await broker.declare("q")
@@ -171,7 +171,7 @@ async def test_declare_ensures_connection(redis_transport: RedisTransport):
 	broker = _broker(redis_transport, "decl")
 
 	await broker.declare("q")
-	assert broker._redis.r is not None
+	assert broker._transport.r is not None
 	assert broker._move_sha is not None
 
 	await broker.close()
@@ -182,7 +182,7 @@ async def test_enqueue_ensures_connection(redis_transport: RedisTransport):
 
 	msg = _msg()
 	await broker.enqueue(msg)
-	assert broker._redis.r is not None
+	assert broker._transport.r is not None
 
 	await broker.close()
 
@@ -192,7 +192,7 @@ async def test_schedule_ensures_connection(redis_transport: RedisTransport):
 
 	when = utcnow() + timedelta(seconds=60)
 	await broker.schedule(_msg(), when)
-	assert broker._redis.r is not None
+	assert broker._transport.r is not None
 
 	await broker.close()
 
@@ -216,15 +216,15 @@ async def test_ack_ensures_connection(redis_transport: RedisTransport):
 		queue="q",
 	)
 
-	await broker._redis.close()
+	await broker._transport.close()
 	broker._move_sha = None
-	assert broker._redis.r is None
+	assert broker._transport.r is None
 
 	await broker.ack(delivery)
-	assert broker._redis.r is not None
+	assert broker._transport.r is not None
 	assert broker._move_sha is not None
 
-	await broker._redis.close()
+	await broker._transport.close()
 
 
 async def test_nack_ensures_connection(redis_transport: RedisTransport):
@@ -246,15 +246,15 @@ async def test_nack_ensures_connection(redis_transport: RedisTransport):
 		queue="q",
 	)
 
-	await broker._redis.close()
+	await broker._transport.close()
 	broker._move_sha = None
-	assert broker._redis.r is None
+	assert broker._transport.r is None
 
 	await broker.nack(delivery, requeue=False)
-	assert broker._redis.r is not None
+	assert broker._transport.r is not None
 	assert broker._move_sha is not None
 
-	await broker._redis.close()
+	await broker._transport.close()
 
 
 async def test_pump_scheduled_moves_due_messages(redis_transport: RedisTransport):

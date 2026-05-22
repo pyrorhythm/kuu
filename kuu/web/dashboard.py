@@ -6,7 +6,7 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from kuu.marshal import marshal as _marshal
-from kuu.persistence._backend import PersistenceBackend
+from kuu.persistence import PersistenceBackend
 from starlette.applications import Starlette
 from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles

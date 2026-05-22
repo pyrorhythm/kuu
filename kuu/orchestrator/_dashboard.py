@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-import queue
 from logging import getLogger
 from typing import TYPE_CHECKING
 
 import anyio
 
+from kuu._queue_drain import drain_sync_queue
 from kuu.config import Settings
+from kuu.orchestrator._serve import serve_uvicorn_until_stop
 
 if TYPE_CHECKING:
-	import multiprocessing as mp
-
 	from kuu.orchestrator.main import PresetSupervisor
 	from kuu.web.stats import StatsCollector
 
@@ -32,76 +31,47 @@ class DashboardRunner:
 			return
 
 		try:
-			import uvicorn
-
 			from kuu._import import import_object, import_tasks
 			from kuu.web.dashboard import Dashboard
 		except ImportError as e:
 			log.exception("event=dashboard_runner.dependencies_missing error=%s", e)
 			return
 
-		kuu = import_object(self._config.app)  # type:ignore
+		kuu = import_object(self._config.app)  # type: ignore[arg-type]
 		import_tasks(self._config.task_modules, pattern=(), fs_discover=False)
 		dashboard = Dashboard(app=kuu, orchestrator=self._orch)
 		asgi_app = dashboard.build_app()
 
-		if dash_config.path and dash_config.path != "/":
-			from starlette.applications import Starlette
-			from starlette.routing import Mount
-
-			asgi_app = Starlette(routes=[Mount(dash_config.path, app=asgi_app)])
-
-		cfg = uvicorn.Config(
-			asgi_app,
-			host=dash_config.host,
-			port=dash_config.port,
-			log_level="warning",
-		)
-		server = uvicorn.Server(cfg)
-		log.info(
-			"event=dashboard_runner.serving host=%s port=%d path=%s",
-			dash_config.host,
-			dash_config.port,
-			dash_config.path,
-		)
-		try:
-			async with anyio.create_task_group() as tg:
-				tg.start_soon(server.serve)
-				tg.start_soon(self._drain_events, dashboard.stats, stop_event)
-				await stop_event.wait()
-		finally:
-			with anyio.move_on_after(delay=self._config.shutdown_timeout):
-				await server.shutdown()
-			if server.started:
-				server.force_exit = True
-
-	def _worker_events_queue(self) -> mp.Queue | None:
-		try:
-			return self._orch._wp.events_queue
-		except AttributeError:
-			return None
+		async with anyio.create_task_group() as tg:
+			tg.start_soon(
+				serve_uvicorn_until_stop,
+				asgi_app,
+				dash_config,
+				stop_event,
+				shutdown_timeout=self._config.shutdown_timeout,
+				log_event="event=dashboard_runner.serving",
+			)
+			tg.start_soon(self._drain_events, dashboard.stats, stop_event)
+			await stop_event.wait()
+			tg.cancel_scope.cancel()
 
 	async def _drain_events(self, stats: StatsCollector, stop_event: anyio.Event) -> None:
-		"""drain :class:`WorkerEvent` and feed StatsCollector"""
-		q = self._worker_events_queue()
-		if q is None:
-			return
-		while not stop_event.is_set():
-			try:
-				did_work = False
-				for _ in range(100):
-					try:
-						we = q.get_nowait()
-						did_work = True
-					except queue.Empty:
-						break
-					stats.ingest(we.kind, we.task, we.ts)
+		q = self._orch.worker_pool.events_queue
 
-				if did_work:
-					await anyio.lowlevel.checkpoint()
-				else:
-					await anyio.sleep(1.0)
-			except Exception:
-				if stop_event.is_set():
-					break
-				await anyio.sleep(1.0)
+		def _ingest(we: object) -> None:
+			from kuu.observability._protocol import Event
+
+			if not isinstance(we, Event):
+				return
+			stats.ingest(we.kind, we.task, we.ts)
+
+		await drain_sync_queue(
+			q,
+			_ingest,
+			stop_event=stop_event,
+			batch_size=100,
+			idle_sleep=1.0,
+			error_sleep=1.0,
+			logger=log,
+			error_event="event=dashboard_runner.drain_error",
+		)

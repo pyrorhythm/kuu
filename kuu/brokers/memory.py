@@ -15,6 +15,7 @@ from kuu._util import utcnow
 
 from ..exceptions import InvalidReceiptType
 from ..message import Message
+from ._scheduled import run_scheduled_pump_loop
 from .base import Broker, Delivery
 
 
@@ -48,6 +49,14 @@ class MemoryBroker(Broker[MemoryReceipt]):
 		self._sched_event = anyio.Event()
 		self._seq = itertools.count()
 		self._pending: dict[tuple[str, int], Message] = {}
+
+	@property
+	def scheduled_count(self) -> int:
+		return len(self._scheduled)
+
+	@property
+	def pending_count(self) -> int:
+		return len(self._pending)
 
 	async def connect(self) -> None:
 		return None  # noop
@@ -89,23 +98,27 @@ class MemoryBroker(Broker[MemoryReceipt]):
 			self._sched_event.set()
 			self._sched_event = anyio.Event()
 
+	async def _tick_scheduled(self) -> None:
+		async with self._sched_lock:
+			now = self._now()
+			due: list[tuple[str, Message]] = []
+			while self._scheduled and self._scheduled[0][0] <= now:
+				_, _, q, m = heapq.heappop(self._scheduled)
+				due.append((q, m))
+		for q, m in due:
+			await self._push(q, m)
+
+	async def _idle_scheduled(self) -> None:
+		async with self._sched_lock:
+			if self._scheduled:
+				next_ts = self._scheduled[0][0]
+				wait = max(0, min(next_ts - self._now(), self.pump_interval))
+			else:
+				wait = self.pump_interval
+		await anyio.sleep(wait)
+
 	async def _pump_scheduled(self) -> None:
-		while True:
-			async with self._sched_lock:
-				now = self._now()
-				due: list[tuple[str, Message]] = []
-				while self._scheduled and self._scheduled[0][0] <= now:
-					_, _, q, m = heapq.heappop(self._scheduled)
-					due.append((q, m))
-			for q, m in due:
-				await self._push(q, m)
-			async with self._sched_lock:
-				if self._scheduled:
-					next_ts = self._scheduled[0][0]
-					wait = max(0, min(next_ts - self._now(), self.pump_interval))
-				else:
-					wait = self.pump_interval
-			await anyio.sleep(wait)
+		await run_scheduled_pump_loop(self._tick_scheduled, self._idle_scheduled)
 
 	async def consume(
 		self, queues: list[str], prefetch: int

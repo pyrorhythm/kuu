@@ -17,6 +17,7 @@ from ..exceptions import InvalidReceiptType
 from ..message import Message
 from ..serializers import JSONSerializer, Serializer
 from ..transports.nats._transport import NatsTransport
+from ._scheduled import run_scheduled_pump_loop
 from .base import Broker, Delivery
 
 NatsReceipt = Msg
@@ -70,6 +71,15 @@ class NatsBroker(Broker[NatsReceipt]):
 		self._scheduled = []
 		self._sched_lock = anyio.Lock()
 		self._sched_event = anyio.Event()
+		self._wait_seconds = 1.0
+
+	@property
+	def transport(self) -> NatsTransport:
+		return self.t
+
+	@property
+	def scheduled_count(self) -> int:
+		return len(self._scheduled)
 
 	def _subject(self, queue: str) -> str:
 		return f"{self.sp}{queue}"
@@ -146,19 +156,25 @@ class NatsBroker(Broker[NatsReceipt]):
 			self._scheduled.sort(key=lambda x: x[0])
 		self._sched_event.set()
 
+	async def _tick_scheduled(self) -> None:
+		async with self._sched_lock:
+			now = utcnow().timestamp()
+			due: list[Message] = []
+			while self._scheduled and self._scheduled[0][0] <= now:
+				due.append(self._scheduled.pop(0)[1])
+			self._wait_seconds = self._scheduled[0][0] - now if self._scheduled else 1.0
+		for m in due:
+			await self.enqueue(m)
+
+	async def _idle_scheduled(self) -> None:
+		if self._sched_event.is_set():
+			self._sched_event = anyio.Event()
+		wait = max(0.05, min(getattr(self, "_wait_seconds", 1.0), 1.0))
+		with anyio.move_on_after(wait):
+			await self._sched_event.wait()
+
 	async def _pump_scheduled(self) -> None:
-		while True:
-			async with self._sched_lock:
-				now = utcnow().timestamp()
-				due: list[Message] = []
-				while self._scheduled and self._scheduled[0][0] <= now:
-					due.append(self._scheduled.pop(0)[1])
-				wait = self._scheduled[0][0] - now if self._scheduled else 1.0
-			for m in due:
-				await self.enqueue(m)
-			self._sched_event = anyio.Event() if self._sched_event.is_set() else self._sched_event
-			with anyio.move_on_after(max(0.05, min(wait, 1.0))):
-				await self._sched_event.wait()
+		await run_scheduled_pump_loop(self._tick_scheduled, self._idle_scheduled)
 
 	async def consume(
 		self, queues: list[str], prefetch: int

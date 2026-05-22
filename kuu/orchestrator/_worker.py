@@ -53,6 +53,10 @@ class WorkerPool:
 		self._processes = []
 		self.events_queue = self._mp_ctx.Queue()
 
+	@property
+	def processes(self) -> list[SpawnProcess]:
+		return self._processes
+
 	async def run(self, stop_event: anyio.Event) -> None:
 		self._stop_event = stop_event
 		try:

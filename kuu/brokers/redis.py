@@ -16,6 +16,7 @@ from ..exceptions import InvalidReceiptType, NotConnected
 from ..message import Message
 from ..serializers import JSONSerializer, Serializer
 from ..transports.redis import RedisTransport, StandaloneConfig
+from ._scheduled import run_scheduled_pump_loop
 from .base import Broker, Delivery
 
 _MOVE_LUA = """
@@ -51,7 +52,7 @@ class RedisBroker(Broker[RedisReceipt]):
 	Consumer groups handle competing consumers across worker subprocesses.
 
 	- `url`: Redis connection URL (convenience alias for ``StandaloneConfig``).
-	- `t`: pre-configured :class:`~kuu.transports.redis.RedisTransport`.
+	- `transport`: pre-configured :class:`~kuu.transports.redis.RedisTransport`.
 	  When given, ``url`` is ignored.
 	- `group`: consumer group name.
 	- `consumer`: consumer name within the group.
@@ -76,10 +77,10 @@ class RedisBroker(Broker[RedisReceipt]):
 		serializer: Serializer = JSONSerializer(),
 	):
 		if transport is not None:
-			self._redis = transport
+			self._transport = transport
 			self._owns_transport = False
 		else:
-			self._redis = RedisTransport(StandaloneConfig(url=url))
+			self._transport = RedisTransport(StandaloneConfig(url=url))
 			self._owns_transport = True
 		self.group = group
 		self.consumer = consumer
@@ -92,34 +93,44 @@ class RedisBroker(Broker[RedisReceipt]):
 		self._declared: set[str] = set()
 
 	@property
+	def transport(self) -> RedisTransport:
+		return self._transport
+
+	@property
 	def r(self) -> Redis | RedisCluster:
-		assert self._redis.r is not None
-		return self._redis.r
+		assert self._transport.r is not None
+		return self._transport.r
 
 	def _stream(self, q: str) -> str:
-		return self._redis.stream_key(self.sp, q)
+		return self._transport.stream_key(self.sp, q)
 
 	def _zset(self, q: str) -> str:
-		return self._redis.zset_key(self.zp, q)
+		return self._transport.zset_key(self.zp, q)
 
 	async def connect(self) -> None:
-		if self._redis.r is not None and self._move_sha is not None:
+		if self._transport.r is not None and self._move_sha is not None:
 			return
-		await self._redis.connect()
+		await self._transport.connect()
 		self._move_sha = await self.r.script_load(_MOVE_LUA)
 
 	async def close(self) -> None:
 		if self._owns_transport:
-			await self._redis.close()
+			await self._transport.close()
 		self._move_sha = None
 
 	async def queue_depth(self, queue: str) -> int | None:
-		if self._redis.r is None:
+		breakdown = await self.queue_breakdown(queue)
+		if breakdown is None:
+			return None
+		return breakdown["stream"] + breakdown["scheduled"]
+
+	async def queue_breakdown(self, queue: str) -> dict[str, int] | None:
+		if self._transport.r is None:
 			return None
 		try:
 			stream = await self.r.xlen(self._stream(queue))
 			scheduled = await self.r.zcard(self._zset(queue))
-			return int(stream) + int(scheduled)
+			return {"stream": int(stream), "scheduled": int(scheduled)}
 		except Exception:
 			return None
 
@@ -154,7 +165,7 @@ class RedisBroker(Broker[RedisReceipt]):
 		if self._move_sha is None:
 			raise NotConnected("redis broker not connected")
 
-		while True:
+		async def _tick() -> None:
 			now = utcnow().timestamp()
 			await asyncio.gather(
 				*[
@@ -164,7 +175,11 @@ class RedisBroker(Broker[RedisReceipt]):
 					for q in queues
 				]
 			)
+
+		async def _idle() -> None:
 			await anyio.sleep(0.5)
+
+		await run_scheduled_pump_loop(_tick, _idle)
 
 	async def _claim_stale(self, queue: str) -> list[tuple[bytes, dict[bytes, bytes]]]:
 		try:
