@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import logging
-import typing
+from typing import TYPE_CHECKING
 
 from kuu.config import Settings
+
+if TYPE_CHECKING:
+	from kuu.app import Kuu
 
 log = logging.getLogger("kuu.orchestrator.app_loader")
 
@@ -11,9 +14,9 @@ log = logging.getLogger("kuu.orchestrator.app_loader")
 class AppLoader:
 	def __init__(self, config: Settings) -> None:
 		self._config = config
-		self._app: typing.Any = None
+		self._app: Kuu | None = None
 
-	def get(self) -> typing.Any:
+	def get(self) -> Kuu | None:
 		if self._app is not None:
 			return self._app
 		try:

@@ -5,6 +5,7 @@ import multiprocessing as mp
 import signal
 import threading
 import uuid
+from collections import Counter
 from datetime import datetime as dtime
 from datetime import timezone as tz
 from queue import Empty as _QueueEmpty
@@ -19,6 +20,7 @@ from kuu.observability import (
 	CmdResponse,
 	EventsSink,
 )
+from kuu.observability._protocol import Body
 from kuu.orchestrator._app_loader import AppLoader
 from kuu.orchestrator._command_service import CommandService
 from kuu.orchestrator._dashboard import DashboardRunner
@@ -98,7 +100,7 @@ class PresetSupervisor:
 			started_at=self._started_at,
 			app_loader=self._app_loader,
 			processes=self._wp.processes,
-			inflight=fwd.inflight if fwd is not None else {},
+			inflight=fwd.inflight if fwd is not None else Counter(),
 			current_task=fwd.current_task if fwd is not None else {},
 		)
 
@@ -159,7 +161,7 @@ class PresetSupervisor:
 			if self._manage_metrics:
 				self._metrics.stop()
 
-	def _emit(self, body: object) -> None:
+	def _emit(self, body: Body) -> None:
 		sink = self._events_sink
 		if sink is None:
 			return

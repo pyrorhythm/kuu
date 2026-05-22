@@ -10,7 +10,7 @@ import anyio
 if TYPE_CHECKING:
 	from wsgiref.simple_server import WSGIServer
 
-	from kuu.config import DashboardConfig, MetricsConfig
+	from kuu.config import MetricsSettings, WebSettings
 
 log = logging.getLogger("kuu.orchestrator.serve")
 
@@ -20,7 +20,7 @@ class MetricsServer:
 		self._metrics_dir: str | None = None
 		self._server: WSGIServer | None = None
 
-	async def start(self, cfg: MetricsConfig, *, log_event: str) -> None:
+	async def start(self, cfg: MetricsSettings, *, log_event: str) -> None:
 		if not cfg.enable:
 			return
 		from kuu.prometheus import serve
@@ -55,7 +55,7 @@ class MetricsServer:
 
 async def serve_uvicorn_until_stop(
 	asgi_app,
-	cfg: DashboardConfig,
+	cfg: WebSettings,
 	stop_event: anyio.Event,
 	*,
 	shutdown_timeout: float,

@@ -4,13 +4,13 @@ import logging
 from collections import Counter
 from datetime import datetime as dtime
 from datetime import timezone as tz
-from queue import Queue
-
 import anyio
+
+from kuu._queue_drain import SyncGetQueue
 
 from kuu._queue_drain import drain_sync_queue
 from kuu.observability import PROTOCOL_VERSION, Envelope, Event, EventsSink
-from kuu.observability._protocol import LogBatch
+from kuu.observability._protocol import Body, LogBatch
 
 log = logging.getLogger("kuu.orchestrator.event_forwarder")
 
@@ -21,7 +21,7 @@ class EventForwarder:
 		*,
 		instance_id: str,
 		events_sink: EventsSink,
-		events_queue: Queue,
+		events_queue: SyncGetQueue[object],
 	) -> None:
 		self._instance_id = instance_id
 		self._sink = events_sink
@@ -29,7 +29,7 @@ class EventForwarder:
 		self.inflight: Counter[str] = Counter()
 		self.current_task: dict[int, str] = {}
 
-	def _emit(self, body: object) -> None:
+	def _emit(self, body: Body) -> None:
 		try:
 			self._sink.emit(
 				Envelope(
@@ -59,7 +59,9 @@ class EventForwarder:
 		if isinstance(item, LogBatch):
 			self._emit(item)
 			return
-		we: Event = item
+		if not isinstance(item, Event):
+			return
+		we = item
 		if we.kind == "started":
 			self.inflight[we.queue] += 1
 			self.current_task[we.worker_pid] = we.task

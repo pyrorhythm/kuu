@@ -8,6 +8,7 @@ from datetime import datetime as dtime
 from importlib.metadata import version as _pkg_version
 from multiprocessing.context import SpawnProcess
 
+from kuu.app import Kuu
 from kuu.config import Settings
 from kuu.observability import (
 	BrokerInfo,
@@ -142,7 +143,7 @@ class SnapshotBuilder:
 			out[q] = QueueSnapshot(in_flight=self._inflight.get(q, 0), depth=depth)
 		return out
 
-	async def _probe_depth(self, app: object | None, queue: str) -> int | None:
+	async def _probe_depth(self, app: Kuu | None, queue: str) -> int | None:
 		if app is None:
 			return None
 		broker = app.broker

@@ -42,15 +42,17 @@ class DashboardRunner:
 		dashboard = Dashboard(app=kuu, orchestrator=self._orch)
 		asgi_app = dashboard.build_app()
 
-		async with anyio.create_task_group() as tg:
-			tg.start_soon(
-				serve_uvicorn_until_stop,
+		async def _serve_dashboard() -> None:
+			await serve_uvicorn_until_stop(
 				asgi_app,
 				dash_config,
 				stop_event,
 				shutdown_timeout=self._config.shutdown_timeout,
 				log_event="event=dashboard_runner.serving",
 			)
+
+		async with anyio.create_task_group() as tg:
+			tg.start_soon(_serve_dashboard)
 			tg.start_soon(self._drain_events, dashboard.stats, stop_event)
 			await stop_event.wait()
 			tg.cancel_scope.cancel()

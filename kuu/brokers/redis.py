@@ -165,12 +165,14 @@ class RedisBroker(Broker[RedisReceipt]):
 		if self._move_sha is None:
 			raise NotConnected("redis broker not connected")
 
+		move_sha = self._move_sha
+
 		async def _tick() -> None:
 			now = utcnow().timestamp()
 			await asyncio.gather(
 				*[
 					_asyncify(self.r.evalsha)(
-						self._move_sha, 2, self._zset(q), self._stream(q), str(now), "128"
+						move_sha, 2, self._zset(q), self._stream(q), str(now), "128"
 					)
 					for q in queues
 				]

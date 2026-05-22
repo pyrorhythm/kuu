@@ -2,16 +2,20 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from queue import Empty, Queue
-from typing import TypeVar
+from queue import Empty
+from typing import Protocol, TypeVar
 
 import anyio
 
 T = TypeVar("T")
 
 
+class SyncGetQueue(Protocol[T]):
+	def get_nowait(self) -> T: ...
+
+
 async def drain_sync_queue(
-	q: Queue[T],
+	q: SyncGetQueue[T],
 	handler: Callable[[T], None],
 	*,
 	stop_event: anyio.Event,
