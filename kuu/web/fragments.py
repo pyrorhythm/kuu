@@ -7,8 +7,6 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse
 
 from kuu.app import Kuu
-from kuu.brokers.memory import MemoryBroker
-from kuu.brokers.nats import NatsBroker
 from kuu.observability import InstanceRegistry
 from kuu.orchestrator.main import PresetSupervisor
 from kuu.scheduler.scheduler import Scheduler
@@ -223,9 +221,9 @@ class DashboardFragmentsMixin:
 		except Exception:
 			pass
 
-		if isinstance(broker, NatsBroker):
+		if hasattr(broker, "scheduled_count"):
 			out["scheduled"] = broker.scheduled_count
-		elif isinstance(broker, MemoryBroker):
-			out["scheduled"] = broker.scheduled_count
+		if hasattr(broker, "pending_count"):
 			out["pending"] = broker.pending_count
+
 		return out
