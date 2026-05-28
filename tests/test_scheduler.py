@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, time, timedelta, timezone
+from typing import Literal
 
 import pytest
 
@@ -206,6 +207,30 @@ def test_kuu_sched_decorator_registers_schedule_job():
 	job = app.schedule.jobs[0]
 	assert isinstance(job, ScheduleJob)
 	assert "morning_report" in job.task_name
+
+
+def test_kuu_sched_decorator_registers_mapping():
+	app = Kuu(broker=MemoryBroker())
+
+	_mon_sched = at(time(9, 0)) & on(Mon)
+	_wed_sched = at(time(9, 0)) & on(Wed)
+	_fri_sched = at(time(9, 0)) & on(Fri)
+
+	@app.sched(
+		{
+			_mon_sched: "mon",
+			_wed_sched: "wed",
+			_fri_sched: "fri",
+		}
+	)
+	async def morning_report(day: Literal["mon", "wed", "fri"]) -> None:
+		pass
+
+	assert len(app.schedule.jobs) == 3
+	job = app.schedule.jobs[0]
+	assert isinstance(job, ScheduleJob)
+	assert "morning_report" in job.task_name
+	assert job.schedule == _mon_sched
 
 
 def test_kuu_every_decorator_accepts_optional_kwargs():
