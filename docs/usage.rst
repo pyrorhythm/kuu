@@ -398,6 +398,42 @@ Programmatic registration:
 
    app.schedule.add_schedule(at(time(9, 0)) & on(Mon, Wed, Fri), "myapp.tasks:report")
 
+Job mappings
+~~~~~~~~~~~~
+
+Jobs could be registered with a mapping, instead of being registered one-by-one.
+
+So, instead of:
+
+.. code-block:: python
+    async def generate_notifications(
+        kind: Literal["regular", "unique"],
+    ) -> None:
+        # ...
+
+
+    @broker.sched(at(time(18)))
+    async def generate_regular_notifications() -> None:
+        await generate_notifications(kind="regular")
+
+
+    @broker.sched(on_day(Thu) & at(time(18, 30)))
+    async def generate_unique_notifications() -> None:
+        await generate_notifications(kind="unique")
+
+One could write:
+
+.. code-block:: python
+    @broker.sched({
+        at(time(18)): Payload(kwargs={"kind":"regular"}),
+        on_day(Thu) & at(time(18, 30)): Payload(kwargs={"kind":"unique"}),
+    })
+    async def generate_notifications(
+        kind: Literal["regular", "unique"],
+    ) -> None:
+        # ...
+```
+
 Serializers
 -----------
 
