@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 from datetime import datetime, timedelta
-from typing import Any, overload
+from typing import Any, Mapping, overload
 
 from kuu._import import object_fqn
 from kuu._types import _FnAny, _FnAsync, _Wrap
@@ -147,7 +147,7 @@ class Kuu:
 
 	def sched[**P, R](
 		self,
-		sched: Schedule,
+		sched: Schedule | Mapping[Schedule, Payload],
 		args: Payload = Payload(),
 		*,
 		sched_id: str | None = None,
@@ -157,7 +157,7 @@ class Kuu:
 	) -> _Wrap[P, R]:
 		"""Register function as a task with `Schedule`
 
-		:param sched: schedule to run task with
+		:param sched: schedule to run task with, or mapping of schedules to their corresponding arguments
 		:param args: args for the task to be executed with
 		:param sched_id: optional, specific sched_id for scheduler
 		:param queue: destination queue; defaults to `Kuu.default_queue`
@@ -168,15 +168,29 @@ class Kuu:
 		def wrap(fn: _FnAny[P, R]) -> Task[P, R]:
 			if not isinstance(fn, Task):
 				fn = self.task(fn)
-			self.schedule.add_schedule(
-				sched,
-				fn,
-				args,
-				id=sched_id,
-				queue=queue,
-				headers=headers,
-				max_attempts=max_attempts,
-			)
+
+			if isinstance(sched, Schedule):
+				self.schedule.add_schedule(
+					sched,
+					fn,
+					args,
+					id=sched_id,
+					queue=queue,
+					headers=headers,
+					max_attempts=max_attempts,
+				)
+			else:
+				for sched_, payload in sched.items():
+					self.schedule.add_schedule(
+						sched_,
+						fn,
+						payload,
+						id=sched_id,
+						queue=queue,
+						headers=headers,
+						max_attempts=max_attempts,
+					)
+
 			return fn
 
 		return wrap
