@@ -432,7 +432,7 @@ One could write:
         kind: Literal["regular", "unique"],
     ) -> None:
         # ...
-```
+
 
 Serializers
 -----------
@@ -625,7 +625,7 @@ Client-Side
 
 .. code-block:: python
 
-   from kuu.prometheus import ClientMetrics
+   from kuu.contrib.prometheus import ClientMetrics
 
    app = Kuu(broker=..., middleware=[ClientMetrics()])
 
@@ -638,7 +638,7 @@ To expose them from your own ASGI app:
 .. code-block:: python
 
    from fastapi import FastAPI
-   from kuu.prometheus import asgi_app
+   from kuu.contrib.prometheus import asgi_app
 
    api = FastAPI()
    api.mount("/metrics", asgi_app())

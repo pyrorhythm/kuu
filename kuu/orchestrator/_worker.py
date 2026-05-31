@@ -119,7 +119,7 @@ class WorkerPool:
 				p.join(timeout=5)
 
 		if self._config.metrics.enable:
-			from kuu.prometheus import mark_worker_dead
+			from kuu.contrib.prometheus import mark_worker_dead
 
 			for p in processes:
 				if p.pid is not None:
@@ -135,7 +135,7 @@ def _run_worker(config: Settings, events_queue: mp.Queue | None = None) -> None:
 	import_tasks(config.task_modules, "", False)
 
 	if config.metrics.enable:
-		from kuu.prometheus import WorkerMetrics
+		from kuu.contrib.prometheus import WorkerMetrics
 
 		WorkerMetrics(app)
 

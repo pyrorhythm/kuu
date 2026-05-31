@@ -4,8 +4,9 @@ from typing import Any
 
 import structlog
 
-from ..context import Context
-from .base import Next
+from kuu.context import Context
+from kuu.middleware.base import Next
+
 from ._task_log import TaskLogSink, run_process_task_logging
 
 
