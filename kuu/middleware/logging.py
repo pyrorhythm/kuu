@@ -5,7 +5,7 @@ from typing import Any
 
 from ..context import Context
 from .base import Next
-from ._task_log import TaskLogSink, run_process_task_logging
+from .task_log import TaskLogSink, run_process_task_logging
 
 
 class _StdlibTaskLogSink(TaskLogSink):

@@ -60,6 +60,12 @@ otel = [
     "opentelemetry-instrumentation-logging>=0.60,<1",
     "structlog>=24,<27",
 ]
+di = [
+    "dishka>=1.10.1",
+]
+structlog = [
+    "structlog>=24,<27",
+]
 
 [dependency-groups]
 dev = [
@@ -76,15 +82,13 @@ dev = [
     "opentelemetry-sdk>=1.41,<2",
     "structlog>=24,<26",
 ]
+
 docs = [
     "furo>=2024.8",
     "sphinx>=8.1,<9",
     "sphinx-autobuild>=2024.10",
     "sphinx-autodoc2>=0.5",
     "sphinx-copybutton>=0.5",
-]
-postgres = [
-    "pypika>=0.51.1",
 ]
 
 [build-system]

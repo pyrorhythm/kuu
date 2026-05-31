@@ -3,18 +3,16 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from queue import Empty
-from typing import Protocol, TypeVar
+from typing import Protocol
 
 import anyio
 
-T = TypeVar("T")
 
-
-class SyncGetQueue(Protocol[T]):
+class SyncGetQueue[T](Protocol):
 	def get_nowait(self) -> T: ...
 
 
-async def drain_sync_queue(
+async def drain_sync_queue[T](
 	q: SyncGetQueue[T],
 	handler: Callable[[T], None],
 	*,
@@ -34,7 +32,7 @@ async def drain_sync_queue(
 			did_work = False
 			for _ in range(batch_size):
 				try:
-					item = q.get_nowait()
+					item: T = q.get_nowait()
 					did_work = True
 				except Empty:
 					break

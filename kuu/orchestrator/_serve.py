@@ -23,7 +23,7 @@ class MetricsServer:
 	async def start(self, cfg: MetricsSettings, *, log_event: str) -> None:
 		if not cfg.enable:
 			return
-		from kuu.prometheus import serve
+		from kuu.contrib.prometheus import serve
 
 		self._metrics_dir = await anyio.mkdtemp(prefix="kuu-prom-")
 		os.environ["PROMETHEUS_MULTIPROC_DIR"] = self._metrics_dir
