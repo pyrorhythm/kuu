@@ -16,7 +16,7 @@ A native distributed task queue for Python.
 .. code-block:: shell
 
    uv add kuu
-   # extras: msgspec, nats, prometheus, redis, dashboard
+   # extras: msgspec, nats, prometheus, redis, dashboard, di
 
 .. toctree::
    :maxdepth: 2
@@ -24,6 +24,7 @@ A native distributed task queue for Python.
 
    quickstart
    usage
+   integrations
    config
    apidocs/index
 
@@ -48,7 +49,8 @@ At a Glance
    uv run kuu start
 
 See :doc:`quickstart` for setup, :doc:`usage` for the full API tour,
-:doc:`config` for tunables, or :doc:`apidocs/index` for the reference.
+:doc:`integrations` for OpenTelemetry/Prometheus/Dishka/structlog, :doc:`config`
+for tunables, or :doc:`apidocs/index` for the reference.
 
 Indices
 -------

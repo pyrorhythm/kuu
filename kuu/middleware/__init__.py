@@ -1,3 +1,4 @@
+from .task_log import TaskLogSink, run_process_task_logging
 from .base import Middleware, run_chain
 from .logging import LoggingMiddleware
 from .retry import RetryMiddleware
@@ -9,4 +10,6 @@ __all__ = [
 	"RetryMiddleware",
 	"TimeoutMiddleware",
 	"LoggingMiddleware",
+	"TaskLogSink",
+	"run_process_task_logging",
 ]

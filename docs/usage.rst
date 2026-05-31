@@ -318,6 +318,14 @@ Custom Middleware
 ``ctx.phase`` is ``"enqueue"`` for the publish path and ``"process"`` for
 the worker path. Most middleware filters on phase.
 
+Dependency Injection
+--------------------
+
+``kuu.contrib.dishka`` resolves task dependencies from a `Dishka
+<https://dishka.readthedocs.io>`_ container per execution. Declare them as
+``FromDishka()`` defaults and apply ``@inject`` below ``@app.task``. See
+:doc:`integrations` for setup, sync containers, and custom ``ContextVar`` wiring.
+
 Scheduler
 ---------
 
@@ -406,6 +414,7 @@ Jobs could be registered with a mapping, instead of being registered one-by-one.
 So, instead of:
 
 .. code-block:: python
+
     async def generate_notifications(
         kind: Literal["regular", "unique"],
     ) -> None:
@@ -424,6 +433,7 @@ So, instead of:
 One could write:
 
 .. code-block:: python
+
     @broker.sched({
         at(time(18)): Payload(kwargs={"kind":"regular"}),
         on_day(Thu) & at(time(18, 30)): Payload(kwargs={"kind":"unique"}),
@@ -598,50 +608,13 @@ custom tooling:
        envelope_to_bytes, envelope_from_bytes,
    )
 
-Prometheus Metrics
-------------------
+Metrics
+-------
 
-Two integration points: a worker-side emitter and client-side middleware.
-Both wire onto ``app.events``.
-
-Worker Metrics
-~~~~~~~~~~~~~~
-
-When ``[metrics] enable = true``, the orchestrator runs an aggregator HTTP
-server on ``metrics.port`` and tells each worker subprocess to write to a
-shared multiprocess directory.
-
-.. code-block:: toml
-
-   [metrics]
-   enable = true
-   host = "0.0.0.0"
-   port = 9191
-
-Hit ``http://host:9191/metrics``.
-
-Client-Side
-~~~~~~~~~~~
-
-.. code-block:: python
-
-   from kuu.contrib.prometheus import ClientMetrics
-
-   app = Kuu(broker=..., middleware=[ClientMetrics()])
-
-This records ``client_enqueued_total``, ``client_enqueue_errors_total`` and
-``client_enqueue_duration_seconds`` from every ``task.q(...)`` call, on the
-same registry the worker side uses.
-
-To expose them from your own ASGI app:
-
-.. code-block:: python
-
-   from fastapi import FastAPI
-   from kuu.contrib.prometheus import asgi_app
-
-   api = FastAPI()
-   api.mount("/metrics", asgi_app())
+Worker-side Prometheus metrics are driven by the control plane via
+``[metrics] enable = true``; client-side enqueue metrics and OpenTelemetry
+traces/metrics/logs are available under ``kuu.contrib``. See
+:doc:`integrations`.
 
 Dashboard
 ---------
