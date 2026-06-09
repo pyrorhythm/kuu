@@ -49,6 +49,7 @@ class MemoryBroker(Broker[MemoryReceipt]):
 		self._sched_event = anyio.Event()
 		self._seq = itertools.count()
 		self._pending: dict[tuple[str, int], Message] = {}
+		self._dead: dict[str, list[Message]] = {}
 
 	@property
 	def scheduled_count(self) -> int:
@@ -57,6 +58,14 @@ class MemoryBroker(Broker[MemoryReceipt]):
 	@property
 	def pending_count(self) -> int:
 		return len(self._pending)
+
+	@property
+	def dead_count(self) -> int:
+		return sum(len(v) for v in self._dead.values())
+
+	def dead(self, queue: str) -> list[Message]:
+		"""Dead-lettered messages for `queue` (oldest first)."""
+		return list(self._dead.get(queue, ()))
 
 	async def connect(self) -> None:
 		return None  # noop
@@ -68,6 +77,7 @@ class MemoryBroker(Broker[MemoryReceipt]):
 		self._queues.clear()
 		self._scheduled.clear()
 		self._pending.clear()
+		self._dead.clear()
 
 	async def declare(self, queue: str) -> None:
 		if queue in self._queues:
@@ -176,6 +186,7 @@ class MemoryBroker(Broker[MemoryReceipt]):
 		key = (delivery.receipt.queue, delivery.receipt.seq)
 		self._pending.pop(key, None)
 		if not requeue:
+			self._dead.setdefault(delivery.receipt.queue, []).append(delivery.message)
 			return
 		msg = structs.replace(delivery.message, attempt=delivery.message.attempt + 1)
 		if delay and delay > 0:

@@ -4,7 +4,7 @@ import functools
 import inspect
 import typing as t
 from types import NoneType
-from typing import Any, Callable, Concatenate, Coroutine, Protocol, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable, Concatenate, Coroutine, Protocol
 
 from adaptix import Retort
 from adaptix.load_error import LoadError
@@ -107,8 +107,8 @@ def _coerce_payload(func: Any, payload: Payload) -> Payload:
 		coerced = _coerce(bound.arguments[name], ann)
 
 		if p.kind in (
-				inspect.Parameter.POSITIONAL_ONLY,
-				inspect.Parameter.POSITIONAL_OR_KEYWORD,
+			inspect.Parameter.POSITIONAL_ONLY,
+			inspect.Parameter.POSITIONAL_OR_KEYWORD,
 		):
 			if name in new_kwargs:
 				new_kwargs[name] = coerced
@@ -132,7 +132,7 @@ type _Wrap[**P, R] = _FnSingle[_FnAny[P, R], Task[P, R]]
 
 
 def _ensure_connected[T: Connectable, **P, R](
-		fn: Callable[Concatenate[T, P], Coroutine[Any, Any, R]],
+	fn: Callable[Concatenate[T, P], Coroutine[Any, Any, R]],
 ) -> Callable[Concatenate[T, P], Coroutine[Any, Any, R]]:
 	@functools.wraps(fn)
 	async def wrapper(self: T, *args: P.args, **kwargs: P.kwargs) -> R:

@@ -151,3 +151,73 @@ async def test_consume_delivers_scheduled_message_via_pump(
 		assert deliveries[0].message.id == msg.id
 	finally:
 		await broker.close()
+
+
+async def _put_in_pel(broker: RedisBroker, queue: str, consumer: str) -> None:
+	"""Read one message into `consumer`'s PEL without acking (simulates a crash)."""
+	resp = await broker.r.xreadgroup(broker.group, consumer, {broker._stream(queue): ">"}, count=1)
+	assert resp, "expected a pending message to claim"
+
+
+async def test_claim_stale_requeues_with_attempt_bump(redis_transport: RedisTransport):
+	broker = _broker(redis_transport, "claim_bump", dead_prefix="d:claim_bump:", claim_min_idle_ms=0)
+	await broker.connect()
+	try:
+		await broker.declare("q")
+		original = _msg()
+		await broker.enqueue(original)
+		await _put_in_pel(broker, "q", "crashed-consumer")
+
+		await broker._claim_stale("q")
+
+		[(_, data)] = await broker.r.xrange(broker._stream("q"))
+		requeued = broker.serializer.unmarshal(data[b"m"], into=Message)
+		assert requeued.id == original.id
+		assert requeued.attempt == 1
+		pending = await broker.r.xpending(broker._stream("q"), broker.group)
+		assert pending["pending"] == 0
+	finally:
+		await broker.close()
+
+
+async def test_claim_stale_dead_letters_exhausted_message(redis_transport: RedisTransport):
+	broker = _broker(redis_transport, "claim_dead", dead_prefix="d:claim_dead:", claim_min_idle_ms=0)
+	await broker.connect()
+	try:
+		await broker.declare("q")
+		await broker.enqueue(_msg(attempt=4, max_attempts=5))
+		await _put_in_pel(broker, "q", "crashed-consumer")
+
+		await broker._claim_stale("q")
+
+		assert await broker.r.xlen(broker._stream("q")) == 0
+		[(_, data)] = await broker.r.xrange(broker._dead_stream("q"))
+		dead = broker.serializer.unmarshal(data[b"m"], into=Message)
+		assert dead.attempt == 5
+	finally:
+		await broker.close()
+
+
+async def test_nack_without_requeue_moves_to_dead_stream(redis_transport: RedisTransport):
+	broker = _broker(redis_transport, "nack_dead", dead_prefix="d:nack_dead:")
+	await broker.connect()
+	try:
+		await broker.declare("q")
+		original = _msg()
+		await broker.enqueue(original)
+
+		async def _worker(scope: anyio.CancelScope):
+			async for delivery in broker.consume(["q"], prefetch=1):
+				await broker.nack(delivery, requeue=False)
+				scope.cancel()
+
+		with anyio.fail_after(10.0):
+			async with anyio.create_task_group() as tg:
+				tg.start_soon(_worker, tg.cancel_scope)
+
+		assert await broker.r.xlen(broker._stream("q")) == 0
+		[(_, data)] = await broker.r.xrange(broker._dead_stream("q"))
+		dead = broker.serializer.unmarshal(data[b"m"], into=Message)
+		assert dead.id == original.id
+	finally:
+		await broker.close()

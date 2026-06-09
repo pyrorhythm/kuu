@@ -15,6 +15,7 @@ from dishka import (
 	provide,
 )
 
+from kuu._types import _coerce_payload
 from kuu.app import Kuu
 from kuu.brokers.memory import MemoryBroker
 from kuu.config import Settings
@@ -23,16 +24,15 @@ from kuu.contrib.dishka import (
 	CONTAINER_STATE_KEY,
 	FromDishka,
 	KuuDishkaMiddleware,
+	_request_container,  # type: ignore[attr-defined]
 	current_container,
 	from_contextvar,
 	inject,
 	setup_dishka,
 )
-from kuu.contrib.dishka import _request_container  # type: ignore[attr-defined]
 from kuu.message import Message, Payload
 from kuu.middleware.base import Next, run_chain
 from kuu.worker import Worker
-from kuu._types import _coerce_payload
 
 pytestmark = pytest.mark.anyio
 
@@ -80,9 +80,6 @@ def sync_container():
 	c.close()
 
 
-# --------------------------------------------------------------------------- #
-# FromDishka marker + inject signature rewriting (pure unit)
-# --------------------------------------------------------------------------- #
 def test_fromdishka_returns_marker_with_default_component():
 	from kuu.contrib.dishka import _FromDishkaMarker  # type: ignore[attr-defined]
 

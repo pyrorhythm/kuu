@@ -91,3 +91,20 @@ async def test_nack_with_delay_requeues_with_incremented_attempt():
 	assert results[0].message.attempt == 0
 	assert results[1].message.attempt == 1
 	assert results[0].message.id == results[1].message.id
+
+
+@pytest.mark.anyio
+async def test_nack_without_requeue_dead_letters_message():
+	broker = MemoryBroker()
+	await broker.connect()
+	original = _msg()
+	await broker.enqueue(original)
+
+	async def drop(_idx, d, b):
+		await b.nack(d, requeue=False)
+
+	await _consume_until(broker, "q", drop, count=1)
+
+	assert broker.dead_count == 1
+	[dead] = broker.dead("q")
+	assert dead.id == original.id

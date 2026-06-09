@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import Any
 
 import anyio
 import pytest
@@ -535,29 +534,47 @@ async def test_non_final_failure_does_not_store_error(make_app_with_results):
 	assert value == 5
 
 
-async def test_unknown_task_failure_stores_error_on_final_attempt(
+async def test_unknown_task_is_requeued_until_a_worker_knows_it(
 	make_app_with_results,
 ):
 	app = await make_app_with_results()
 
 	handle = await app.enqueue_by_name(
-		"missing.task",
-		Payload(args=(1,)),
+		"mystery.task",
+		Payload(args=(6,)),
 		max_attempts=1,
 	)
 
-	saw_error: dict[str, Any] = {}
+	cfg = Settings(
+		app="test:app",
+		task_modules=["test"],
+		queues=[app.default_queue],
+		concurrency=2,
+		unknown_task_delay=0.3,
+	)
 
-	async def _wait():
-		while True:
-			r = await app.results.get(handle.key)
-			if r is not None and r.status == "error":
-				saw_error["r"] = r
-				return
-			await anyio.sleep(0.05)
+	# A worker that does not know the task must not fail it: no error result
+	# is stored, the message is requeued for a worker that does know it.
+	ignorant = Worker(cfg, app=app)
 
-	await _with_worker(app, _wait)
-	assert "UnknownTask" in (saw_error["r"].error or "")
+	async def _briefly(scope: anyio.CancelScope):
+		await anyio.sleep(1.5)
+		scope.cancel()
+
+	with anyio.fail_after(6):
+		async with anyio.create_task_group() as tg:
+			tg.start_soon(_briefly, tg.cancel_scope)
+			tg.start_soon(ignorant.run)
+
+	r = await app.results.get(handle.key, listen_timeout=0)
+	assert r is None or r.status != "error"
+
+	@app.task("mystery.task")
+	async def mystery(x: int) -> int:
+		return x * 2
+
+	value = await _await_result(app, handle, timeout=15.0)
+	assert value == 12
 
 
 async def test_pydantic_model_kwarg_round_trips(make_app_with_results):

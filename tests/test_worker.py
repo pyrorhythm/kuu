@@ -86,6 +86,103 @@ async def test_retry_err_causes_re_delivery_with_attempt_incremented():
     assert attempts == [42, 42, 42]
 
 
+async def test_unknown_task_is_requeued_for_a_worker_that_knows_it():
+    broker = MemoryBroker()
+    app_unaware = Kuu(broker=broker)
+    app_aware = Kuu(broker=broker)
+    processed: list[int] = []
+
+    @app_aware.task
+    async def only_here(x: int) -> int:
+        processed.append(x)
+        return x
+
+    succeeded_attempts: list[int] = []
+
+    @app_aware.events.task_succeeded.connect
+    async def _on_success(msg, elapsed):
+        succeeded_attempts.append(msg.attempt)
+
+    await only_here.q(7)
+
+    config = Settings(
+        app="test:app",
+        queues=["default"],
+        concurrency=4,
+        unknown_task_delay=0.05,
+    )
+
+    async def _supervise(scope: anyio.CancelScope):
+        while not processed:
+            await anyio.sleep(0.02)
+        scope.cancel()
+
+    # unaware worker starts first so it grabs the message before the aware one
+    with anyio.fail_after(5.0):
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(_supervise, tg.cancel_scope)
+            tg.start_soon(Worker(config, app=app_unaware).run)
+            await anyio.sleep(0.1)
+            tg.start_soon(Worker(config, app=app_aware).run)
+
+    assert processed == [7]
+    assert succeeded_attempts == [0], "requeue must not burn an attempt"
+
+
+async def test_exhausted_attempts_dead_letter_the_message():
+    broker = MemoryBroker()
+    app = Kuu(broker=broker)
+    runs: list[int] = []
+    dead_seen = anyio.Event()
+
+    @app.task(max_attempts=2)
+    async def always_fails(x: int) -> None:
+        runs.append(x)
+        raise ValueError("boom")
+
+    dead_snapshot: list = []
+
+    @app.events.task_dead.connect
+    async def _on_dead(msg):
+        # snapshot here: worker shutdown closes the broker, wiping `_dead`
+        dead_snapshot.extend(broker.dead("default"))
+        dead_seen.set()
+
+    await always_fails.q(1)
+    await _run_worker_until(app, dead_seen.is_set, timeout=5.0)
+
+    assert runs == [1, 1]
+    assert len(dead_snapshot) == 1
+    assert dead_snapshot[0].task == always_fails.task_name
+
+
+async def test_worker_survives_transient_consume_failure():
+    class FlakyBroker(MemoryBroker):
+        def __init__(self) -> None:
+            super().__init__()
+            self.failures = 2
+
+        async def consume(self, queues, prefetch):
+            if self.failures:
+                self.failures -= 1
+                raise ConnectionError("transient broker outage")
+            async for delivery in super().consume(queues, prefetch):
+                yield delivery
+
+    app = Kuu(broker=FlakyBroker())
+    processed: list[str] = []
+
+    @app.task
+    async def echo(s: str) -> str:
+        processed.append(s)
+        return s
+
+    await echo.q("hi")
+    await _run_worker_until(app, lambda: bool(processed), timeout=10.0)
+
+    assert processed == ["hi"]
+
+
 async def test_blocking_flag_rejects_async_function():
     app = Kuu(broker=MemoryBroker())
 

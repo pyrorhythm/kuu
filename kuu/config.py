@@ -95,6 +95,7 @@ class Settings(Struct, frozen=True, forbid_unknown_fields=True):
 	concurrency: Annotated[int, Meta(ge=1)] = 64
 	prefetch: Annotated[int, Meta(ge=0)] = 0
 	shutdown_timeout: Annotated[float, Meta(ge=0)] = 30.0
+	unknown_task_delay: Annotated[float, Meta(ge=0)] = 5.0
 	watch_fs: bool = False
 	metrics: MetricsSettings = field(default_factory=MetricsSettings)
 	dashboard: WebSettings = field(default_factory=WebSettings)

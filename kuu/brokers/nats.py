@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 
@@ -21,6 +22,8 @@ from ._scheduled import run_scheduled_pump_loop
 from .base import Broker, Delivery
 
 NatsReceipt = Msg
+
+log = logging.getLogger("kuu.brokers.nats")
 
 
 class NatsBroker(Broker[NatsReceipt]):
@@ -44,6 +47,7 @@ class NatsBroker(Broker[NatsReceipt]):
 		stream: str = "kuu",
 		subject_prefix: str = "kuu.task_queue.",
 		durable_prefix: str = "kuu-",
+		dead_subject_prefix: str = "kuu.dead_letter.",
 		fetch_timeout: float = 5.0,
 		serializer: Serializer = JSONSerializer(),
 	) -> None:
@@ -54,6 +58,8 @@ class NatsBroker(Broker[NatsReceipt]):
 		- `stream`: JetStream stream name.
 		- `subject_prefix`: prefix prepended to per-queue subjects.
 		- `durable_prefix`: prefix for durable consumer names.
+		- `dead_subject_prefix`: prefix for dead-letter subjects; must not
+		  overlap `subject_prefix`. Dead messages land in stream `{stream}-dlq`.
 		- `fetch_timeout`: pull-fetch timeout in seconds.
 		- `serializer`: message serializer.
 		"""
@@ -64,6 +70,7 @@ class NatsBroker(Broker[NatsReceipt]):
 		self.stream = stream
 		self.sp = subject_prefix
 		self.dp = durable_prefix
+		self.dlp = dead_subject_prefix
 		self.fetch_timeout = fetch_timeout
 		self.serializer = serializer
 
@@ -106,6 +113,13 @@ class NatsBroker(Broker[NatsReceipt]):
 			# Ignore "stream already exists" errors
 			if "already exists" not in str(e):
 				raise
+		try:
+			await self.t.js.add_stream(
+				StreamConfig(name=f"{self.stream}-dlq", subjects=[f"{self.dlp}>"])
+			)
+		except Exception as e:
+			if "already exists" not in str(e):
+				raise
 
 	async def close(self) -> None:
 		if self._owns_transport:
@@ -119,7 +133,8 @@ class NatsBroker(Broker[NatsReceipt]):
 			pending = int(getattr(info, "num_pending", 0))
 			scheduled = sum(1 for _, msg in self._scheduled if msg.queue == queue)
 			return pending + scheduled
-		except Exception:
+		except Exception as e:
+			log.debug("event=broker.queue_depth_failed queue=%s err=%r", queue, e)
 			return None
 
 	@_ensure_connected
@@ -195,7 +210,8 @@ class NatsBroker(Broker[NatsReceipt]):
 						msgs = await sub.fetch(batch=prefetch, timeout=self.fetch_timeout)
 					except TimeoutError:
 						continue
-					except Exception:
+					except Exception as e:
+						log.warning("event=broker.fetch_failed queue=%s err=%r", q, e)
 						await anyio.sleep(0.5)
 						continue
 
@@ -237,6 +253,9 @@ class NatsBroker(Broker[NatsReceipt]):
 				raise InvalidReceiptType(type(delivery.receipt))
 
 		if not requeue:
+			await self.js.publish(
+				f"{self.dlp}{delivery.queue}", self.serializer.marshal(delivery.message)
+			)
 			await delivery.receipt.term()
 			return
 		await delivery.receipt.nak(delay=delay)

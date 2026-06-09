@@ -4,6 +4,7 @@ import inspect
 import logging
 import signal
 import time
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 import anyio
@@ -12,8 +13,9 @@ from anyio.abc import CancelScope, TaskGroup
 
 from kuu._import import import_object
 from kuu._types import _coerce_payload
+from kuu._util import utcnow
 from kuu.context import Context
-from kuu.exceptions import RejectErr, RetryErr, UnknownTask
+from kuu.exceptions import RejectErr, RetryErr
 from kuu.middleware.base import run_chain
 from kuu.observability import _log_capture
 from kuu.outcome import Fail, Ok, Outcome, Reject, Retry
@@ -47,6 +49,7 @@ class Worker:
 		self.concurrency = config.concurrency
 		self.prefetch = config.prefetch or max(1, self.concurrency // 4)
 		self.shutdown_timeout = config.shutdown_timeout
+		self.unknown_task_delay = config.unknown_task_delay
 		self._sem = anyio.Semaphore(self.concurrency)
 		self._inflight = 0
 		self._idle = anyio.Event()
@@ -90,12 +93,27 @@ class Worker:
 			await anyio.sleep_forever()
 
 	async def _consume(self, handlers: TaskGroup) -> None:
-		async for delivery in self.app.broker.consume(self.queues, self.prefetch):
-			await self._sem.acquire()
-			if self._inflight == 0:
-				self._idle = anyio.Event()  # reset: no longer idle
-			self._inflight += 1
-			handlers.start_soon(self._handle, delivery)
+		backoff = 0.5
+		while True:
+			try:
+				async for delivery in self.app.broker.consume(self.queues, self.prefetch):
+					backoff = 0.5
+					await self._sem.acquire()
+					if self._inflight == 0:
+						self._idle = anyio.Event()  # reset: no longer idle
+					self._inflight += 1
+					handlers.start_soon(self._handle, delivery)
+				return
+			except Exception as e:
+				log.warning(
+					"event=worker.consume_error err=%r retry_in=%.1fs", e, backoff
+				)
+				await anyio.sleep(backoff)
+				backoff = min(backoff * 2, 30.0)
+				try:
+					await self.app.broker.connect()
+				except Exception as ce:
+					log.warning("event=worker.reconnect_failed err=%r", ce)
 
 	async def _handle(self, delivery: Delivery) -> None:
 		msg = delivery.message
@@ -118,6 +136,23 @@ class Worker:
 		with anyio.CancelScope(shield=True):
 			await self.app.events.task_received.send(msg)
 
+		if task is None:
+			# schedule+ack instead of nack: keeps attempt untouched so the
+			# message survives until a worker that knows the task claims it
+			log.warning(
+				"event=worker.unknown_task task=%s queue=%s requeue_delay=%s",
+				msg.task,
+				delivery.queue,
+				self.unknown_task_delay,
+			)
+			with anyio.CancelScope(shield=True):
+				await self.app.broker.schedule(
+					msg, utcnow() + timedelta(seconds=self.unknown_task_delay)
+				)
+				await self.app.broker.ack(delivery)
+			self._release()
+			return
+
 		outcome: Outcome
 		cancelled = False
 		results = self.app.results
@@ -130,28 +165,21 @@ class Worker:
 				log.debug("event=worker.handle.replay_hit key=%s", key)
 				with anyio.CancelScope(shield=True):
 					await self._finalize(delivery, msg, Ok(0.0))
-				self._inflight -= 1
-				if self._inflight == 0:
-					self._idle.set()
-				self._sem.release()
+				self._release()
 				return
 
 		try:
-			if task is None:
-				raise UnknownTask(msg.task)
-
-			notnil_task = task
 
 			async def _terminal(c: Context) -> Any:
 				await self.app.events.task_started.send(c.message)
-				payload = _coerce_payload(notnil_task.original_func, c.message.payload)
-				if notnil_task.blocking:
+				payload = _coerce_payload(task.original_func, c.message.payload)
+				if task.blocking:
 
 					def _call() -> Any:
-						return notnil_task.original_func(*payload.args, **payload.kwargs)
+						return task.original_func(*payload.args, **payload.kwargs)
 
 					return await anyio.to_thread.run_sync(_call, abandon_on_cancel=True)
-				r = notnil_task.original_func(*payload.args, **payload.kwargs)
+				r = task.original_func(*payload.args, **payload.kwargs)
 				if inspect.isawaitable(r):
 					r = await r
 				return r
@@ -197,14 +225,16 @@ class Worker:
 		with anyio.CancelScope(shield=True):
 			await self._finalize(delivery, msg, outcome)
 
-		self._inflight -= 1
-		if self._inflight == 0:
-			self._idle.set()
-
-		self._sem.release()
+		self._release()
 
 		if isinstance(outcome, Fail) and cancelled:
 			raise outcome.exc
+
+	def _release(self) -> None:
+		self._inflight -= 1
+		if self._inflight == 0:
+			self._idle.set()
+		self._sem.release()
 
 	async def _finalize(self, delivery: Delivery[Any], msg: Any, outcome: Outcome) -> None:
 		match outcome:

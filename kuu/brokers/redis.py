@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
+import socket
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from typing import Awaitable, Callable, NamedTuple, cast
@@ -35,6 +38,8 @@ return #items
 type _KT = bytes | str | memoryview
 type _ST = int | _KT
 
+log = logging.getLogger("kuu.brokers.redis")
+
 
 def _asyncify[**P, T](fn: Callable[P, Awaitable[T] | T]) -> Callable[P, Awaitable[T]]:
 	return cast(Callable[P, Awaitable[T]], fn)
@@ -55,9 +60,11 @@ class RedisBroker(Broker[RedisReceipt]):
 	- `transport`: pre-configured :class:`~kuu.transports.redis.RedisTransport`.
 	  When given, ``url`` is ignored.
 	- `group`: consumer group name.
-	- `consumer`: consumer name within the group.
+	- `consumer`: consumer name within the group; must be unique per worker
+	  process. Defaults to ``<hostname>.<pid>.<random>``.
 	- `stream_prefix`: key prefix for live streams.
 	- `zset_prefix`: key prefix for scheduled sorted sets.
+	- `dead_prefix`: key prefix for dead-letter streams.
 	- `block_ms`: blocking interval for ``XREADGROUP`` (ms).
 	- `claim_min_idle_ms`: minimum idle time before claiming stale deliveries.
 	- `serializer`: message serializer.
@@ -69,9 +76,10 @@ class RedisBroker(Broker[RedisReceipt]):
 		*,
 		transport: RedisTransport | None = None,
 		group: str = "qq",
-		consumer: str = "c1",
+		consumer: str | None = None,
 		stream_prefix: str = "qq:s:",
 		zset_prefix: str = "qq:z:",
+		dead_prefix: str = "qq:d:",
 		block_ms: int = 5000,
 		claim_min_idle_ms: int = 60000,
 		serializer: Serializer = JSONSerializer(),
@@ -83,9 +91,10 @@ class RedisBroker(Broker[RedisReceipt]):
 			self._transport = RedisTransport(StandaloneConfig(url=url))
 			self._owns_transport = True
 		self.group = group
-		self.consumer = consumer
+		self.consumer = consumer or f"{socket.gethostname()}.{os.getpid()}.{os.urandom(3).hex()}"
 		self.sp = stream_prefix
 		self.zp = zset_prefix
+		self.dlp = dead_prefix
 		self.block_ms = block_ms
 		self.claim_min_idle_ms = claim_min_idle_ms
 		self.serializer = serializer
@@ -106,6 +115,9 @@ class RedisBroker(Broker[RedisReceipt]):
 
 	def _zset(self, q: str) -> str:
 		return self._transport.zset_key(self.zp, q)
+
+	def _dead_stream(self, q: str) -> str:
+		return self._transport.stream_key(self.dlp, q)
 
 	async def connect(self) -> None:
 		if self._transport.r is not None and self._move_sha is not None:
@@ -130,8 +142,10 @@ class RedisBroker(Broker[RedisReceipt]):
 		try:
 			stream = await self.r.xlen(self._stream(queue))
 			scheduled = await self.r.zcard(self._zset(queue))
-			return {"stream": int(stream), "scheduled": int(scheduled)}
-		except Exception:
+			dead = await self.r.xlen(self._dead_stream(queue))
+			return {"stream": int(stream), "scheduled": int(scheduled), "dead": int(dead)}
+		except Exception as e:
+			log.debug("event=broker.queue_breakdown_failed queue=%s err=%r", queue, e)
 			return None
 
 	@_ensure_connected
@@ -183,7 +197,13 @@ class RedisBroker(Broker[RedisReceipt]):
 
 		await run_scheduled_pump_loop(_tick, _idle)
 
-	async def _claim_stale(self, queue: str) -> list[tuple[bytes, dict[bytes, bytes]]]:
+	async def _claim_stale(self, queue: str) -> None:
+		"""Reclaim deliveries stuck in a dead consumer's PEL.
+
+		Each claimed message is re-added with `attempt` bumped (a crashed
+		attempt still counts toward `max_attempts`) or dead-lettered when no
+		attempts remain, then the stale entry is acked away.
+		"""
 		try:
 			_, items, _ = await self.r.xautoclaim(
 				self._stream(queue),
@@ -192,9 +212,26 @@ class RedisBroker(Broker[RedisReceipt]):
 				min_idle_time=self.claim_min_idle_ms,
 				count=32,
 			)
-			return items or []
-		except Exception:
-			return []
+		except Exception as e:
+			log.warning("event=broker.claim_stale_failed queue=%s err=%r", queue, e)
+			return
+		for sid, data in items or []:
+			if not data or b"m" not in data:
+				continue
+			msg = self.serializer.unmarshal(data[b"m"], into=Message)
+			msg = structs.replace(msg, attempt=msg.attempt + 1)
+			if msg.attempt >= msg.max_attempts:
+				target = self._dead_stream(queue)
+				log.warning(
+					"event=broker.claim_dead_letter queue=%s task=%s id=%s", queue, msg.task, msg.id
+				)
+			else:
+				target = self._stream(queue)
+			async with self.r.pipeline() as pipe:  # pyrefly: ignore[bad-context-manager]
+				pipe.xadd(target, {"m": self.serializer.marshal(msg)})
+				pipe.xack(self._stream(queue), self.group, sid)
+				pipe.xdel(self._stream(queue), sid)
+				await pipe.execute()
 
 	async def consume(
 		self, queues: list[str], prefetch: int
@@ -215,12 +252,7 @@ class RedisBroker(Broker[RedisReceipt]):
 				if now - last_claim >= claim_interval:
 					last_claim = now
 					for q in queues:
-						for sid, data in await self._claim_stale(q):
-							yield Delivery(
-								message=self.serializer.unmarshal(data[b"m"], into=Message),
-								receipt=RedisReceipt(queue=q, stream_id=sid),
-								queue=q,
-							)
+						await self._claim_stale(q)
 
 				resp = await self.r.xreadgroup(
 					self.group, self.consumer, streams, count=prefetch, block=self.block_ms
@@ -270,6 +302,7 @@ class RedisBroker(Broker[RedisReceipt]):
 		q, sid = delivery.receipt
 		if not requeue:
 			async with self.r.pipeline() as pipe:  # pyrefly: ignore[bad-context-manager]
+				pipe.xadd(self._dead_stream(q), {"m": self.serializer.marshal(delivery.message)})
 				pipe.xack(self._stream(q), self.group, sid)
 				pipe.xdel(self._stream(q), sid)
 				await pipe.execute()

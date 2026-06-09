@@ -56,7 +56,8 @@ class Broker[Receipt](Protocol):
 		"""
 		Negatively acknowledge `delivery`.
 
-		- `requeue`: when true, the message is put back for another attempt.
+		- `requeue`: when true, the message is put back for another attempt;
+		  when false, the message is moved to the queue's dead-letter store.
 		- `delay`: seconds to wait before re-delivery. `None` requeues immediately.
 
 		Raises `InvalidReceiptType` when receipts cross brokers.
