@@ -185,6 +185,13 @@ class SqliteBackend(PersistenceBackend):
 						?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 					)
 					ON CONFLICT(message_id, attempt) DO UPDATE SET
+						task = excluded.task,
+						queue = excluded.queue,
+						instance_id = excluded.instance_id,
+						worker_pid = excluded.worker_pid,
+						args = excluded.args,
+						kwargs = excluded.kwargs,
+						started_at = excluded.started_at,
 						finished_at = excluded.finished_at,
 						time_elapsed = excluded.time_elapsed,
 						status = excluded.status,

@@ -32,7 +32,7 @@ class PersistenceWorker:
 		self._backend = backend
 		self._cfg = cfg
 		self._queue: asyncio.Queue[tuple[str, object] | None] = asyncio.Queue(maxsize=10_000)
-		self._started: dict[str, PendingRun] = {}
+		self._started: dict[tuple[str, int], PendingRun] = {}
 		self._run_batch: list[PendingRun] = []
 		self._log_batch: list[LogRow] = []
 		self._last_flush = _time.monotonic()
@@ -145,24 +145,31 @@ class PersistenceWorker:
 
 		kind: EventKind = evt.kind
 
+		attempt = evt.attempt or 0
+		key = (mid, attempt)
+
 		if kind == "enqueued" or kind == "started":
-			self._started[mid] = PendingRun(
+			status = "enqueued" if kind == "enqueued" else "started"
+			started = PendingRun(
 				message_id=mid,
-				attempt=evt.attempt or 0,
+				attempt=attempt,
 				task=evt.task,
 				queue=evt.queue,
 				instance_id=instance_id,
 				worker_pid=evt.worker_pid,
 				started_at=utcnow(),
+				status=status,
 			)
+			self._started[key] = started
+			self._run_batch.append(started)
 			return
 
 		finish_ts = utcnow()
-		start_info = self._started.pop(mid, None)
+		start_info = self._started.pop(key, None)
 		if start_info is None:
 			start_info = PendingRun(
 				message_id=mid,
-				attempt=evt.attempt or 0,
+				attempt=attempt,
 				task=evt.task,
 				queue=evt.queue,
 				instance_id=instance_id,

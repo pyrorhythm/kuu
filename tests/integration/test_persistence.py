@@ -509,6 +509,29 @@ class TestPersistenceWorker:
 		assert rows[0].time_elapsed is not None and rows[0].time_elapsed >= timedelta(seconds=0)
 		assert rows[0].finished_at is not None
 
+	async def test_start_event_writes_parent_row_before_finish(
+		self, sqlite_backend: SqliteBackend
+	) -> None:
+		w = PersistenceWorker(sqlite_backend, sqlite_backend._cfg)
+		mid = _uniq("m")
+
+		async def _body(stop: anyio.Event) -> None:
+			w.enqueue_event("inst-A", _evt("started", mid=mid, task="alpha", attempt=0))
+
+			async def _has_started() -> bool:
+				rows = await sqlite_backend.query_run_attempts(mid)
+				return bool(rows and rows[0].status == "started")
+
+			await _wait_for(_has_started)
+
+		await _run_worker(w, _body)
+
+		rows = await sqlite_backend.query_run_attempts(mid)
+		assert len(rows) == 1
+		assert rows[0].attempt == 0
+		assert rows[0].status == "started"
+		assert rows[0].finished_at is None
+
 	async def test_finish_without_start_still_records(self, sqlite_backend: SqliteBackend) -> None:
 		"""dropping the start frame must not lose the terminal event"""
 		w = PersistenceWorker(sqlite_backend, sqlite_backend._cfg)

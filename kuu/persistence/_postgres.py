@@ -197,6 +197,13 @@ class PostgresBackend(PersistenceBackend):
 					  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
 					)
 					ON CONFLICT (message_id, attempt) DO UPDATE SET
+						task = EXCLUDED.task,
+						queue = EXCLUDED.queue,
+						instance_id = EXCLUDED.instance_id,
+						worker_pid = EXCLUDED.worker_pid,
+						args = EXCLUDED.args,
+						kwargs = EXCLUDED.kwargs,
+						started_at = EXCLUDED.started_at,
 						finished_at = EXCLUDED.finished_at,
 						time_elapsed = EXCLUDED.time_elapsed,
 						status = EXCLUDED.status,
