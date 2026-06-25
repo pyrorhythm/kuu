@@ -22,3 +22,7 @@ class Reject(Outcome):
 @dataclass(frozen=True, slots=True)
 class Fail(Outcome):
 	exc: BaseException
+
+
+@dataclass(frozen=True, slots=True)
+class Cancelled(Outcome): ...

@@ -269,3 +269,4 @@ def _install_event_forwarder(app: Kuu, q: mp.Queue) -> None:
 		lambda msg, delay: _put("retried", msg.task, msg.queue, msg=msg)
 	)
 	app.events.task_dead.connect(lambda msg: _put("dead", msg.task, msg.queue, msg=msg))
+	app.events.task_cancelled.connect(lambda msg: _put("cancelled", msg.task, msg.queue, msg=msg))

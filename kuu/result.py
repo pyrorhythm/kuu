@@ -6,7 +6,7 @@ from msgspec import Struct
 
 
 class Result(Struct, frozen=True):
-	status: Literal["ok", "error"]
+	status: Literal["ok", "error", "cancelled"]
 	value: bytes | None = None
 	error: str | None = None
 	type: str | None = None

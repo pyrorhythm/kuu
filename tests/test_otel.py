@@ -8,14 +8,14 @@ import pytest
 
 from kuu.app import Kuu
 from kuu.context import Context
-from kuu.message import Message, Payload
-from kuu.otel import (
+from kuu.contrib.otel import (
 	KuuOTELInstrumentor,
 	OtelLoggingBridge,
 	OtelMetrics,
 	OtelTracingMiddleware,
 	shutdown_telemetry,
 )
+from kuu.message import Message, Payload
 
 pytestmark = pytest.mark.anyio
 

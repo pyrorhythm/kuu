@@ -100,6 +100,7 @@ class RedisBroker(Broker[RedisReceipt]):
 		self.serializer = serializer
 		self._move_sha: str | None = None
 		self._declared: set[str] = set()
+		self._revoke_ch = f"{stream_prefix}revoke"
 
 	@property
 	def transport(self) -> RedisTransport:
@@ -271,6 +272,29 @@ class RedisBroker(Broker[RedisReceipt]):
 						)
 		finally:
 			handle.cancel()
+
+	@_ensure_connected
+	async def revoke(self, task_id: str) -> None:
+		# non-sharded PUBLISH broadcasts cluster-wide; cast since the cluster
+		# client's type stub omits publish/pubsub though both exist at runtime
+		await cast(Redis, self.r).publish(self._revoke_ch, task_id)
+
+	async def watch_revocations(self) -> AsyncIterator[str]:
+		await self.connect()
+		pubsub = cast(Redis, self.r).pubsub()
+		await pubsub.subscribe(self._revoke_ch)
+		try:
+			while True:
+				m = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+				if m is None:
+					continue
+				data = m["data"]
+				yield data.decode() if isinstance(data, (bytes, bytearray)) else str(data)
+		finally:
+			try:
+				await pubsub.unsubscribe(self._revoke_ch)
+			finally:
+				await pubsub.aclose()
 
 	@_ensure_connected
 	async def ack(self, delivery: Delivery) -> None:

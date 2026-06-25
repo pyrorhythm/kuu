@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
+import anyio
+
 from ..message import Message
 
 
@@ -62,6 +64,24 @@ class Broker[Receipt](Protocol):
 
 		Raises `InvalidReceiptType` when receipts cross brokers.
 		"""
+
+	async def revoke(self, task_id: str) -> None:
+		"""Broadcast a revocation for `task_id` to every consuming worker.
+
+		Workers drop the task if it has not started yet, or cancel its running
+		scope if it is in flight. Best-effort: the default is a no-op for brokers
+		without a broadcast channel.
+		"""
+		return None
+
+	async def watch_revocations(self) -> AsyncIterator[str]:
+		"""Stream task ids broadcast via :meth:`revoke`.
+
+		The default never yields (brokers without a broadcast channel), so the
+		worker's revocation watcher simply idles until shutdown.
+		"""
+		await anyio.sleep_forever()
+		yield ""  # pragma: no cover - unreachable; marks this an async generator
 
 	async def queue_depth(self, queue: str) -> int | None:
 		"""Best-effort count of messages waiting on `queue`.

@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 from datetime import datetime, timedelta
 from typing import Any, Mapping, overload
+from uuid import UUID
 
 from kuu._import import object_fqn
 from kuu._types import _FnAny, _FnAsync, _Wrap
@@ -288,3 +289,14 @@ class Kuu:
 		)
 		await self._dispatch(msg, t, not_before)
 		return TaskHandle[Any](message=msg, app=self)
+
+	async def cancel(self, task_id: UUID | str) -> None:
+		"""Request cancellation of a task by its id.
+
+		Broadcasts a revocation over the broker: a task still waiting in the
+		queue is dropped before it runs, and a task already executing has its
+		`anyio` scope cancelled. Cancellation is cooperative — a blocking task
+		offloaded to a thread cannot be force-killed; its result is discarded.
+		"""
+		await self.broker.connect()
+		await self.broker.revoke(str(task_id))

@@ -60,6 +60,7 @@ class Events:
 			"task_failed",
 			"task_retried",
 			"task_dead",
+			"task_cancelled",
 			"worker_heartbeat",
 		):
 			self._signals[n] = Signal(n)

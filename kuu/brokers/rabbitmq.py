@@ -21,6 +21,8 @@ from .base import Broker, Delivery
 
 log = logging.getLogger("kuu.brokers.rabbitmq")
 
+_REVOKE_EXCHANGE = "kuu.revocations"
+
 
 class RabbitMQReceipt(NamedTuple):
 	queue: str
@@ -141,6 +143,29 @@ class RabbitMQBroker(Broker[RabbitMQReceipt]):
 			for task in tasks:
 				task.cancel()
 			await asyncio.gather(*tasks, return_exceptions=True)
+			await channel.close()
+
+	@_ensure_connected
+	async def revoke(self, task_id: str) -> None:
+		ex = await self._transport.channel.declare_exchange(
+			_REVOKE_EXCHANGE, aio_pika.ExchangeType.FANOUT, durable=False
+		)
+		await ex.publish(aio_pika.Message(body=task_id.encode()), routing_key="")
+
+	async def watch_revocations(self) -> AsyncIterator[str]:
+		await self.connect()
+		channel = await self._transport.connection.channel()
+		ex = await channel.declare_exchange(
+			_REVOKE_EXCHANGE, aio_pika.ExchangeType.FANOUT, durable=False
+		)
+		queue = await channel.declare_queue("", exclusive=True, auto_delete=True)
+		await queue.bind(ex)
+		try:
+			async with queue.iterator() as iterator:
+				async for raw in iterator:
+					async with raw.process():
+						yield raw.body.decode()
+		finally:
 			await channel.close()
 
 	async def ack(self, delivery: Delivery) -> None:

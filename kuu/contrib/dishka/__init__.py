@@ -54,9 +54,6 @@ def _parse_dependency(parameter: Parameter, hint: Any) -> DependencyKey | None:
 
 CONTAINER_STATE_KEY = "dishka_container"
 
-# kuu's built-in REQUEST container slot, populated by KuuDishkaMiddleware.
-# If you already keep the container in your *own* ContextVar, you don't have to
-# use this one — see `from_contextvar` and `inject(container_getter=...)`.
 _request_container: ContextVar[AnyContainer | None] = ContextVar(
 	"kuu_dishka_request_container",
 	default=None,
@@ -139,11 +136,7 @@ class KuuDishkaMiddleware:
 		if ctx.phase != "process":
 			return await call_next()
 
-		# A `blocking=True` task is `inject`-ed with a *sync* getter, so it must
-		# resolve from a sync `Container`; an async task from an `AsyncContainer`.
-		# The two are not interchangeable, so select strictly by `blocking`.
-		blocking = bool(ctx.task and ctx.task.blocking)
-		if blocking:
+		if ctx.task and ctx.task.blocking:
 			if self._sync_app is None:
 				raise LookupError(
 					f"task {getattr(ctx.task, 'task_name', '?')!r} needs a sync "

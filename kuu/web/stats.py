@@ -81,6 +81,7 @@ class StatsCollector:
 			"failed": [],
 			"retried": [],
 			"dead": [],
+			"cancelled": [],
 		}
 		if not self.events_log:
 			return out
@@ -91,6 +92,15 @@ class StatsCollector:
 			t0 = start + i * bucket_sec
 			t1 = t0 + bucket_sec
 			out["times"].append(t1.isoformat())
-			for k in ("enqueued", "received", "started", "succeeded", "failed", "retried", "dead"):
+			for k in (
+				"enqueued",
+				"received",
+				"started",
+				"succeeded",
+				"failed",
+				"retried",
+				"dead",
+				"cancelled",
+			):
 				out[k].append(sum(1 for e in window if t0 <= e.ts < t1 and e.event == k))
 		return out

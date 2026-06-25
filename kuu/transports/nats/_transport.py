@@ -35,5 +35,11 @@ class NatsTransport:
 		return self._client.jetstream()
 
 	@property
+	def nc(self) -> Client:
+		if not self._client.is_connected:
+			raise NotConnected
+		return self._client
+
+	@property
 	def is_connected(self) -> bool:
 		return self._client.is_connected

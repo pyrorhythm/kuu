@@ -50,6 +50,7 @@ class MemoryBroker(Broker[MemoryReceipt]):
 		self._seq = itertools.count()
 		self._pending: dict[tuple[str, int], Message] = {}
 		self._dead: dict[str, list[Message]] = {}
+		self._revoke_subs: list[MemoryObjectSendStream[str]] = []
 
 	@property
 	def scheduled_count(self) -> int:
@@ -160,6 +161,25 @@ class MemoryBroker(Broker[MemoryReceipt]):
 					await t
 				except asyncio.CancelledError:
 					pass
+
+	async def revoke(self, task_id: str) -> None:
+		for send in list(self._revoke_subs):
+			try:
+				send.send_nowait(task_id)
+			except (anyio.WouldBlock, anyio.BrokenResourceError, anyio.ClosedResourceError):
+				pass
+
+	async def watch_revocations(self) -> AsyncIterator[str]:
+		send, recv = anyio.create_memory_object_stream[str](256)
+		self._revoke_subs.append(send)
+		try:
+			async with recv:
+				async for tid in recv:
+					yield tid
+		finally:
+			if send in self._revoke_subs:
+				self._revoke_subs.remove(send)
+			send.close()
 
 	async def ack(self, delivery: Delivery) -> None:
 		match delivery.receipt:

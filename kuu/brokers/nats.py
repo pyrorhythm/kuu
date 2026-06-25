@@ -73,6 +73,8 @@ class NatsBroker(Broker[NatsReceipt]):
 		self.dlp = dead_subject_prefix
 		self.fetch_timeout = fetch_timeout
 		self.serializer = serializer
+		# core-NATS subject, deliberately outside the JetStream stream's `{sp}>`
+		self._revoke_subject = f"kuu.revoke.{stream}"
 
 		self._declared = set()
 		self._scheduled = []
@@ -232,6 +234,19 @@ class NatsBroker(Broker[NatsReceipt]):
 					await sub.unsubscribe()
 				except Exception:
 					pass
+
+	@_ensure_connected
+	async def revoke(self, task_id: str) -> None:
+		await self.t.nc.publish(self._revoke_subject, task_id.encode())
+
+	async def watch_revocations(self) -> AsyncIterator[str]:
+		await self.connect()
+		sub = await self.t.nc.subscribe(self._revoke_subject)
+		try:
+			async for m in sub.messages:
+				yield m.data.decode()
+		finally:
+			await sub.unsubscribe()
 
 	async def ack(self, delivery: Delivery[NatsReceipt]) -> None:
 		match delivery.receipt:

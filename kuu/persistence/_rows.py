@@ -11,13 +11,16 @@ from kuu._util import utcnow
 
 _TABLE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
 
-RunStatus = Literal["enqueued", "started", "succeeded", "failed", "retried", "dead"]
+RunStatus = Literal[
+	"enqueued", "started", "succeeded", "failed", "retried", "dead", "cancelled"
+]
 
 _FINISH_STATUS: dict[str, RunStatus] = {
 	"succeeded": "succeeded",
 	"failed": "failed",
 	"retried": "retried",
 	"dead": "dead",
+	"cancelled": "cancelled",
 }
 
 

@@ -10,7 +10,9 @@ from kuu._util import utcnow
 
 PROTOCOL_VERSION = 1
 
-EventKind = Literal["enqueued", "started", "succeeded", "failed", "retried", "dead"]
+EventKind = Literal[
+	"enqueued", "started", "succeeded", "failed", "retried", "dead", "cancelled"
+]
 ByeReason = Literal["sigterm", "sigint", "crash", "manual"]
 
 

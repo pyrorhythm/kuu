@@ -36,6 +36,10 @@ class TaskHandle[Res]:
 	def key(self) -> str:
 		return result_key(self.message)
 
+	async def cancel(self) -> None:
+		"""Request cancellation of this task. See `Kuu.cancel`."""
+		await self.app.cancel(self.id)
+
 	async def _poll_once(self) -> tuple[bool, Res]:
 		if self.app.results is None:
 			raise NotConnected("no result backend configured on Kuu(results=...)")
