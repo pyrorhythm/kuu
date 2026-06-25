@@ -5,6 +5,8 @@ from collections.abc import Iterator
 from typing import Any, AsyncIterator, Callable, Coroutine
 
 import pytest
+from testcontainers.core.container import DockerContainer
+from testcontainers.core.waiting_utils import wait_for_logs
 from testcontainers.nats import NatsContainer
 from testcontainers.postgres import PostgresContainer
 from testcontainers.redis import AsyncRedisContainer
@@ -13,11 +15,13 @@ from kuu import Broker
 from kuu.app import Kuu
 from kuu.brokers.memory import MemoryBroker
 from kuu.brokers.nats import NatsBroker
+from kuu.brokers.rabbitmq import RabbitMQBroker
 from kuu.brokers.redis import RedisBroker
 from kuu.results.postgres import PostgresResults
 from kuu.results.redis import RedisResults
 from kuu.transports.nats import NatsTransport
 from kuu.transports.postgres import PostgresParams, PostgresTransport
+from kuu.transports.rabbitmq import RabbitMQTransport
 from kuu.transports.redis import RedisTransport
 
 pytestmark = pytest.mark.anyio
@@ -43,6 +47,18 @@ def postgres_container() -> Iterator[PostgresContainer]:
 @pytest.fixture(scope="session")
 def nats_container() -> Iterator[NatsContainer]:
 	with NatsContainer("nats:2.14-alpine", jetstream=True) as c:
+		yield c
+
+
+@pytest.fixture(scope="session")
+def rabbitmq_container() -> Iterator[DockerContainer]:
+	with (
+		DockerContainer("rabbitmq:4-alpine")
+		.with_env("RABBITMQ_DEFAULT_USER", "user")
+		.with_env("RABBITMQ_DEFAULT_PASS", "testtest")
+		.with_exposed_ports(5672)
+	) as c:
+		wait_for_logs(c, "Server startup complete", timeout=60)
 		yield c
 
 
@@ -124,6 +140,17 @@ def _nats_broker(transport: NatsTransport, uid: str) -> NatsBroker:
 	)
 
 
+def _rabbitmq_url(container: DockerContainer) -> str:
+	return "amqp://user:testtest@%s:%s" % (
+		container.get_container_host_ip(),
+		container.get_exposed_port(5672),
+	)
+
+
+def _rabbitmq_broker(url: str, uid: str) -> RabbitMQBroker:
+	return RabbitMQBroker(transport=RabbitMQTransport(url), queue_prefix=f"q_{uid}_")
+
+
 def _redis_results(
 	transport: RedisTransport,
 	uid: str,
@@ -161,11 +188,14 @@ def _build_broker(
 	redis_transport: RedisTransport,
 	nats_transport: NatsTransport,
 	uid: str,
+	rabbitmq_url: str = "",
 ) -> Broker:
 	if param == "redis":
 		return _redis_broker(redis_transport, uid)
 	if param == "nats":
 		return _nats_broker(nats_transport, uid)
+	if param == "rabbitmq":
+		return _rabbitmq_broker(rabbitmq_url, uid)
 	return MemoryBroker()
 
 
@@ -183,17 +213,22 @@ async def _delete_redis_keys(r, *patterns: str) -> None:
 # === any_broker: all brokers, no app
 
 
-@pytest.fixture(params=["memory", "redis", "nats"])
+@pytest.fixture(params=["memory", "redis", "nats", "rabbitmq"])
 async def any_broker(
 	request,
 	redis_transport: RedisTransport,
 	nats_transport: NatsTransport,
+	rabbitmq_container: DockerContainer,
 ):
 	uid = uuid.uuid4().hex[:8]
-	b = _build_broker(request.param, redis_transport, nats_transport, uid)
+	b = _build_broker(
+		request.param, redis_transport, nats_transport, uid, _rabbitmq_url(rabbitmq_container)
+	)
 	await b.connect()
 	yield b
-	if isinstance(b, RedisBroker):
+	if isinstance(b, RabbitMQBroker):
+		await b.close()
+	elif isinstance(b, RedisBroker):
 		await _delete_redis_keys(redis_transport.r, f"s:{uid}:*", f"z:{uid}:*")
 	elif isinstance(b, NatsBroker):
 		try:
@@ -205,18 +240,21 @@ async def any_broker(
 # === make_app: all brokers, no results backend
 
 
-@pytest.fixture(params=["memory", "redis", "nats"])
+@pytest.fixture(params=["memory", "redis", "nats", "rabbitmq"])
 async def make_app(
 	request,
 	redis_transport: RedisTransport,
 	nats_transport: NatsTransport,
+	rabbitmq_container: DockerContainer,
 ) -> Callable[..., Coroutine[Any, Any, Kuu]]:  # type: ignore[misc]
 	param = request.param
 	created: list[tuple[Kuu, str]] = []
 
 	async def _make(*, queue: str = "default", **kuu_kwargs) -> Kuu:
 		uid = uuid.uuid4().hex[:8]
-		broker = _build_broker(param, redis_transport, nats_transport, uid)
+		broker = _build_broker(
+			param, redis_transport, nats_transport, uid, _rabbitmq_url(rabbitmq_container)
+		)
 		app = Kuu(broker=broker, default_queue=queue, **kuu_kwargs)
 		created.append((app, uid))
 		return app
@@ -224,7 +262,9 @@ async def make_app(
 	yield _make
 
 	for app, uid in created:
-		if isinstance(app.broker, RedisBroker):
+		if isinstance(app.broker, RabbitMQBroker):
+			await app.broker.close()
+		elif isinstance(app.broker, RedisBroker):
 			await _delete_redis_keys(redis_transport.r, f"s:{uid}:*", f"z:{uid}:*")
 		elif isinstance(app.broker, NatsBroker):
 			try:
@@ -289,7 +329,9 @@ async def make_app_with_results(
 			except Exception:
 				pass
 
-		if isinstance(app.broker, RedisBroker):
+		if isinstance(app.broker, RabbitMQBroker):
+			await app.broker.close()
+		elif isinstance(app.broker, RedisBroker):
 			await _delete_redis_keys(redis_transport.r, f"s:{uid}:*", f"z:{uid}:*")
 		elif isinstance(app.broker, NatsBroker):
 			try:

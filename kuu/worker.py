@@ -185,7 +185,11 @@ class Worker:
 
 			async def _terminal(c: Context) -> Any:
 				await self.app.events.task_started.send(c.message)
-				payload = _coerce_payload(task.original_func, c.message.payload)
+				payload = (
+					_coerce_payload(task.original_func, c.message.payload)
+					if c.message.payload.args or c.message.payload.kwargs
+					else c.message.payload
+				)
 				if task.blocking:
 
 					def _call() -> Any:

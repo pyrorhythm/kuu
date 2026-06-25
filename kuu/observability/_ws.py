@@ -1,18 +1,19 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import anyio
 from anyio import create_task_group, sleep
 from anyio.abc import TaskStatus
-from starlette.types import ASGIApp
+
+if TYPE_CHECKING:
+	from starlette.types import ASGIApp
+else:
+	ASGIApp = Any
 
 from kuu.observability._codec import envelope_to_bytes
 from kuu.observability._protocol import Envelope, Hello
-
-if TYPE_CHECKING:
-	pass
 
 log = logging.getLogger("kuu.observability.uplink")
 

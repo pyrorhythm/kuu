@@ -66,9 +66,13 @@ di = [
 structlog = [
     "structlog>=24,<27",
 ]
+rabbitmq = [
+    "aio-pika>=9.5",
+]
 
 [dependency-groups]
 dev = [
+    "aio-pika>=9.5",
     "async-asgi-testclient>=1.4.11",
     "kuu",
     "pydantic>=2.13.3",

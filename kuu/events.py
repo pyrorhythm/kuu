@@ -31,13 +31,18 @@ class Signal:
 			pass
 
 	async def send(self, *args: Any, **kw: Any) -> None:
+		if not self._handlers:
+			return
+
 		async def _invoke(h: Handler) -> None:
 			try:
 				r = h(*args, **kw)
 				if inspect.isawaitable(r):
 					await r
 			except Exception as e:
-				log.exception("event=events.handler_failed handler=%s signal=%s error=%s", h, self.name, e)
+				log.exception(
+					"event=events.handler_failed handler=%s signal=%s error=%s", h, self.name, e
+				)
 
 		async with anyio.create_task_group() as tg:
 			for h in self._handlers:
