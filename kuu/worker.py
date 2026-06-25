@@ -57,6 +57,9 @@ class Worker:
 
 	async def run(self) -> None:
 		"""Connect broker and results, then run the consumer loop."""
+		limiter = anyio.to_thread.current_default_thread_limiter()
+		if self.concurrency > limiter.total_tokens:
+			limiter.total_tokens = self.concurrency
 		await self.app.broker.connect()
 		if self.app.results is not None:
 			await self.app.results.connect()
@@ -102,12 +105,14 @@ class Worker:
 					if self._inflight == 0:
 						self._idle = anyio.Event()  # reset: no longer idle
 					self._inflight += 1
-					handlers.start_soon(self._handle, delivery)
+					try:
+						handlers.start_soon(self._handle, delivery)
+					except BaseException:
+						self._release()
+						raise
 				return
 			except Exception as e:
-				log.warning(
-					"event=worker.consume_error err=%r retry_in=%.1fs", e, backoff
-				)
+				log.warning("event=worker.consume_error err=%r retry_in=%.1fs", e, backoff)
 				await anyio.sleep(backoff)
 				backoff = min(backoff * 2, 30.0)
 				try:
@@ -123,9 +128,19 @@ class Worker:
 		token = _log_capture.set_current_msg(msg)
 		try:
 			await self._handle_inner(delivery, msg, task, ctx)
+		except Exception as e:
+			log.exception(
+				"event=worker.handler_failed task=%s key=%s error=%s",
+				msg.task,
+				result_key(msg),
+				e,
+			)
 		finally:
-			_log_capture.reset_current_msg(token)
-			_log_capture.flush()
+			try:
+				_log_capture.reset_current_msg(token)
+				_log_capture.flush()
+			finally:
+				self._release()
 
 	async def _handle_inner(self, delivery: Delivery, msg: Any, task: Any, ctx: Context) -> None:
 
@@ -150,7 +165,6 @@ class Worker:
 					msg, utcnow() + timedelta(seconds=self.unknown_task_delay)
 				)
 				await self.app.broker.ack(delivery)
-			self._release()
 			return
 
 		outcome: Outcome
@@ -165,7 +179,6 @@ class Worker:
 				log.debug("event=worker.handle.replay_hit key=%s", key)
 				with anyio.CancelScope(shield=True):
 					await self._finalize(delivery, msg, Ok(0.0))
-				self._release()
 				return
 
 		try:
@@ -224,8 +237,6 @@ class Worker:
 
 		with anyio.CancelScope(shield=True):
 			await self._finalize(delivery, msg, outcome)
-
-		self._release()
 
 		if isinstance(outcome, Fail) and cancelled:
 			raise outcome.exc

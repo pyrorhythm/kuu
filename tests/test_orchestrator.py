@@ -119,10 +119,43 @@ class TestWorkerPool:
 		anyio.run(pool._stop_workers)
 		mock_ctx.Process.assert_not_called()
 
+	@patch("kuu.orchestrator._worker._MONITOR_INTERVAL", 0.01)
+	@patch("kuu.orchestrator._worker.mp.get_context")
+	def test_monitor_restarts_dead_worker(self, mock_get_ctx: MagicMock) -> None:
+		dead = MagicMock()
+		dead.pid = 123
+		dead.exitcode = 9
+		dead.is_alive.return_value = False
+		replacement = MagicMock()
+		replacement.pid = 456
+		replacement.exitcode = None
+		replacement.is_alive.return_value = True
+		mock_ctx = MagicMock()
+		mock_ctx.Process.side_effect = [dead, replacement]
+		mock_get_ctx.return_value = mock_ctx
+
+		async def run() -> None:
+			pool = WorkerPool(_config(processes=1))
+			pool._stop_event = anyio.Event()
+			await pool._start_workers()
+			async with anyio.create_task_group() as tg:
+				tg.start_soon(pool._monitor_workers)
+				with anyio.fail_after(1.0):
+					while mock_ctx.Process.call_count < 2:
+						await anyio.sleep(0.01)
+				pool._stop_event.set()
+				tg.cancel_scope.cancel()
+			assert pool._processes == [replacement]
+
+		anyio.run(run)
+
+		dead.join.assert_called_with(timeout=0)
+		assert mock_ctx.Process.call_count == 2
+
 	@patch("kuu.orchestrator._worker.mp.get_context")
 	def test_run_spawns_then_stops_on_event(self, mock_get_ctx: MagicMock) -> None:
 		procs = [MagicMock()]
-		procs[0].is_alive.side_effect = [True, False]
+		procs[0].is_alive.side_effect = lambda: not procs[0].terminate.called
 		mock_ctx = MagicMock()
 		mock_ctx.Process.side_effect = procs
 		mock_get_ctx.return_value = mock_ctx

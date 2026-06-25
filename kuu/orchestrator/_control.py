@@ -24,10 +24,11 @@ from kuu.observability import (
 	MpQueueSource,
 	State,
 )
-from kuu.observability._protocol import LogBatch
-from kuu._queue_drain import drain_sync_queue
-from kuu.orchestrator._serve import MetricsServer, serve_uvicorn_until_stop
-from kuu.persistence import PersistenceWorker, create_backend
+
+from .._queue_drain import drain_sync_queue
+from ..observability import LogBatch
+from ..persistence import PersistenceWorker, create_backend
+from ._serve import MetricsServer, serve_uvicorn_until_stop
 
 if typing.TYPE_CHECKING:
 	from kuu.web.dashboard import Dashboard
@@ -148,7 +149,12 @@ class ControlPlane:
 			)
 			p.start()
 			self._procs.append((preset, p))
-			log.info("event=control_plane.spawned_supervisor preset=%s pid=%s instance=%s", preset, p.pid, instance_id)
+			log.info(
+				"event=control_plane.spawned_supervisor preset=%s pid=%s instance=%s",
+				preset,
+				p.pid,
+				instance_id,
+			)
 
 	async def _signal_listener(self) -> None:
 		if threading.current_thread() is not threading.main_thread():
@@ -173,7 +179,9 @@ class ControlPlane:
 						h.pid,
 					)
 				case Bye() as b:
-					log.info("event=control_plane.bye instance=%s reason=%s", env.instance, b.reason)
+					log.info(
+						"event=control_plane.bye instance=%s reason=%s", env.instance, b.reason
+					)
 				case Event() as e:
 					if self._dashboard is not None:
 						self._dashboard.stats.ingest(e.kind, e.task, env.ts)
@@ -193,9 +201,9 @@ class ControlPlane:
 			if roster:
 				log.debug(
 					"event=control_plane.roster roster=%s",
-				", ".join(
-					f"{e.hello.preset}/{e.instance_id[:8]}"
-					f"({len(e.last_state.workers) if e.last_state else 0}w)"
+					", ".join(
+						f"{e.hello.preset}/{e.instance_id[:8]}"
+						f"({len(e.last_state.workers) if e.last_state else 0}w)"
 						for e in roster
 					),
 				)

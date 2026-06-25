@@ -156,6 +156,43 @@ async def test_exhausted_attempts_dead_letter_the_message():
     assert dead_snapshot[0].task == always_fails.task_name
 
 
+async def test_worker_survives_finalize_failure_and_releases_slot():
+    class FlakyAckBroker(MemoryBroker):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fail_once = True
+
+        async def ack(self, delivery) -> None:
+            if self.fail_once:
+                self.fail_once = False
+                raise ConnectionError("ack dropped")
+            await super().ack(delivery)
+
+    app = Kuu(broker=FlakyAckBroker())
+    seen: list[int] = []
+
+    @app.task
+    async def echo(x: int) -> int:
+        seen.append(x)
+        return x
+
+    await echo.q(1)
+    await echo.q(2)
+    config = Settings(app="test:app", queues=["default"], concurrency=1, prefetch=1)
+
+    async def _supervise(scope: anyio.CancelScope):
+        while len(seen) < 2:
+            await anyio.sleep(0.02)
+        scope.cancel()
+
+    with anyio.fail_after(5.0):
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(_supervise, tg.cancel_scope)
+            tg.start_soon(Worker(config, app=app).run)
+
+    assert seen == [1, 2]
+
+
 async def test_worker_survives_transient_consume_failure():
     class FlakyBroker(MemoryBroker):
         def __init__(self) -> None:

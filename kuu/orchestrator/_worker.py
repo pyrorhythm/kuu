@@ -26,6 +26,7 @@ WorkerEventKind = Literal["started", "succeeded", "failed", "retried", "dead"]
 
 _MAX_ARG_REPR = 500
 _MAX_TRACEBACK = 8192
+_MONITOR_INTERVAL = 1.0
 
 
 def _safe_repr(obj: Any) -> str | None:
@@ -51,6 +52,7 @@ class WorkerPool:
 		self._config = config
 		self._mp_ctx = mp.get_context("spawn")
 		self._processes = []
+		self._workers_lock = anyio.Lock()
 		self.events_queue = self._mp_ctx.Queue()
 
 	@property
@@ -61,7 +63,10 @@ class WorkerPool:
 		self._stop_event = stop_event
 		try:
 			await self._start_workers()
-			await stop_event.wait()
+			async with anyio.create_task_group() as tg:
+				tg.start_soon(self._monitor_workers)
+				await stop_event.wait()
+				tg.cancel_scope.cancel()
 		finally:
 			await self._stop_workers()
 
@@ -72,32 +77,49 @@ class WorkerPool:
 		await self._start_workers()
 
 	async def _start_workers(self) -> None:
-		current_limiter = anyio.to_thread.current_default_thread_limiter()
+		async with self._workers_lock:
+			for i in range(self._config.processes):
+				if self._stop_event.is_set():
+					break
+				await self._spawn_worker_locked(i + 1)
 
-		if self._config.concurrency > current_limiter.available_tokens:
-			current_limiter.total_tokens += int(
-				(self._config.concurrency - current_limiter.available_tokens) * 1.2
-			)
+	async def _spawn_worker_locked(self, index: int) -> None:
+		log.info("event=worker_pool.starting index=%d total=%d", index, self._config.processes)
+		p = self._mp_ctx.Process(
+			target=_run_worker,
+			args=(self._config, self.events_queue),
+			daemon=False,
+		)
+		await anyio.to_thread.run_sync(p.start)
+		self._processes.append(p)
 
-		for i in range(self._config.processes):
-			if self._stop_event.is_set():
-				break
-			log.info("event=worker_pool.starting index=%d total=%d", i + 1, self._config.processes)
-			p = self._mp_ctx.Process(
-				target=_run_worker,
-				args=(self._config, self.events_queue),
-				daemon=False,
-			)
-			await anyio.to_thread.run_sync(p.start)
-			self._processes.append(p)
+	async def _monitor_workers(self) -> None:
+		while not self._stop_event.is_set():
+			async with self._workers_lock:
+				for p in list(self._processes):
+					if p.is_alive():
+						continue
+					p.join(timeout=0)
+					self._processes.remove(p)
+					self._mark_worker_dead(p)
+					log.error(
+						"event=worker_pool.worker_exited pid=%s exitcode=%s action=restart",
+						p.pid,
+						p.exitcode,
+					)
+					if not self._stop_event.is_set():
+						await self._spawn_worker_locked(len(self._processes) + 1)
+			with anyio.move_on_after(_MONITOR_INTERVAL):
+				await self._stop_event.wait()
 
 	async def _stop_workers(self) -> None:
-		if not self._processes:
-			return
+		async with self._workers_lock:
+			if not self._processes:
+				return
 
-		log.info("event=worker_pool.stopping count=%d", len(self._processes))
-		processes = self._processes
-		self._processes = []
+			log.info("event=worker_pool.stopping count=%d", len(self._processes))
+			processes = self._processes
+			self._processes = []
 
 		await anyio.to_thread.run_sync(self._terminate_and_wait, processes)
 
@@ -118,15 +140,18 @@ class WorkerPool:
 				p.kill()
 				p.join(timeout=5)
 
-		if self._config.metrics.enable:
-			from kuu.contrib.prometheus import mark_worker_dead
+		for p in processes:
+			self._mark_worker_dead(p)
 
-			for p in processes:
-				if p.pid is not None:
-					try:
-						mark_worker_dead(p.pid)
-					except Exception as e:
-						log.exception("event=worker_pool.mark_dead_failed pid=%s error=%s", p.pid, e)
+	def _mark_worker_dead(self, p: SpawnProcess) -> None:
+		if not self._config.metrics.enable or p.pid is None:
+			return
+		from kuu.contrib.prometheus import mark_worker_dead
+
+		try:
+			mark_worker_dead(p.pid)
+		except Exception as e:
+			log.exception("event=worker_pool.mark_dead_failed pid=%s error=%s", p.pid, e)
 
 
 def _run_worker(config: Settings, events_queue: mp.Queue | None = None) -> None:
@@ -148,6 +173,9 @@ def _run_worker(config: Settings, events_queue: mp.Queue | None = None) -> None:
 
 	try:
 		anyio.run(Worker(config, app=app).run)
+	except BaseException as e:
+		log.exception("event=worker_pool.process_failed error=%s", e)
+		raise
 	finally:
 		if events_queue is not None:
 			from kuu.observability import _log_capture
