@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -8,6 +9,7 @@ from typing import Any
 
 import anyio
 import pytest
+from msgspec.structs import replace
 from testcontainers.postgres import PostgresContainer
 
 from kuu._util import utcnow
@@ -20,8 +22,9 @@ from kuu.persistence import (
 	create_backend,
 )
 from kuu.persistence._postgres import PostgresBackend
-from kuu.persistence._rows import LogRow, RunRow, validate_table_name
+from kuu.persistence._rows import LogRow, LogicalRunRow, RunRow, validate_table_name
 from kuu.persistence._sqlite import SqliteBackend, _parse_sqlite_dsn
+from kuu.result import capture_remote_failure
 
 pytestmark = pytest.mark.anyio
 
@@ -132,6 +135,11 @@ def _run(
 	started_at: datetime | None = None,
 	exc_type: str | None = None,
 	exc_message: str | None = None,
+	args: object = None,
+	kwargs: object = None,
+	headers: object = None,
+	input_complete: bool = False,
+	result_preview: object = None,
 ) -> RunRow:
 	return RunRow(
 		message_id=mid,
@@ -140,6 +148,11 @@ def _run(
 		queue=queue,
 		instance_id="inst-1",
 		worker_pid=42,
+		args=args,
+		kwargs=kwargs,
+		headers=headers,
+		input_complete=input_complete,
+		result_preview=result_preview,
 		started_at=started_at,
 		finished_at=finished_at if finished_at is not None else _now(),
 		time_elapsed=timedelta(seconds=0.05),
@@ -171,6 +184,81 @@ def _log(
 # === backend tests (run against both sqlite and postgres)
 
 
+async def test_sqlite_upgrade_backfills_runs_and_accepts_cancelled(tmp_path) -> None:
+	path = tmp_path / "upgrade.db"
+	runs = _uniq("runs")
+	logical_runs = _uniq("logical")
+	logs = _uniq("logs")
+	connection = sqlite3.connect(path)
+	connection.executescript(f'''
+		CREATE TABLE "{runs}" (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			message_id TEXT NOT NULL,
+			attempt INTEGER NOT NULL DEFAULT 0,
+			task TEXT NOT NULL,
+			queue TEXT NOT NULL,
+			instance_id TEXT NOT NULL,
+			worker_pid INTEGER NOT NULL DEFAULT 0,
+			args JSONB,
+			kwargs JSONB,
+			started_at INTEGER,
+			finished_at INTEGER,
+			time_elapsed REAL,
+			status TEXT NOT NULL CHECK (status IN (
+				'enqueued', 'started', 'succeeded', 'failed', 'retried', 'dead'
+			)),
+			exc_type TEXT,
+			exc_message TEXT,
+			traceback TEXT
+		);
+		INSERT INTO "{runs}" (
+			message_id, attempt, task, queue, instance_id, worker_pid,
+			started_at, finished_at, status
+		) VALUES ('historical', 0, 'old.task', 'q', 'old-instance', 1, 1, 2, 'dead');
+	''')
+	connection.close()
+
+	cfg = PersistenceConfig(
+		dsn=f"sqlite:///{path}",
+		runs_table=runs,
+		logical_runs_table=logical_runs,
+		logs_table=logs,
+	)
+	backend = SqliteBackend(cfg)
+	await backend.connect()
+	try:
+		await backend.init_schema()
+		historical = await backend.get_logical_run("historical")
+		assert historical is not None
+		assert historical.status == "failed"
+		assert historical.dead_lettered
+
+		await backend.write_runs([_run(mid="cancelled-new", status="cancelled")])
+		attempts = await backend.query_run_attempts("cancelled-new")
+		assert attempts[0].status == "cancelled"
+	finally:
+		await backend.close()
+
+
+async def test_postgres_upgrade_replaces_old_status_constraint(
+	postgres_backend: PostgresBackend,
+) -> None:
+	assert postgres_backend._pool is not None
+	rt = postgres_backend._qualified_runs
+	async with postgres_backend._pool.acquire() as connection:
+		await connection.execute(f"ALTER TABLE {rt} DROP CONSTRAINT kuu_run_status_check")
+		await connection.execute(f"""ALTER TABLE {rt}
+			ADD CONSTRAINT old_status_check CHECK (status IN (
+				'enqueued', 'started', 'succeeded', 'failed', 'retried', 'dead'
+			))""")
+	await postgres_backend.init_schema()
+
+	mid = _uniq("cancelled")
+	await postgres_backend.write_runs([_run(mid=mid, status="cancelled")])
+	attempts = await postgres_backend.query_run_attempts(mid)
+	assert attempts[0].status == "cancelled"
+
+
 class TestBackend:
 	async def test_init_schema_idempotent(self, backend: PersistenceBackend) -> None:
 		# init_schema is called by fixture; calling again must not raise
@@ -179,12 +267,142 @@ class TestBackend:
 
 	async def test_write_and_query_run(self, backend: PersistenceBackend) -> None:
 		mid = _uniq("m")
-		await backend.write_runs([_run(mid=mid, task="alpha")])
+		await backend.write_runs(
+			[
+				_run(
+					mid=mid,
+					task="alpha",
+					args=[1],
+					kwargs={"name": "Ada"},
+					headers={"trace": "abc"},
+					input_complete=True,
+					result_preview={"ok": True},
+				)
+			]
+		)
 		got = await backend.query_runs(task="alpha")
 		assert len(got) == 1
 		assert got[0].message_id == mid
 		assert got[0].task == "alpha"
 		assert got[0].status == "succeeded"
+		assert got[0].args == [1]
+		assert got[0].kwargs == {"name": "Ada"}
+		assert got[0].headers == {"trace": "abc"}
+		assert got[0].input_complete
+		assert got[0].result_preview == {"ok": True}
+
+	async def test_terminal_logical_run_rejects_late_attempt(
+		self, backend: PersistenceBackend
+	) -> None:
+		mid = _uniq("terminal")
+		now = _now()
+		await backend.write_logical_runs(
+			[
+				LogicalRunRow(
+					message_id=mid,
+					task="alpha",
+					queue="q",
+					instance_id="instance",
+					status="failed",
+					created_at=now,
+					updated_at=now,
+				)
+			]
+		)
+		await backend.write_runs([_run(mid=mid, attempt=2, status="started")])
+		assert await backend.query_run_attempts(mid) == []
+
+	async def test_logical_run_round_trip_and_terminal_immutability(
+		self, backend: PersistenceBackend
+	) -> None:
+		mid = _uniq("logical")
+		now = _now()
+
+		def logical(status, *, attempts=1, dead=False):
+			return LogicalRunRow(
+				message_id=mid,
+				task="alpha",
+				queue="default",
+				instance_id="preset-1",
+				status=status,
+				created_at=now,
+				updated_at=now + timedelta(seconds=attempts),
+				replay_of="source",
+				attempt_count=attempts,
+				dead_lettered=dead,
+			)
+
+		await backend.write_logical_runs(
+			[
+				logical("enqueued"),
+				logical("failed", attempts=2, dead=True),
+				logical("running", attempts=3),
+			]
+		)
+		stored = await backend.get_logical_run(mid)
+		assert stored is not None
+		assert stored.status == "failed"
+		assert stored.attempt_count == 2
+		assert stored.dead_lettered
+		assert stored.replay_of == "source"
+		listed = await backend.query_logical_runs(task="alpha", status="failed")
+		assert [run.message_id for run in listed] == [mid]
+
+	async def test_unknown_attempt_becomes_lost_on_redelivery(
+		self, backend: PersistenceBackend
+	) -> None:
+		mid = _uniq("lost")
+		now = _now()
+		await backend.write_logical_runs(
+			[
+				LogicalRunRow(
+					message_id=mid,
+					task="alpha",
+					queue="default",
+					instance_id="lost-instance",
+					status="running",
+					created_at=now,
+					updated_at=now,
+				)
+			]
+		)
+		await backend.write_runs(
+			[
+				replace(
+					_run(mid=mid, attempt=0, status="started", finished_at=now),
+					instance_id="lost-instance",
+				)
+			]
+		)
+		assert await backend.mark_instance_unknown("lost-instance", now + timedelta(seconds=5)) == 1
+		unknown = (await backend.query_run_attempts(mid))[0]
+		assert unknown.asdict()["status"] == "unknown"
+		assert (await backend.get_logical_run(mid)).status == "unknown"  # type: ignore[union-attr]
+
+		await backend.write_logical_runs(
+			[
+				LogicalRunRow(
+					message_id=mid,
+					task="alpha",
+					queue="default",
+					instance_id="new-instance",
+					status="running",
+					created_at=now,
+					updated_at=now + timedelta(seconds=6),
+					attempt_count=2,
+				)
+			]
+		)
+		await backend.write_runs([_run(mid=mid, attempt=1, status="started", finished_at=now)])
+		assert await backend.mark_previous_attempts_lost(mid, 1) == 1
+		attempts = await backend.query_attempts_for_runs([mid])
+		assert [attempt.asdict()["status"] for attempt in attempts] == ["lost", "started"]
+		assert (await backend.get_logical_run(mid)).status == "running"  # type: ignore[union-attr]
+
+	async def test_cancelled_status_round_trip(self, backend: PersistenceBackend) -> None:
+		mid = _uniq("cancelled")
+		await backend.write_runs([_run(mid=mid, status="cancelled")])
+		assert (await backend.query_runs())[0].status == "cancelled"
 
 	async def test_write_runs_empty_is_noop(self, backend: PersistenceBackend) -> None:
 		await backend.write_runs([])
@@ -304,6 +522,30 @@ class TestBackend:
 		a2 = await backend.query_logs(mid, 2)
 		assert [r.message for r in a2] == ["other-attempt"]
 
+	async def test_structured_observations_and_id_cursor(self, backend: PersistenceBackend) -> None:
+		mid = _uniq("observations")
+		await backend.write_runs([_run(mid=mid)])
+		await backend.write_logs(
+			[
+				LogRow(
+					message_id=mid,
+					attempt=1,
+					kind="progress",
+					seq=4,
+					fields={"phase": "parse"},
+					current=2,
+					total=5,
+				),
+				LogRow(message_id=mid, attempt=1, kind="gap", seq=5, dropped=3),
+			]
+		)
+
+		rows = await backend.query_logs(mid, 1)
+		assert rows[0].id is not None
+		assert rows[0].fields == {"phase": "parse"}
+		assert (rows[0].current, rows[0].total) == (2, 5)
+		assert (await backend.query_logs(mid, 1, after_id=rows[0].id))[0].dropped == 3
+
 	async def test_query_logs_after_ts_cursor(self, backend: PersistenceBackend) -> None:
 		mid = _uniq("m")
 		await backend.write_runs([_run(mid=mid, attempt=1)])
@@ -363,6 +605,50 @@ class TestBackend:
 
 
 class TestSqliteSpecific:
+	async def test_remote_failure_round_trip(self, sqlite_backend: SqliteBackend) -> None:
+		try:
+			raise ValueError("lunar failure")
+		except ValueError as exc:
+			failure = capture_remote_failure(exc)
+		run = replace(_run(mid="remote-failure", status="failed"), failure=failure)
+		await sqlite_backend.write_runs([run])
+
+		stored = (await sqlite_backend.query_run_attempts("remote-failure"))[0]
+		assert stored.failure is not None
+		assert stored.failure.type_name == "ValueError"
+		assert stored.failure.frames[-1].application
+
+	async def test_prune_caps_runs_without_evicting_active(
+		self, sqlite_backend: SqliteBackend
+	) -> None:
+		now = _now()
+		old_mid = _uniq("old")
+		new_mid = _uniq("new")
+		active_mid = _uniq("active")
+		await sqlite_backend.write_runs(
+			[
+				_run(mid=old_mid, attempt=1, status="failed", finished_at=now),
+				_run(mid=old_mid, attempt=2, status="dead", finished_at=now),
+				_run(mid=new_mid, status="succeeded", finished_at=now + timedelta(seconds=1)),
+				RunRow(
+					message_id=active_mid,
+					task="t",
+					queue="default",
+					instance_id="inst-1",
+					status="started",
+					started_at=now - timedelta(days=30),
+				),
+			]
+		)
+
+		deleted = await sqlite_backend.prune(now - timedelta(days=365), max_runs=1)
+
+		assert deleted == 1
+		assert {row.message_id for row in await sqlite_backend.query_runs()} == {
+			new_mid,
+			active_mid,
+		}
+
 	def test_parse_sqlite_dsn_variants(self) -> None:
 		assert _parse_sqlite_dsn("sqlite://") == ":memory:"
 		assert _parse_sqlite_dsn("sqlite:///tmp/x.db") == "tmp/x.db"
@@ -449,6 +735,12 @@ def _evt(
 	ts: float | None = None,
 	exc_type: str | None = None,
 	exc_message: str | None = None,
+	replay_of: str | None = None,
+	args: object = None,
+	kwargs: object = None,
+	headers: object = None,
+	input_complete: bool = False,
+	result_preview: object = None,
 ) -> Event:
 	return Event(
 		kind=kind,
@@ -460,6 +752,12 @@ def _evt(
 		ts=ts if ts is not None else time.time(),
 		exc_type=exc_type,
 		exc_message=exc_message,
+		replay_of=replay_of,
+		args=args,
+		kwargs=kwargs,
+		headers=headers,
+		input_complete=input_complete,
+		result_preview=result_preview,
 	)
 
 
@@ -489,9 +787,28 @@ class TestPersistenceWorker:
 		mid = _uniq("m")
 
 		async def _body(stop: anyio.Event) -> None:
-			w.enqueue_event("inst-A", _evt("enqueued", mid=mid, task="alpha"))
+			w.enqueue_event(
+				"inst-A",
+				_evt(
+					"enqueued",
+					mid=mid,
+					task="alpha",
+					args=[7],
+					kwargs={},
+					headers={"trace": "abc"},
+					input_complete=True,
+				),
+			)
 			await anyio.sleep(0.05)
-			w.enqueue_event("inst-A", _evt("succeeded", mid=mid, task="alpha"))
+			w.enqueue_event(
+				"inst-A",
+				_evt(
+					"succeeded",
+					mid=mid,
+					task="alpha",
+					result_preview={"ok": True},
+				),
+			)
 
 			async def _has_run() -> bool:
 				rows = await sqlite_backend.query_runs(task="alpha")
@@ -508,6 +825,62 @@ class TestPersistenceWorker:
 		assert rows[0].worker_pid == 7
 		assert rows[0].time_elapsed is not None and rows[0].time_elapsed >= timedelta(seconds=0)
 		assert rows[0].finished_at is not None
+		assert rows[0].args == [7]
+		assert rows[0].kwargs == {}
+		assert rows[0].headers == {"trace": "abc"}
+		assert rows[0].input_complete
+		assert rows[0].result_preview == {"ok": True}
+
+	async def test_logical_run_tracks_attempts_replay_and_terminal_state(
+		self, sqlite_backend: SqliteBackend
+	) -> None:
+		w = PersistenceWorker(sqlite_backend, sqlite_backend._cfg)
+		mid = _uniq("logical")
+
+		async def _body(stop: anyio.Event) -> None:
+			for event in (
+				_evt("enqueued", mid=mid, attempt=0, replay_of="source-run"),
+				_evt("started", mid=mid, attempt=0),
+				_evt("failed", mid=mid, attempt=0),
+				_evt("retried", mid=mid, attempt=0),
+				_evt("started", mid=mid, attempt=1),
+				_evt("dead", mid=mid, attempt=1),
+				_evt("started", mid=mid, attempt=2),  # late duplicate after terminal
+			):
+				w.enqueue_event("inst-A", event)
+
+			async def _is_terminal() -> bool:
+				run = await sqlite_backend.get_logical_run(mid)
+				return run is not None and run.status == "failed"
+
+			await _wait_for(_is_terminal)
+
+		await _run_worker(w, _body)
+		run = await sqlite_backend.get_logical_run(mid)
+		assert run is not None
+		assert run.status == "failed"
+		assert run.attempt_count == 2
+		assert run.dead_lettered
+		assert run.replay_of == "source-run"
+		attempts = await sqlite_backend.query_run_attempts(mid)
+		assert [attempt.attempt for attempt in attempts] == [0, 1]
+
+	async def test_cancel_requested_waits_for_worker_ack(
+		self, sqlite_backend: SqliteBackend
+	) -> None:
+		w = PersistenceWorker(sqlite_backend, sqlite_backend._cfg)
+		mid = _uniq("cancel")
+
+		async def _body(stop: anyio.Event) -> None:
+			w.enqueue_event("inst-A", _evt("started", mid=mid, attempt=0))
+			await _wait_for(lambda: sqlite_backend.get_logical_run(mid))
+			assert await sqlite_backend.mark_cancel_requested(mid, utcnow())
+			w.enqueue_event("inst-A", _evt("started", mid=mid, attempt=0))
+			await anyio.sleep(0.3)
+
+		await _run_worker(w, _body)
+		run = await sqlite_backend.get_logical_run(mid)
+		assert run is not None and run.status == "cancel_requested"
 
 	async def test_start_event_writes_parent_row_before_finish(
 		self, sqlite_backend: SqliteBackend
@@ -637,6 +1010,43 @@ class TestPersistenceWorker:
 		# queue was full from the events above; both log batches should have been dropped.
 		assert w._dropped_logs == 2
 
+	async def test_queue_overflow_persists_exact_gap(self, sqlite_backend: SqliteBackend) -> None:
+		import asyncio
+
+		mid = _uniq("gap")
+		await sqlite_backend.write_runs([_run(mid=mid, attempt=0, status="started")])
+		w = PersistenceWorker(sqlite_backend, sqlite_backend._cfg)
+		w._queue = asyncio.Queue(maxsize=1)
+		w.enqueue_event(
+			"inst",
+			Event(kind="started", task="ignored", queue="q", worker_pid=1),
+		)
+		w.enqueue_log_batch(
+			"inst",
+			LogBatch(
+				records=[
+					LogRecord(
+						message_id=mid,
+						attempt=0,
+						level=20,
+						logger="task",
+						message=str(index),
+						ts=time.time(),
+					)
+					for index in range(3)
+				]
+			),
+		)
+
+		async def _body(stop: anyio.Event) -> None:
+			await anyio.sleep(0.4)
+
+		await _run_worker(w, _body)
+		logs = await sqlite_backend.query_logs(mid, 0)
+		assert len(logs) == 1
+		assert logs[0].kind == "gap"
+		assert logs[0].dropped == 3
+
 	async def test_final_flush_on_stop(self, sqlite_backend: SqliteBackend) -> None:
 		"""stop_event triggers a force-flush that drains the queue"""
 		w = PersistenceWorker(sqlite_backend, sqlite_backend._cfg)
@@ -665,6 +1075,8 @@ class TestNoopBackend:
 		await be.write_logs([_log(mid="x")])
 		assert await be.query_runs() == []
 		assert await be.query_run_attempts("x") == []
+		assert await be.query_logical_runs() == []
+		assert await be.query_attempts_for_runs(["x"]) == []
 		assert await be.query_logs("x", 1) == []
 		assert await be.prune(_now()) == 0
 		await be.close()

@@ -1,0 +1,3 @@
+# Model observable work as Runs containing Attempts
+
+A Task is a definition, while each invocation is an immutable Run containing explicitly separated Attempts. Automatic retries remain in the same Run; terminal Runs are never reopened; Replay creates a linked Run with a fresh identity and retry budget. The observation projection records lifecycle, progress, logs, failures, gaps, and DLQ placement without conflating a failed Attempt, a Failed Run, and broker disposition. Persistence moves additively to parent Run, child Attempt, and append-only observation tables so existing history is not destructively reinterpreted.

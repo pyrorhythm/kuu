@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from queue import Queue
 from typing import Any, Never
 from unittest.mock import MagicMock, patch
 
 import anyio
 from watchfiles import Change
 
+from kuu.app import Kuu
+from kuu.brokers.memory import MemoryBroker
 from kuu.config import Settings
+from kuu.message import Payload
+from kuu.observability import Event
+from kuu.orchestrator._event_forwarder import EventForwarder
 from kuu.orchestrator._watcher import Watcher
-from kuu.orchestrator._worker import WorkerPool
+from kuu.orchestrator._worker import WorkerPool, _install_event_forwarder, _safe_capture
 
 
 def _config(**overrides: Any) -> Settings:
@@ -26,12 +33,81 @@ def _config(**overrides: Any) -> Settings:
 	return Settings(**defaults)
 
 
+def test_safe_capture_redacts_sensitive_values_and_disables_recovery() -> None:
+	captured, complete = _safe_capture(
+		{"args": [], "kwargs": {"password": "secret", "nested": {"token": "abc"}}},
+		1024,
+	)
+	assert captured == {
+		"args": [],
+		"kwargs": {
+			"password": "<redacted>",
+			"nested": {"token": "<redacted>"},
+		},
+	}
+	assert not complete
+
+
+def test_safe_capture_enforces_combined_byte_limit() -> None:
+	captured, complete = _safe_capture({"args": ["x" * 100], "kwargs": {}}, 24)
+	assert list(captured) == ["_truncated"]
+	assert len(json.dumps(captured, separators=(",", ":")).encode()) <= 24
+	assert not complete
+
+
+def test_task_level_capture_includes_redacted_headers_and_result() -> None:
+	async def run() -> None:
+		app = Kuu(MemoryBroker())
+		captured: Queue[Event] = Queue()
+		_install_event_forwarder(app, captured)  # type: ignore[arg-type]
+
+		@app.task(
+			"captured",
+			capture_args=True,
+			capture_headers=True,
+			capture_result=True,
+		)
+		async def task(value: int) -> dict:
+			return {"value": value}
+
+		await app.broker.connect()
+		handle = await app.enqueue_by_name(
+			task.task_name,
+			Payload(args=(7,)),
+			headers={"authorization": "Bearer secret"},
+		)
+		enqueued = captured.get_nowait()
+		assert enqueued.args == [7]
+		assert enqueued.kwargs == {}
+		assert enqueued.input_complete
+		assert enqueued.headers == {"authorization": "<redacted>"}
+
+		await app.events.task_result.send(handle.message, {"token": "secret", "ok": True})
+		await app.events.task_succeeded.send(handle.message, 0.1)
+		succeeded = captured.get_nowait()
+		assert succeeded.result_preview == {"token": "<redacted>", "ok": True}
+
+	anyio.run(run)
+
+
 def _fake_awatch_factory(batches: list[set[tuple[Change, str]]]):
 	async def _gen(*_args: Any, **_kwargs: Any):
 		for batch in batches:
 			yield batch
 
 	return _gen
+
+
+def test_started_events_are_forwarded() -> None:
+	sink = MagicMock()
+	forwarder = EventForwarder(instance_id="preset-1", events_sink=sink, events_queue=MagicMock())
+	started = Event(kind="started", task="work", queue="q", worker_pid=42)
+
+	forwarder._handle_item(started)
+
+	assert sink.emit.call_args.args[0].body == started
+	assert forwarder.inflight["q"] == 1
+	assert forwarder.current_task[42] == "work"
 
 
 class TestWorkerPool:

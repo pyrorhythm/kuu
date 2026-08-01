@@ -5,6 +5,7 @@ from .exceptions import NotConnected, RejectErr, RetryErr, TaskError
 from .handle import TaskHandle
 from .message import Message
 from .middleware.base import Middleware
+from .observability._log_capture import progress
 from .results.base import Result, ResultBackend
 from .serializers import JSONSerializer, Serializer
 from .task import Task
@@ -20,6 +21,7 @@ __all__ = [
     "TaskError",
     "NotConnected",
     "Middleware",
+    "progress",
     "Broker",
     "Delivery",
     "Result",

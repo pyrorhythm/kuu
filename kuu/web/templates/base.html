@@ -22,7 +22,7 @@
 	<link rel="preconnect" href="https://fonts.googleapis.com">
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 	<link
-		href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500&family=Geist+Mono:wght@400;500&display=swap"
+		href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap"
 		rel="stylesheet">
 	<link rel="stylesheet" href="static/kuu.css">
 	<script src="https://cdn.jsdelivr.net/npm/htmx.org@4.0.0-beta2/dist/htmx.min.js"></script>
@@ -57,6 +57,7 @@
 		</div>
 		<div class="dialog-body">
 			<div class="dialog-task-name" id="dialog-task-name"></div>
+			<div class="dialog-task-meta" id="dialog-task-meta"></div>
 			<div id="dialog-form-area">
 				<p class="placeholder">loading…</p>
 			</div>
@@ -88,6 +89,7 @@
 			const dialog = document.getElementById('run-task-dialog');
 			const taskNameEl = document.getElementById('dialog-task-name');
 			const formArea = document.getElementById('dialog-form-area');
+			const taskMeta = document.getElementById('dialog-task-meta');
 			const toast = document.getElementById('kuu-toast');
 			let _toastTimer;
 
@@ -98,7 +100,12 @@
 				_toastTimer = setTimeout(() => { toast.className = 'kuu-toast'; }, 3000);
 			}
 
-			function closeDialog() { dialog.close(); }
+			window.kuuToast = showToast;
+			function closeDialog() {
+				dialog.close();
+				const url=new URL(location.href); url.searchParams.delete('launch'); url.searchParams.delete('preset');
+				history.replaceState({},'',url);
+			}
 			document.getElementById('dialog-close').addEventListener('click', closeDialog);
 			document.getElementById('dialog-cancel').addEventListener('click', closeDialog);
 
@@ -138,18 +145,21 @@
 				formArea.innerHTML = html || '<p class="placeholder">no parameters</p>';
 			}
 
-			window.kuuRunTask = async function (taskName, instance) {
+			window.kuuRunTask = async function (taskName, preset) {
 				taskNameEl.textContent = taskName;
 				formArea.innerHTML = '<p class="placeholder">loading…</p>';
 				dialog.dataset.task = taskName;
-				dialog.dataset.instance = instance || '';
+				dialog.dataset.preset = preset || '';
 				dialog.dataset.mode = 'raw';
+				const url=new URL(location.href); url.searchParams.set('launch',taskName); if(preset) url.searchParams.set('preset',preset); history.replaceState({},'',url);
 				dialog.showModal();
 				try {
-					const qs = 'task=' + encodeURIComponent(taskName) + (instance ? '&instance=' + encodeURIComponent(instance) : '');
+					const qs = 'task=' + encodeURIComponent(taskName) + (preset ? '&preset=' + encodeURIComponent(preset) : '');
 					const r = await fetch('api/task-params?' + qs);
 					const d = await r.json();
 					if (r.ok) {
+						taskMeta.innerHTML='<span>Preset <strong>'+escAttr(preset||'local')+'</strong></span><span>Queue <strong>'+escAttr(d.queue||'default')+'</strong></span><span>Timeout <strong>'+(d.timeout==null?'—':escAttr(d.timeout)+'s')+'</strong></span><span>Attempts <strong>'+escAttr(d.max_attempts)+'</strong></span><button class="btn btn-tiny" id="dialog-raw">Raw JSON</button>';
+						document.getElementById('dialog-raw').addEventListener('click',buildRaw);
 						if (d.raw || d.params.length === 0) buildRaw();
 						else buildForm(d.params);
 					} else {
@@ -164,7 +174,7 @@
 
 			document.getElementById('dialog-submit').addEventListener('click', async () => {
 				const task = dialog.dataset.task;
-				const instance = dialog.dataset.instance || '';
+				const preset = dialog.dataset.preset || '';
 				const mode = dialog.dataset.mode;
 				let args = [], kwargs = {};
 
@@ -202,22 +212,28 @@
 
 				try {
 					const payload = { task, args, kwargs };
-					if (instance) payload.instance = instance;
+					if (preset) payload.preset = preset;
 					const r = await fetch('api/run-task', {
 						method: 'POST',
 						headers: { 'Content-Type': 'application/json' },
 						body: JSON.stringify(payload),
 					});
 					const d = await r.json().catch(() => ({}));
-					if (r.ok) { closeDialog(); showToast('enqueued', true); }
+					if (r.ok) {
+						closeDialog(); showToast('enqueued', true);
+						if (d.run_id && window.kuuOpenRun) window.kuuOpenRun(d.run_id);
+					}
 					else { showToast(d.error || 'error', false); }
 				} catch (_) { showToast('request failed', false); }
 			});
 
-			window.kuuTriggerJob = async function (jobId, instance) {
+			const launchParams=new URL(location.href).searchParams;
+			if(launchParams.get('launch')) window.kuuRunTask(launchParams.get('launch'),launchParams.get('preset')||'');
+
+			window.kuuTriggerJob = async function (jobId, preset) {
 				try {
 					const body = { job_id: jobId };
-					if (instance) body.instance = instance;
+					if (preset) body.preset = preset;
 					const r = await fetch('api/trigger-job', {
 						method: 'POST',
 						headers: { 'Content-Type': 'application/json' },
@@ -231,10 +247,10 @@
 				} catch (_) { showToast('request failed', false); }
 			};
 
-			window.kuuRemoveJob = async function (jobId, instance) {
+			window.kuuRemoveJob = async function (jobId, preset) {
 				try {
 					const body = { job_id: jobId };
-					if (instance) body.instance = instance;
+					if (preset) body.preset = preset;
 					const r = await fetch('api/remove-job', {
 						method: 'POST',
 						headers: { 'Content-Type': 'application/json' },

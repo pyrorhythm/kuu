@@ -15,8 +15,8 @@
       <td class="mono-cell">{{ j.task }}</td>
       <td class="dim">{{ j.next_run|int }}</td>
       <td class="action-cell">
-        <button class="btn" onclick="kuuTriggerJob({{ j.id|tojson }}, {{ j.instance|tojson }})">trigger</button>
-        <button class="btn btn-danger" onclick="kuuRemoveJob({{ j.id|tojson }}, {{ j.instance|tojson }})">remove</button>
+        <button class="btn" onclick="kuuTriggerJob({{ j.id|tojson }}, {{ j.target|tojson }})">trigger</button>
+        <button class="btn btn-danger" onclick="kuuRemoveJob({{ j.id|tojson }}, {{ j.target|tojson }})">remove</button>
       </td>
       {% else %}
       <td class="mono-cell">{{ j.task_name }}</td>

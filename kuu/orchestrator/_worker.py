@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 import logging
+import math
 import multiprocessing as mp
 import time
-import traceback as _traceback_module
 from multiprocessing.context import SpawnProcess
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -13,6 +14,7 @@ import anyio.to_thread
 from kuu._import import import_object, import_tasks
 from kuu.app import Kuu
 from kuu.config import Settings
+from kuu.result import RemoteFailure, capture_remote_failure
 from kuu.worker import Worker
 
 if TYPE_CHECKING:
@@ -24,22 +26,63 @@ log = logging.getLogger("kuu.orchestrator.worker_pool")
 WorkerEventKind = Literal["started", "succeeded", "failed", "retried", "dead"]
 
 
-_MAX_ARG_REPR = 500
-_MAX_TRACEBACK = 8192
 _MONITOR_INTERVAL = 1.0
+_SENSITIVE_PARTS = (
+	"access_key",
+	"api_key",
+	"apikey",
+	"authorization",
+	"cookie",
+	"password",
+	"private_key",
+	"secret",
+	"token",
+)
 
 
-def _safe_repr(obj: Any) -> str | None:
-	"""repr an object, truncated to _MAX_ARG_REPR chars"""
-	if obj is None:
-		return None
-	try:
-		s = repr(obj)
-		if len(s) > _MAX_ARG_REPR:
-			return s[:_MAX_ARG_REPR] + "...<truncated>"
-		return s
-	except Exception:
-		return "<unrepresentable>"
+def _safe_capture(value: Any, limit: int) -> tuple[Any, bool]:
+	def scrub(item: Any, depth: int = 0) -> tuple[Any, bool]:
+		if item is None or isinstance(item, bool | int | str):
+			return item, True
+		if isinstance(item, float):
+			return (item, True) if math.isfinite(item) else (repr(item), False)
+		if depth >= 8:
+			return "<max-depth>", False
+		if isinstance(item, dict):
+			out: dict[str, Any] = {}
+			complete = len(item) <= 1000
+			for key, child in list(item.items())[:1000]:
+				name = str(key)
+				if any(part in name.lower() for part in _SENSITIVE_PARTS):
+					out[name] = "<redacted>"
+					complete = False
+					continue
+				out[name], child_complete = scrub(child, depth + 1)
+				complete = complete and child_complete
+			return out, complete
+		if isinstance(item, list | tuple):
+			values = [scrub(child, depth + 1) for child in list(item)[:1000]]
+			return [child for child, _ in values], (
+				len(item) <= 1000 and all(complete for _, complete in values)
+			)
+		try:
+			return repr(item), False
+		except Exception:
+			return "<unrepresentable>", False
+
+	safe, complete = scrub(value)
+	encoded = json.dumps(safe, ensure_ascii=False, separators=(",", ":")).encode()
+	if len(encoded) <= limit:
+		return safe, complete
+	prefix_bytes = min(len(encoded), limit)
+	while prefix_bytes >= 0:
+		preview = encoded[:prefix_bytes].decode(errors="ignore")
+		truncated = {"_truncated": preview}
+		final_size = len(json.dumps(truncated, ensure_ascii=False, separators=(",", ":")).encode())
+		if final_size <= limit:
+			return truncated, False
+		prefix_bytes -= max(1, final_size - limit)
+	return "", False
 
 
 class WorkerPool:
@@ -168,8 +211,19 @@ def _run_worker(config: Settings, events_queue: mp.Queue | None = None) -> None:
 		from kuu.observability import _log_capture
 
 		level = _resolve_log_level(config.persistence.log_level)
-		_log_capture.install(events_queue, level=level)
-		_install_event_forwarder(app, events_queue)
+		_log_capture.install(
+			events_queue,
+			level=level,
+			max_attempt_bytes=config.persistence.attempt_observation_bytes,
+		)
+		_install_event_forwarder(
+			app,
+			events_queue,
+			capture_args=config.persistence.capture_args,
+			capture_headers=config.persistence.capture_headers,
+			capture_result=config.persistence.capture_result,
+			preview_bytes=config.persistence.preview_bytes,
+		)
 
 	try:
 		anyio.run(Worker(config, app=app).run)
@@ -193,13 +247,22 @@ def _resolve_log_level(name: str) -> int:
 	return val if isinstance(val, int) else logging.INFO
 
 
-def _install_event_forwarder(app: Kuu, q: mp.Queue) -> None:
+def _install_event_forwarder(
+	app: Kuu,
+	q: mp.Queue,
+	*,
+	capture_args: bool = False,
+	capture_headers: bool = False,
+	capture_result: bool = False,
+	preview_bytes: int = 16 * 1024,
+) -> None:
 	"""push :class:`WorkerEvent` records onto the inter-process queue"""
 	import os
 
 	from kuu.observability import Event, EventKind
 
 	pid = os.getpid()
+	result_previews: dict[tuple[str, int], Any] = {}
 
 	def _put(
 		kind: EventKind,
@@ -208,35 +271,39 @@ def _install_event_forwarder(app: Kuu, q: mp.Queue) -> None:
 		elapsed: float | None = None,
 		msg: Any = None,
 		exc: BaseException | None = None,
+		result_preview: Any = None,
 	) -> None:
 		message_id: str | None = None
 		attempt: int | None = None
 		args: Any = None
 		kwargs: Any = None
+		headers: Any = None
+		input_complete = False
 		exc_type: str | None = None
 		exc_message: str | None = None
 		traceback_str: str | None = None
+		failure: RemoteFailure | None = None
+		replay_of: str | None = None
 		if msg is not None:
 			message_id = str(msg.id)
 			attempt = msg.attempt
-			if msg.payload.args:
-				args = msg.payload.args
-			if msg.payload.kwargs:
-				kwargs = msg.payload.kwargs
+			replay_of = msg.headers.get("kuu.replay_of")
+			definition = app.registry.get(msg.task)
+			if capture_args or (definition is not None and definition.capture_args):
+				captured, input_complete = _safe_capture(
+					{"args": msg.payload.args, "kwargs": msg.payload.kwargs},
+					preview_bytes,
+				)
+				if isinstance(captured, dict) and "args" in captured:
+					args = captured["args"]
+					kwargs = captured["kwargs"]
+			if capture_headers or (definition is not None and definition.capture_headers):
+				headers, _ = _safe_capture(msg.headers, preview_bytes)
 		if exc is not None:
-			exc_type = type(exc).__name__
-			exc_message_val = str(exc)
-			if len(exc_message_val) > _MAX_ARG_REPR:
-				exc_message_val = exc_message_val[:_MAX_ARG_REPR] + "...<truncated>"
-			exc_message = exc_message_val
-			tb_obj = exc.__traceback__
-			if tb_obj is not None:
-				tb = "".join(_traceback_module.format_exception(type(exc), exc, tb_obj))
-			else:
-				tb = f"{type(exc).__name__}: {exc}"
-			if len(tb) > _MAX_TRACEBACK:
-				tb = tb[:_MAX_TRACEBACK] + "...<truncated>"
-			traceback_str = tb
+			failure = capture_remote_failure(exc)
+			exc_type = failure.type_name
+			exc_message = failure.message
+			traceback_str = failure.traceback
 		try:
 			q.put_nowait(
 				Event(
@@ -249,19 +316,38 @@ def _install_event_forwarder(app: Kuu, q: mp.Queue) -> None:
 					attempt=attempt,
 					args=args,
 					kwargs=kwargs,
+					headers=headers,
+					input_complete=input_complete,
+					result_preview=result_preview,
 					exc_type=exc_type,
 					exc_message=exc_message,
 					traceback=traceback_str,
+					failure=failure,
+					replay_of=replay_of,
 				)
 			)
 		except Exception:
 			pass
 
+	def _capture_result(msg: Any, value: Any) -> None:
+		definition = app.registry.get(msg.task)
+		if capture_result or (definition is not None and definition.capture_result):
+			result_previews[(str(msg.id), msg.attempt)] = _safe_capture(value, preview_bytes)[0]
+
+	def _succeeded(msg: Any, elapsed: float) -> None:
+		_put(
+			"succeeded",
+			msg.task,
+			msg.queue,
+			elapsed=elapsed,
+			msg=msg,
+			result_preview=result_previews.pop((str(msg.id), msg.attempt), None),
+		)
+
 	app.events.task_enqueued.connect(lambda msg: _put("enqueued", msg.task, msg.queue, msg=msg))
 	app.events.task_started.connect(lambda msg: _put("started", msg.task, msg.queue, msg=msg))
-	app.events.task_succeeded.connect(
-		lambda msg, elapsed: _put("succeeded", msg.task, msg.queue, elapsed=elapsed, msg=msg)
-	)
+	app.events.task_result.connect(_capture_result)
+	app.events.task_succeeded.connect(_succeeded)
 	app.events.task_failed.connect(
 		lambda msg, exc: _put("failed", msg.task, msg.queue, msg=msg, exc=exc)
 	)

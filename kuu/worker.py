@@ -20,7 +20,7 @@ from kuu.exceptions import RejectErr, RetryErr
 from kuu.middleware.base import run_chain
 from kuu.observability import _log_capture
 from kuu.outcome import Cancelled, Fail, Ok, Outcome, Reject, Retry
-from kuu.result import Result
+from kuu.result import Result, capture_remote_failure
 from kuu.results.base import result_key
 
 # how long a revoked id is remembered so a not-yet-delivered task is still
@@ -245,6 +245,7 @@ class Worker:
 					started = time.perf_counter()
 					log.debug("event=worker.handle.executing_task task=%s", msg.task)
 					value = await run_chain(ctx, self.app.middleware, _terminal)
+					await self.app.events.task_result.send(msg, value)
 					log.debug("event=worker.handle.task_completed task=%s", msg.task)
 					with anyio.CancelScope(shield=True):
 						if results is not None:
@@ -278,9 +279,14 @@ class Worker:
 							and not cancelled
 						):
 							with anyio.CancelScope(shield=True):
+								failure = capture_remote_failure(e)
 								await results.set(
 									key,
-									Result(status="error", error=f"{type(e).__name__}: {e}"),
+									Result(
+										status="error",
+										error=f"{failure.type_name}: {failure.message}",
+										failure=failure,
+									),
 									ttl=results.ttl,
 								)
 		finally:

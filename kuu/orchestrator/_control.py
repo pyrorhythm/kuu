@@ -11,6 +11,7 @@ from multiprocessing.context import SpawnProcess
 import anyio
 import anyio.to_thread
 
+from kuu._util import utcnow
 from kuu.config import Kuunfig, Settings
 from kuu.observability import (
 	Bye,
@@ -98,6 +99,7 @@ class ControlPlane:
 		self._cmd_in_per_instance = {}
 		self._cmd_pending = {}
 		self._cmd_results = {}
+		self._known_instances: set[str] = set()
 		self._stop_event = anyio.Event()
 		self._metrics = MetricsServer()
 		self._persist_worker = self._create_persist_worker()
@@ -168,8 +170,11 @@ class ControlPlane:
 	async def _ingest_loop(self) -> None:
 		async for env in self._source:
 			self._registry.ingest(env)
+			if self._dashboard is not None:
+				self._dashboard.browser_stream.publish(env)
 			match env.body:
 				case Hello() as h:
+					self._known_instances.add(env.instance)
 					log.info(
 						"event=control_plane.hello instance=%s preset=%s broker=%s/%s pid=%d",
 						env.instance,
@@ -179,6 +184,7 @@ class ControlPlane:
 						h.pid,
 					)
 				case Bye() as b:
+					self._known_instances.discard(env.instance)
 					log.info(
 						"event=control_plane.bye instance=%s reason=%s", env.instance, b.reason
 					)
@@ -198,6 +204,26 @@ class ControlPlane:
 	async def _roster_log_loop(self) -> None:
 		while not self._stop_event.is_set():
 			roster = self._registry.all()
+			live = {entry.instance_id for entry in roster}
+			missing = self._known_instances - live
+			backend = self._backend_for_dashboard()
+			if backend is not None:
+				for instance_id in missing:
+					try:
+						count = await backend.mark_instance_unknown(instance_id, utcnow())
+						if count:
+							log.warning(
+								"event=control_plane.worker_lost instance=%s attempts=%d",
+								instance_id,
+								count,
+							)
+					except Exception as exc:
+						log.warning(
+							"event=control_plane.mark_unknown_failed instance=%s error=%s",
+							instance_id,
+							exc,
+						)
+			self._known_instances.difference_update(missing)
 			if roster:
 				log.debug(
 					"event=control_plane.roster roster=%s",
@@ -235,10 +261,11 @@ class ControlPlane:
 		await anyio.to_thread.run_sync(_terminate_and_wait)
 		self._procs = []
 
-	async def send_command(self, instance_id: str, cmd: Cmd, timeout: float = 10.0) -> CmdResponse:
+	async def send_command(self, target: str, cmd: Cmd, timeout: float = 10.0) -> CmdResponse:
+		instance_id = self._resolve_command_target(target)
 		cmd_in = self._cmd_in_per_instance.get(instance_id)
 		if cmd_in is None:
-			raise KeyError(f"unknown instance {instance_id!r}")
+			raise KeyError(f"unknown preset or instance {target!r}")
 		rid = _request_id_of(cmd)
 		event = anyio.Event()
 		self._cmd_pending[rid] = event
@@ -254,6 +281,18 @@ class ControlPlane:
 			self._cmd_pending.pop(rid, None)
 			return CmdResponse(request_id=rid, ok=False, error="timeout")
 		return self._cmd_results.pop(rid)
+
+	def _resolve_command_target(self, target: str) -> str:
+		if target in self._cmd_in_per_instance:
+			return target
+		matches = [
+			entry
+			for entry in self._registry.all()
+			if entry.hello.preset == target and entry.instance_id in self._cmd_in_per_instance
+		]
+		if matches:
+			return max(matches, key=lambda entry: entry.last_seen).instance_id
+		raise KeyError(f"unknown preset or instance {target!r}")
 
 	async def _cmd_response_loop(self) -> None:
 		def _handle(resp: CmdResponse) -> None:
@@ -305,6 +344,7 @@ class ControlPlane:
 			control=self,
 			ingest_token=token,
 			persistence_backend=self._backend_for_dashboard(),
+			trace_url_template=self.kuunfig.default.persistence.trace_url_template,
 		)
 
 	async def _serve_dashboard(self) -> None:

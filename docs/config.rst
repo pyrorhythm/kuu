@@ -35,11 +35,17 @@ compat (keys land in ``[default]`` automatically).
        dsn = "sqlite:///./kuu.db"
        schema = ""
        runs_table = "kuu_runs"
+       logical_runs_table = "kuu_logical_runs"
        logs_table = "kuu_run_logs"
        keep_days = 7
        max_runs = 100_000
        log_level = "INFO"
-       capture_args = true
+       capture_args = false
+       capture_headers = false
+       capture_result = false
+       preview_bytes = 16_384
+       attempt_observation_bytes = 10_485_760
+       trace_url_template = ""
 
    [default.watch]
        enable = true

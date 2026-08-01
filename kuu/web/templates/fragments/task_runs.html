@@ -1,106 +1,139 @@
-<div class="surface-head" style="border-bottom:1px solid var(--hair);margin:-1px">
-	<div style="margin-left:auto;display:flex;gap:var(--s-2)">
-		<select id="tr-filter-status" class="filter-select" name="status">
-			<option value="">all status</option>
-			<option value="succeeded">succeeded</option>
-			<option value="failed">failed</option>
-			<option value="retried">retried</option>
-			<option value="dead">dead</option>
-		</select>
-		<input id="tr-filter-task" class="filter-input" placeholder="task name…" style="width:160px" name="task">
-	</div>
+<div class="run-list-head">
+	<label class="filter-search"><span>⌕</span><input id="tr-filter-task" placeholder="filter task…" autocomplete="off"></label>
+	<select id="tr-filter-status" class="filter-select" aria-label="Filter status">
+		<option value="">all states</option>
+		<option value="enqueued">enqueued</option>
+		<option value="running">running</option>
+		<option value="cancel_requested">cancel requested</option>
+		<option value="unknown">unknown</option>
+		<option value="succeeded">succeeded</option>
+		<option value="failed">failed</option>
+		<option value="cancelled">cancelled</option>
+	</select>
 </div>
-<div class="surface-body flush" style="padding-top:0">
-	<table class="kuu-table" id="task-runs-table">
-		<thead><tr>
-			<th>task</th><th>status</th><th>message id</th><th>attempt</th>
-			<th>instance</th><th>elapsed</th><th>finished</th></tr></thead>
+<div class="run-table-scroll">
+	<table class="kuu-table run-table" id="task-runs-table">
+		<thead><tr><th>task / run</th><th>attempt telemetry</th><th>state</th><th>elapsed</th><th>finished</th></tr></thead>
 		<tbody id="task-runs-tbody"></tbody>
 	</table>
 </div>
 <div class="tasks-foot" id="task-runs-foot">
-	<div class="tasks-page-info" id="task-runs-page">-</div>
-	<div style="display:flex;gap:var(--s-1)">
-		<button class="btn" id="tr-btn-prev" disabled>&larr; prev</button>
-		<button class="btn" id="tr-btn-next" disabled>next &rarr;</button>
-	</div>
+	<div class="tasks-page-info" id="task-runs-page">acquiring…</div>
+	<div class="pager"><button class="btn" id="tr-btn-prev" disabled>←</button><button class="btn" id="tr-btn-next" disabled>→</button></div>
 </div>
 
 <script>
 (function(){
-	if(window._trInit) return; window._trInit = true;
-	let _offset = 0;
-	const LIMIT = 50;
+	window.kuuRunListAbort?.abort();
+	const controller=new AbortController();
+	window.kuuRunListAbort=controller;
+	let offset=0, filterTimer, liveOnly=false;
+	const liveRows=new Map();
+	const visibleLiveRuns=new Set();
+	const LIMIT=100;
+	const status=document.getElementById('tr-filter-status');
+	const task=document.getElementById('tr-filter-task');
 
 	function loadRuns(){
-		const status = document.getElementById('tr-filter-status')?.value || '';
-		const task = document.getElementById('tr-filter-task')?.value || '';
-		const params = new URLSearchParams({limit:LIMIT,offset:_offset});
-		if(status) params.set('status',status);
-		if(task) params.set('task',task);
-		fetch('api/task-runs?'+params)
-			.then(r=>r.json())
-			.then(d=>{
-				if(!d.rows) return;
-				renderRows(d.rows);
-				const pi = document.getElementById('task-runs-page');
-				if(pi) pi.textContent = d.rows.length===0 ? 'no runs' : ('showing '+_offset+'-'+(_offset+d.rows.length));
-				const bp = document.getElementById('tr-btn-prev');
-				const bn = document.getElementById('tr-btn-next');
-				if(bp) bp.disabled = _offset===0;
-				if(bn) bn.disabled = d.rows.length < LIMIT;
-			}).catch(()=>{});
+		const params=new URLSearchParams({limit:LIMIT,offset});
+		if(status.value) params.set('status',status.value);
+		if(task.value.trim()) params.set('task',task.value.trim());
+		fetch('api/task-runs?'+params).then(r=>r.json()).then(d=>{
+			if(!d.rows) return;
+			liveOnly=Boolean(d.live_only);
+			window.kuuLiveOnly=liveOnly;
+			const runs=d.runs&&!liveOnly ? parentRuns(d.runs) : groupRuns(d.rows);
+			renderRows(runs);
+			document.getElementById('task-runs-page').textContent=liveOnly ? 'LIVE-ONLY · no retained history' : (runs.length ? `${offset+1}–${offset+runs.length}` : 'no Runs');
+			document.getElementById('tr-btn-prev').disabled=offset===0;
+			document.getElementById('tr-btn-next').disabled=runs.length<LIMIT;
+		}).catch(()=>document.getElementById('task-runs-page').textContent='telemetry unavailable');
 	}
-
-	function renderRows(rows){
-		const tbody = document.getElementById('task-runs-tbody');
-		if(!tbody) return;
-		if(!rows.length){ tbody.innerHTML='<tr><td colspan="7" class="placeholder">no runs</td></tr>'; return; }
-		let h='';
-		for(const r of rows){
-			const mid = r.message_id||'-';
-			const midShort = mid.length>12 ? mid.slice(0,12)+'…' : mid;
-			const elapsed = r.time_elapsed!=null ? r.time_elapsed.toFixed(2)+'s' : '-';
-			const finished = r.finished_at!=null ? new Date(r.finished_at).toISOString().replace('T',' ').slice(0,19) : '-';
-			const sc = sb(r.status);
-			h += '<tr class="task-run-row" data-mid="'+esc(mid)+'" style="cursor:pointer">'
-				+'<td>'+esc(r.task)+'</td>'
-				+'<td><span class="status-badge '+sc+'">'+esc(r.status)+'</span></td>'
-				+'<td class="mono-cell">'+esc(midShort)+'</td>'
-				+'<td class="dim">'+r.attempt+'</td>'
-				+'<td class="mono-cell dim">'+esc((r.instance_id||'-').slice(0,12))+'…</td>'
-				+'<td>'+elapsed+'</td>'
-				+'<td class="dim">'+finished+'</td></tr>';
-		}
-		tbody.innerHTML=h;
-		tbody.querySelectorAll('.task-run-row').forEach(tr=>{
-			tr.addEventListener('click',()=>{
-				htmx.ajax('GET','fragments/task-run-detail?message_id='+encodeURIComponent(tr.dataset.mid),'#task-runs-frag');
-			});
+	function parentRuns(items){
+		return items.map(item=>{
+			const attempts=item.attempts.length?item.attempts:[{message_id:item.message_id,attempt:0,task:item.task,status:item.status}];
+			const recorded=attempts[attempts.length-1];
+			return {
+				id:item.message_id,
+				attempts,
+				latest:{...recorded,task:item.task,status:item.status,instance_id:item.instance_id,dead_lettered:item.dead_lettered,finished_at:['succeeded','failed','cancelled'].includes(item.status)?item.updated_at:null},
+			};
 		});
 	}
-
-	function sb(s){
-		if(s==='succeeded') return 'sb-ok';
-		if(s==='failed'||s==='dead') return 'sb-err';
-		if(s==='retried') return 'sb-retry';
-		return '';
+	function groupRuns(rows){
+		const grouped=new Map();
+		for(const row of rows){
+			const id=row.message_id||'-';
+			if(!grouped.has(id)) grouped.set(id,[]);
+			grouped.get(id).push(row);
+		}
+		return Array.from(grouped.entries()).map(([id,attempts])=>{
+			attempts.sort((a,b)=>a.attempt-b.attempt);
+			return {id,attempts,latest:attempts[attempts.length-1]};
+		});
 	}
-	function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
+	function renderRows(runs){
+		const tbody=document.getElementById('task-runs-tbody');
+		if(!runs.length){ tbody.innerHTML='<tr><td colspan="5" class="placeholder">No Runs match this view.</td></tr>'; return; }
+		const selected=new URL(location.href).searchParams.get('run');
+		tbody.innerHTML=runs.map(run=>{
+			const r=run.latest;
+			const short=run.id.length>10?run.id.slice(0,10)+'…':run.id;
+			const elapsed=r.time_elapsed!=null?r.time_elapsed.toFixed(2)+'s':'—';
+			const finished=r.finished_at?new Date(r.finished_at).toISOString().replace('T',' ').slice(5,19):'live';
+			const dlq=r.status==='dead'||r.dead_lettered;
+			const display=dlq?'failed':r.status;
+			const rail=run.attempts.map((a,i)=>`<i class="rail-node ${stateClass(a.status)}" title="Attempt ${i+1}: ${esc(a.status)}"><b>${i+1}</b></i>`).join('<span></span>');
+			return `<tr class="task-run-row ${selected===run.id?'selected':''}" data-mid="${esc(run.id)}">
+				<td><strong>${esc(r.task)}</strong><small class="mono">${esc(short)}</small></td>
+				<td><div class="attempt-rail">${rail}</div></td>
+				<td><span class="status-badge ${badge(r.status)}">${esc(display)}</span>${dlq?'<em class="dlq-chip">DLQ</em>':''}</td>
+				<td class="mono-cell">${elapsed}</td><td class="mono-cell dim">${finished}</td></tr>`;
+		}).join('');
+		tbody.querySelectorAll('.task-run-row').forEach(row=>row.addEventListener('click',()=>{
+			if(liveOnly){ document.getElementById('run-detail-pane').innerHTML='<div class="run-empty"><strong>Live-only Run</strong><span>Enable persistence for Attempts, logs, failures, Retry, and Replay.</span></div>'; return; }
+			window.kuuOpenRun(row.dataset.mid);
+		}));
+	}
+	function badge(value){ if(value==='succeeded')return 'sb-ok'; if(value==='dead'||value==='failed')return 'sb-err'; if(value==='retried'||value==='unknown'||value==='lost'||value==='cancel_requested')return 'sb-retry'; if(value==='started'||value==='running'||value==='enqueued')return 'sb-running'; return ''; }
+	function stateClass(value){ return value==='succeeded'?'ok':value==='dead'||value==='failed'?'bad':value==='retried'||value==='unknown'||value==='lost'?'retry':value==='started'?'live':'idle'; }
+	function esc(value){ return String(value??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
 
-
-	document.getElementById('tr-btn-prev').addEventListener('click',function(e){
-		e.preventDefault(); _offset=Math.max(0,_offset-LIMIT); loadRuns();
-	});
-	document.getElementById('tr-btn-next').addEventListener('click',function(e){
-		e.preventDefault(); _offset+=LIMIT; loadRuns();
-	});
-	document.getElementById('tr-filter-status').addEventListener('change',function(){
-		_offset=0; loadRuns();
-	});
-	document.getElementById('tr-filter-task').addEventListener('input',function(){
-		_offset=0; loadRuns();
-	});
+	document.getElementById('tr-btn-prev').addEventListener('click',()=>{offset=Math.max(0,offset-LIMIT);loadRuns();});
+	document.getElementById('tr-btn-next').addEventListener('click',()=>{offset+=LIMIT;loadRuns();});
+	status.addEventListener('change',()=>{offset=0;loadRuns();});
+	task.addEventListener('input',()=>{clearTimeout(filterTimer);filterTimer=setTimeout(()=>{offset=0;loadRuns();},180);});
+	window.addEventListener('kuu-envelope',event=>{
+		const envelope=event.detail.envelope||{};
+		const body=envelope.body;
+		if(!body||body.type!=='event'||!body.message_id) return;
+		if(liveOnly){
+			const key=body.message_id+':'+(body.attempt||0);
+			const row=liveRows.get(key)||{message_id:body.message_id,attempt:body.attempt||0,task:body.task,instance_id:envelope.instance};
+			row.status=body.kind;
+			row.time_elapsed=body.elapsed;
+			if(body.kind==='started'&&!row.started_at) row.started_at=body.ts||envelope.ts;
+			if(['succeeded','dead','cancelled'].includes(body.kind)) row.finished_at=body.ts||envelope.ts;
+			liveRows.set(key,row);
+			if(!visibleLiveRuns.has(body.message_id)) return;
+			let rows=Array.from(liveRows.values()).filter(item=>visibleLiveRuns.has(item.message_id));
+			if(status.value) rows=rows.filter(item=>item.status===status.value);
+			if(task.value.trim()) rows=rows.filter(item=>item.task.includes(task.value.trim()));
+			renderRows(groupRuns(rows));
+			return;
+		}
+		if(body.kind!=='enqueued'){
+			const row=document.querySelector(`.task-run-row[data-mid="${CSS.escape(body.message_id)}"]`);
+			if(row) loadRuns();
+		}
+	},{signal:controller.signal});
+	window.addEventListener('kuu-apply-new-runs',()=>{
+		for(const row of liveRows.values()) visibleLiveRuns.add(row.message_id);
+		let rows=Array.from(liveRows.values());
+		if(status.value) rows=rows.filter(item=>item.status===status.value);
+		if(task.value.trim()) rows=rows.filter(item=>item.task.includes(task.value.trim()));
+		renderRows(groupRuns(rows));
+	},{signal:controller.signal});
 	loadRuns();
 })();
 </script>

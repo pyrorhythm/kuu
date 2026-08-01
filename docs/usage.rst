@@ -535,15 +535,36 @@ true`` (the default). Two backends ship:
    dsn = "postgres://user:pass@localhost:5432/kuu"
    schema = "kuu"
    runs_table = "kuu_runs"
+   logical_runs_table = "kuu_logical_runs"
    logs_table = "kuu_run_logs"
    keep_days = 7
    max_runs = 100_000
    log_level = "INFO"
-   capture_args = true
+   capture_args = false
+   capture_headers = false
+   capture_result = false
+   preview_bytes = 16_384
+   attempt_observation_bytes = 10_485_760
 
-The dashboard exposes run history under each registered task. Runs older
-than ``keep_days`` are purged periodically. ``max_runs`` caps total stored
-runs.
+A Task invocation is stored as one logical Run with separate Attempt rows.
+Retries add Attempts; terminal Runs remain immutable; Replay creates a linked
+Run with a new identity. Logs, stdout, stderr, progress, structured remote
+failures, and explicit observation gaps are retained. Inputs, headers, and
+result previews are sensitive and therefore opt-in, preferably per Task:
+
+.. code-block:: python
+
+   @app.task(capture_args=True, capture_headers=True, capture_result=True)
+   async def charge(order_id: str) -> dict:
+       return {"order_id": order_id, "status": "paid"}
+
+The persistence flags above opt in every Task. Captures are JSON-safe, bounded
+by ``preview_bytes``, and redact common secret-bearing keys. Redacted or
+truncated inputs are marked incomplete, so Retry and Replay stay disabled.
+
+Runs older than ``keep_days`` or beyond ``max_runs`` are purged without
+evicting active Runs. When persistence is disabled the dashboard explicitly
+operates live-only: no history, catch-up, Retry, or Replay is available.
 
 PostgreSQL Result Backend
 -------------------------
@@ -579,12 +600,14 @@ events.
 WebSocket Uplink
 ~~~~~~~~~~~~~~~~
 
-A leaf supervisor can stream events to a remote dashboard collector
-via WebSocket:
+A leaf supervisor can stream events to a remote dashboard collector over the
+bidirectional protocol v2 WebSocket. Protocol v1 workers are rejected; operator
+commands are request-id deduplicated and target a Preset rather than a transient
+process instance:
 
 .. code-block:: shell
 
-   export KUU_DASHBOARD_URL="ws://dashboard.example.com/collect"
+   export KUU_DASHBOARD_URL="ws://dashboard.example.com/_ingest"
    export KUU_DASHBOARD_TOKEN="<auth-token>"
    uv run kuu start -p prod
 
@@ -592,7 +615,11 @@ Or pass it directly:
 
 .. code-block:: shell
 
-   uv run kuu start -p prod --uplink ws://dashboard.example.com/collect
+   uv run kuu start -p prod --uplink ws://dashboard.example.com/_ingest
+
+``kuu dashboard`` persists remote Runs to ``KUU_PERSISTENCE_DSN`` (SQLite by
+default). Use ``kuu dashboard --live-only`` to disable storage explicitly; this
+also disables history, Retry, Replay, and catch-up.
 
 Test-time inspection
 ~~~~~~~~~~~~~~~~~~~~
@@ -619,19 +646,22 @@ traces/metrics/logs are available under ``kuu.contrib``. See
 Dashboard
 ---------
 
-Requires the ``dashboard`` extra. Shows registered tasks, scheduled jobs,
-broker depth and live worker count.
+Requires the ``dashboard`` extra. The Run-first interface shows Attempts,
+progress, logs, structured failures, gaps, and operator actions alongside
+Preset, queue, and scheduler telemetry.
 
 .. code-block:: toml
 
    [dashboard]
    enable = true
-   host = "0.0.0.0"
+   host = "127.0.0.1"
    port = 8181
    path = "/dashboard"
 
 The orchestrator imports the Kuu app via ``config.app``, mounts the dashboard
-under ``path`` and serves it via uvicorn alongside the worker pool.
+under ``path`` and serves it via uvicorn alongside the worker pool. The dashboard
+has no built-in authentication or authorization. Keep the default loopback bind,
+or put it behind an authenticated reverse proxy before exposing it.
 
 Events
 ------

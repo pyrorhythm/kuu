@@ -50,7 +50,7 @@ class MetricsSettings(Struct, frozen=True):
 
 class WebSettings(Struct, frozen=True):
 	enable: bool = False
-	host: str = "0.0.0.0"
+	host: str = "127.0.0.1"
 	port: Port = 8181
 	path: str = "/dashboard"
 
@@ -71,11 +71,17 @@ class PersistenceConfig(Struct, frozen=True):
 	)
 	schema: str | None = None
 	runs_table: str = "kuu_runs"
+	logical_runs_table: str = "kuu_logical_runs"
 	logs_table: str = "kuu_run_logs"
 	keep_days: int = 7
 	max_runs: int = 100_000
 	log_level: str = "INFO"
-	capture_args: bool = True
+	capture_args: bool = False
+	capture_headers: bool = False
+	capture_result: bool = False
+	preview_bytes: Annotated[int, Meta(ge=64)] = 16 * 1024
+	attempt_observation_bytes: int = 10 * 1024 * 1024
+	trace_url_template: str | None = None
 
 
 class Settings(Struct, frozen=True, forbid_unknown_fields=True):

@@ -8,9 +8,10 @@ from typing import TYPE_CHECKING
 from weakref import WeakValueDictionary
 
 import anyio
+from msgspec import json as _msgspec_json
 
 from .._types import _ensure_connected
-from ..result import Result
+from ..result import RemoteFailure, Result, sanitize_remote_failure
 from ..serializers import JSONSerializer
 from ..serializers.base import Serializer
 from .base import ResultBackend
@@ -32,9 +33,13 @@ SCHEMA_SQL = """
                  value      bytea,
                  error      text,
                  type       text,
+                 failure    jsonb,
                  created_at timestamptz not null default now(),
                  expires_at timestamptz
              );
+
+             alter table kuu.task_results
+                 add column if not exists failure jsonb;
 
              create index if not exists idx_task_results_expires
                  on kuu.task_results (expires_at)
@@ -68,6 +73,21 @@ SCHEMA_SQL = """
                  end
              $$; \
              """
+
+
+def _result_from_row(row) -> Result:
+    failure = row["failure"]
+    return Result(
+        status=row["status"],
+        value=row["value"],
+        error=row["error"],
+        type=row["type"],
+        failure=(
+            sanitize_remote_failure(_msgspec_json.decode(failure, type=RemoteFailure))
+            if failure is not None
+            else None
+        ),
+    )
 
 
 class PostgresResults(ResultBackend):
@@ -194,18 +214,13 @@ class PostgresResults(ResultBackend):
 
         async with self._transport.acq() as conn:
             row = await conn.fetchrow(
-                "select status, value, error, type from kuu.task_results "
+                "select status, value, error, type, failure from kuu.task_results "
                 "where task_key = $1 and (expires_at is null or expires_at > now())",
                 key,
             )
         if row is not None:
             log.debug("event=pg.get_immediate_hit key=%s", key)
-            return Result(
-                status=row["status"],
-                value=row["value"],
-                error=row["error"],
-                type=row["type"],
-            )
+            return _result_from_row(row)
 
         evt = self._sf.get(key)
         log.debug("event=pg.get_event_check key=%s exists=%s", key, evt is not None)
@@ -218,7 +233,7 @@ class PostgresResults(ResultBackend):
 
             async with self._transport.acq() as conn:
                 row = await conn.fetchrow(
-                    "select status, value, error, type from kuu.task_results "
+                    "select status, value, error, type, failure from kuu.task_results "
                     "where task_key = $1 and (expires_at is null or expires_at > now())",
                     key,
                 )
@@ -226,12 +241,7 @@ class PostgresResults(ResultBackend):
             if row is not None:
                 log.debug("event=pg.get_fast_acquire key=%s", key)
                 evt.set()  # ensure any waiters are woken
-                return Result(
-                    status=row["status"],
-                    value=row["value"],
-                    error=row["error"],
-                    type=row["type"],
-                )
+                return _result_from_row(row)
 
         # else we are second+, event already exists; waiting
         log.debug("event=pg.get_waiting key=%s timeout=%s", key, listen_timeout)
@@ -246,7 +256,7 @@ class PostgresResults(ResultBackend):
 
         async with self._transport.acq() as conn:
             row = await conn.fetchrow(
-                "select status, value, error, type from kuu.task_results "
+                "select status, value, error, type, failure from kuu.task_results "
                 "where task_key = $1 and (expires_at is null or expires_at > now())",
                 key,
             )
@@ -254,12 +264,7 @@ class PostgresResults(ResultBackend):
             log.debug("event=pg.get_no_row key=%s", key)
             return None
         log.debug("event=pg.get_returning key=%s", key)
-        return Result(
-            status=row["status"],
-            value=row["value"],
-            error=row["error"],
-            type=row["type"],
-        )
+        return _result_from_row(row)
 
     @_ensure_connected
     async def set(self, key: str, result: Result, ttl: float | None = None) -> None:
@@ -267,16 +272,23 @@ class PostgresResults(ResultBackend):
         async with self._transport.acq() as conn:
             await conn.execute(
                 "insert into kuu.task_results "
-                "(task_key, status, value, error, type, expires_at) "
-                "values ($1, $2, $3, $4, $5, now() + make_interval(secs := $6)) "
+                "(task_key, status, value, error, type, failure, expires_at) "
+                "values ($1, $2, $3, $4, $5, $6::jsonb, "
+                "now() + make_interval(secs := $7)) "
                 "on conflict (task_key) do update set status = excluded.status,"
                 "value = excluded.value, error = excluded.error,"
-                "type = excluded.type, expires_at = excluded.expires_at",
+                "type = excluded.type, failure = excluded.failure, "
+                "expires_at = excluded.expires_at",
                 key,
                 result.status,
                 result.value,
                 result.error,
                 result.type,
+                (
+                    _msgspec_json.encode(result.failure).decode()
+                    if result.failure is not None
+                    else None
+                ),
                 ttl or self.ttl,
             )
             log.debug("event=pg.set_stored key=%s", key)
@@ -288,14 +300,20 @@ class PostgresResults(ResultBackend):
         async with self._transport.acq() as conn:
             status = await conn.execute(
                 "insert into kuu.task_results "
-                "(task_key, status, value, error, type, expires_at) "
-                "values ($1, $2, $3, $4, $5, now() + make_interval(secs => $6)) "
+                "(task_key, status, value, error, type, failure, expires_at) "
+                "values ($1, $2, $3, $4, $5, $6::jsonb, "
+                "now() + make_interval(secs => $7)) "
                 "on conflict do nothing",
                 key,
                 result.status,
                 result.value,
                 result.error,
                 result.type,
+                (
+                    _msgspec_json.encode(result.failure).decode()
+                    if result.failure is not None
+                    else None
+                ),
                 ttl or self.ttl,
             )
 

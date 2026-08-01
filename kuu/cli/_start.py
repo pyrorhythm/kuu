@@ -86,6 +86,7 @@ async def _run_leaf(cfg, preset: str, uplink_url: str | None) -> None:
 	token = os.environ.get("KUU_DASHBOARD_TOKEN")
 	uplink = WsUplink(uplink_url, token=token)
 	sup = PresetSupervisor(cfg, preset=preset, events_sink=uplink.sink)
+	uplink.set_command_handler(sup.dispatch_command)
 	async with _anyio.create_task_group() as tg:
 		tg.start_soon(uplink.run, sup._stop_event)
 		tg.start_soon(sup.start)

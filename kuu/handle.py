@@ -7,6 +7,7 @@ from uuid import UUID
 import anyio
 
 from kuu.exceptions import NotConnected, TaskError
+from kuu.result import sanitize_remote_failure
 from kuu.results.base import result_key
 
 if TYPE_CHECKING:
@@ -47,7 +48,8 @@ class TaskHandle[Res]:
 		if r is None:
 			return False, typing.cast(Res, None)
 		if r.status == "error":
-			raise TaskError(r.error or "task failed")
+			failure = sanitize_remote_failure(r.failure) if r.failure is not None else None
+			raise TaskError(r.error or "task failed", remote_failure=failure)
 		return True, typing.cast(Res, self.app.results.decode(r))
 
 	async def result(self, timeout: float | None = None, poll: float = 0.2) -> Res:

@@ -16,6 +16,12 @@ def _write(p: Path, body: str) -> None:
 
 
 class TestLoad:
+	def test_safe_observability_defaults(self) -> None:
+		cfg = Settings(app="a:b")
+		assert cfg.dashboard.host == "127.0.0.1"
+		assert cfg.persistence.capture_args is False
+		assert cfg.persistence.attempt_observation_bytes == 10 * 1024 * 1024
+
 	def test_loads_explicit_kuunfig_toml(self, tmp_path: Path) -> None:
 		f = tmp_path / "kuunfig.toml"
 		_write(
@@ -198,9 +204,7 @@ class TestInvariants:
 			convert({"app": "no_colon", "task_modules": ["m"]}, Settings)
 
 	def test_prefetch_defaults_to_zero(self) -> None:
-		cfg = convert(
-			{"app": "m:o", "task_modules": ["m"], "concurrency": 100}, Settings
-		)
+		cfg = convert({"app": "m:o", "task_modules": ["m"], "concurrency": 100}, Settings)
 		assert cfg.prefetch == 0
 
 

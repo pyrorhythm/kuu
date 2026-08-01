@@ -91,6 +91,9 @@ class PresetSupervisor:
 	def worker_pool(self) -> WorkerPool:
 		return self._wp
 
+	async def dispatch_command(self, cmd: Cmd) -> CmdResponse:
+		return await self._commands.dispatch(cmd)
+
 	def _snapshots(self) -> SnapshotBuilder:
 		fwd = self._forwarder
 		return SnapshotBuilder(
@@ -194,7 +197,7 @@ class PresetSupervisor:
 			except _QueueEmpty:
 				await anyio.sleep(0.05)
 				continue
-			response = await self._commands.dispatch(cmd)
+			response = await self.dispatch_command(cmd)
 			try:
 				self._cmd_out.put_nowait(response)
 			except Exception as e:

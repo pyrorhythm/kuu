@@ -65,10 +65,10 @@ class EventForwarder:
 		if we.kind == "started":
 			self.inflight[we.queue] += 1
 			self.current_task[we.worker_pid] = we.task
-			return
-		if self.inflight[we.queue] > 0:
-			self.inflight[we.queue] -= 1
-		self.current_task.pop(we.worker_pid, None)
+		else:
+			if self.inflight[we.queue] > 0:
+				self.inflight[we.queue] -= 1
+			self.current_task.pop(we.worker_pid, None)
 		self._emit_worker_event(we)
 
 	async def run(self, stop_event: anyio.Event) -> None:

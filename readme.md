@@ -124,12 +124,16 @@ enable = true               # store run/log history
 dsn = "sqlite:///./kuu.db"  # sqlite (default) or postgres://...;
 # also can be provided via KUU_PERSISTENCE_DSN env var
 schema = ""                 # postgres schema; empty = default
-runs_table = "kuu_runs"
+runs_table = "kuu_runs"              # Attempt rows
+logical_runs_table = "kuu_logical_runs" # parent Runs
 logs_table = "kuu_run_logs"
 keep_days = 7               # auto-purge runs older than this
 max_runs = 100_000          # hard cap on stored runs
 log_level = "INFO"
-capture_args = true         # capture task args/kwargs in run detail
+capture_args = false        # sensitive inputs are opt-in
+capture_headers = false
+capture_result = false
+attempt_observation_bytes = 10_485_760 # per-Attempt budget; overflow becomes a gap
 
 [presets.prod]
 processes = 8

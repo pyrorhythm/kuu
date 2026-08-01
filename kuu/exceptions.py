@@ -1,4 +1,10 @@
-class TaskError(Exception): ...
+from kuu.result import RemoteFailure
+
+
+class TaskError(Exception):
+	def __init__(self, *args: object, remote_failure: RemoteFailure | None = None):
+		super().__init__(*args)
+		self.remote_failure = remote_failure
 
 
 class RetryErr(TaskError):

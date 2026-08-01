@@ -11,6 +11,8 @@ from kuu.observability import (
 	PROTOCOL_VERSION,
 	BrokerInfo,
 	Bye,
+	CancelCmd,
+	CmdResponse,
 	Envelope,
 	Event,
 	Hello,
@@ -19,6 +21,10 @@ from kuu.observability import (
 	QueueSnapshot,
 	State,
 	WorkerSnapshot,
+	command_from_bytes,
+	command_response_from_bytes,
+	command_response_to_bytes,
+	command_to_bytes,
 	envelope_from_bytes,
 	envelope_to_bytes,
 )
@@ -70,6 +76,27 @@ class TestCodec:
 		decoded = envelope_from_bytes(data)
 		assert decoded == env
 		assert type(decoded.body) is type(env.body)
+
+	def test_command_roundtrip(self) -> None:
+		command = CancelCmd(request_id="req-1", run_id="run-1")
+		assert command_from_bytes(command_to_bytes(command)) == command
+		response = CmdResponse(request_id="req-1", ok=True, run_id="run-1")
+		assert command_response_from_bytes(command_response_to_bytes(response)) == response
+
+	def test_command_decoder_rejects_v1(self) -> None:
+		from msgspec import json as _json
+
+		with pytest.raises(ValueError, match="expected v2"):
+			command_from_bytes(
+				_json.encode(
+					{"v": 1, "command": {"type": "cancel", "request_id": "r", "run_id": "x"}}
+				)
+			)
+
+	def test_decoder_rejects_v1(self) -> None:
+		data = envelope_to_bytes(Envelope(v=1, instance="old", ts=dt.now(tz=tz.utc), body=_hello()))
+		with pytest.raises(ValueError, match="expected v2"):
+			envelope_from_bytes(data)
 
 	def test_decoder_rejects_unknown_tag(self) -> None:
 		from msgspec import ValidationError

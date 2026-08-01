@@ -1,181 +1,153 @@
 {% extends "base.html" %}
-{% block title %}kuu dashboard{% endblock %}
+{% block title %}kuu run control{% endblock %}
 {% block content %}
 
-<div hx-get="fragments/stats" hx-trigger="load, every 2s" hx-swap="innerHTML">
+<div class="mission-kicker">
+	<span>KUU / RUN CONTROL</span>
+	<span class="live-beacon"><i></i><span id="ws-state">connecting</span></span>
+</div>
+
+<div hx-get="fragments/stats" hx-trigger="load, every 5s" hx-swap="innerHTML">
 	<div class="stat-strip">
-		<div class="stat-cell">
-			<div class="stat-num dim">-</div>
-			<div class="stat-key">enqueued</div>
-		</div>
-		<div class="stat-cell">
-			<div class="stat-num dim">-</div>
-			<div class="stat-key">succeeded</div>
-		</div>
-		<div class="stat-cell">
-			<div class="stat-num dim">-</div>
-			<div class="stat-key">failed</div>
-		</div>
-		<div class="stat-cell">
-			<div class="stat-num dim">-</div>
-			<div class="stat-key">retried</div>
-		</div>
-		<div class="stat-cell">
-			<div class="stat-num dim">-</div>
-			<div class="stat-key">dead</div>
-		</div>
+		<div class="stat-cell"><div class="stat-num dim">-</div><div class="stat-key">enqueued</div></div>
+		<div class="stat-cell"><div class="stat-num dim">-</div><div class="stat-key">succeeded</div></div>
+		<div class="stat-cell"><div class="stat-num dim">-</div><div class="stat-key">failed</div></div>
+		<div class="stat-cell"><div class="stat-num dim">-</div><div class="stat-key">retried</div></div>
+		<div class="stat-cell"><div class="stat-num dim">-</div><div class="stat-key">dead-lettered</div></div>
 	</div>
 </div>
 
-<div class="surface">
-	<div class="surface-head">
-		<span class="surface-title">activity</span>
+<div class="run-toolbar">
+	<div>
+		<strong>Runs</strong>
+		<span class="dim">live and retained task executions</span>
 	</div>
-	<div class="surface-body">
-		<div id="activity-chart" style="height:200px; width:100%;"></div>
-	</div>
+	<button class="new-runs" id="new-runs" hidden><span>0</span> new — apply</button>
 </div>
 
-<div class="surface">
-	<div class="surface-head"><span class="surface-title">presets</span></div>
-	<div class="surface-body flush" hx-get="fragments/presets" hx-trigger="load, every 3s" hx-swap="innerHTML">
-		<p class="placeholder">loading…</p>
-	</div>
+<div class="run-control-grid">
+	<section class="run-pane run-list-pane" aria-label="Runs">
+		<div id="task-runs-frag" hx-get="fragments/task-runs" hx-trigger="load" hx-swap="innerHTML">
+			<p class="placeholder">acquiring run telemetry…</p>
+		</div>
+	</section>
+	<section class="run-pane run-detail-pane" id="run-detail-pane" aria-label="Selected Run">
+		<div class="run-empty">
+			<img src="static/kuu-moon.svg" alt="" width="34" height="34">
+			<strong>Select a Run</strong>
+			<span>Attempts, progress, logs, and failures appear here.</span>
+		</div>
+	</section>
 </div>
 
-<div class="surface">
-	<div class="surface-head">
-		<span class="surface-title">task runs</span>
-	</div>
-	<div class="surface-body flush" id="task-runs-frag"
-		hx-get="fragments/task-runs" hx-trigger="load" hx-swap="innerHTML">
-		<p class="placeholder">loading…</p>
-	</div>
-</div>
-
-<div class="col2">
-	<div class="surface">
-		<div class="surface-head"><span class="surface-title">tasks</span></div>
-		<div class="surface-body flush" hx-get="fragments/tasks" hx-trigger="load, every 5s" hx-swap="innerHTML">
-			<p class="placeholder">loading…</p>
+<details class="system-drawer" id="system-drawer">
+	<summary>System telemetry <span>presets · tasks · schedules · queues</span></summary>
+	<div class="system-grid">
+		<div class="surface">
+			<div class="surface-head"><span class="surface-title">activity</span></div>
+			<div class="surface-body"><div id="activity-chart" style="height:180px;width:100%"></div></div>
+		</div>
+		<div class="surface">
+			<div class="surface-head"><span class="surface-title">presets</span></div>
+			<div class="surface-body flush" hx-get="fragments/presets" hx-trigger="revealed, every 5s" hx-swap="innerHTML"></div>
+		</div>
+		<div class="surface system-wide">
+			<div class="surface-head"><span class="surface-title">tasks / manual launch</span></div>
+			<div class="surface-body flush" hx-get="fragments/tasks" hx-trigger="revealed, every 10s" hx-swap="innerHTML"></div>
+		</div>
+		<div class="surface">
+			<div class="surface-head"><span class="surface-title">scheduler</span></div>
+			<div id="scheduler-frag" class="surface-body flush" hx-get="fragments/scheduler" hx-trigger="revealed, every 10s" hx-swap="innerHTML"></div>
+		</div>
+		<div class="surface">
+			<div class="surface-head"><span class="surface-title">queues</span></div>
+			<div class="surface-body flush" hx-get="fragments/queues" hx-trigger="revealed, every 5s" hx-swap="innerHTML"></div>
 		</div>
 	</div>
-
-	<div class="surface">
-		<div class="surface-head"><span class="surface-title">scheduler</span></div>
-		<div id="scheduler-frag" class="surface-body flush" hx-get="fragments/scheduler" hx-trigger="load, every 5s" hx-swap="innerHTML">
-			<p class="placeholder">loading…</p>
-		</div>
-	</div>
-</div>
-
-<div class="surface">
-	<div class="surface-head"><span class="surface-title">queues</span></div>
-	<div class="surface-body flush" hx-get="fragments/queues" hx-trigger="load, every 3s" hx-swap="innerHTML">
-		<p class="placeholder">loading…</p>
-	</div>
-</div>
+</details>
 
 <script src="https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js"></script>
 <script>
-	(function () {
-		const el = document.getElementById('activity-chart');
-		const chart = echarts.init(el, null, { renderer: 'svg' });
+(function(){
+	let selectedRun = '';
+	let pendingRuns = 0;
+	let socket;
+	let reconnectDelay = 500;
+	const newButton = document.getElementById('new-runs');
+	const wsState = document.getElementById('ws-state');
 
-		function tokens() {
-			const cs = getComputedStyle(document.documentElement);
-			return {
-				INK: cs.getPropertyValue('--ink').trim(),
-				INK2: cs.getPropertyValue('--ink-2').trim(),
-				INK3: cs.getPropertyValue('--ink-3').trim(),
-				HAIR: cs.getPropertyValue('--hair').trim(),
-				PAPER: cs.getPropertyValue('--paper').trim(),
-				GOOD: cs.getPropertyValue('--good').trim(),
-				BAD: cs.getPropertyValue('--bad').trim(),
-				BAD_DARK: cs.getPropertyValue('--bad-dark').trim(),
-			};
+	function socketUrl(){
+		const url = new URL('ws', document.baseURI);
+		url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+		return url;
+	}
+	function subscriptions(){ return ['runs'].concat(selectedRun ? ['run:'+selectedRun] : []); }
+	function subscribe(){
+		if(socket && socket.readyState === WebSocket.OPEN){
+			socket.send(JSON.stringify({type:'subscribe',topics:subscriptions()}));
 		}
+	}
+	function connect(){
+		wsState.textContent='connecting';
+		socket = new WebSocket(socketUrl());
+		socket.onopen=()=>{ wsState.textContent='live'; reconnectDelay=500; subscribe(); };
+		socket.onclose=()=>{ wsState.textContent='reconnecting'; setTimeout(connect,reconnectDelay); reconnectDelay=Math.min(reconnectDelay*2,10000); };
+		socket.onerror=()=>socket.close();
+		socket.onmessage=async event=>{
+			let raw=event.data;
+			if(raw instanceof Blob) raw=await raw.text();
+			let data; try{ data=JSON.parse(raw); }catch(_){ return; }
+			if(data.type==='gap') window.dispatchEvent(new CustomEvent('kuu-stream-gap',{detail:data}));
+			if(data.type!=='envelope') return;
+			window.dispatchEvent(new CustomEvent('kuu-envelope',{detail:data}));
+			const body=data.envelope&&data.envelope.body;
+			if(body&&body.type==='event'&&body.kind==='enqueued'){
+				pendingRuns++;
+				newButton.hidden=false;
+				newButton.querySelector('span').textContent=String(pendingRuns);
+			}
+		};
+	}
 
-		function buildBase() {
-			const t = tokens();
-			return {
-				backgroundColor: 'transparent',
-				animation: false,
-				tooltip: {
-					trigger: 'axis',
-					backgroundColor: t.PAPER,
-					borderColor: t.HAIR,
-					borderWidth: 1,
-					textStyle: { color: t.INK, fontSize: 11, fontFamily: "'Geist Mono', monospace" },
-					axisPointer: { lineStyle: { color: t.HAIR } }
-				},
-				legend: {
-					data: ['enqueued', 'succeeded', 'failed', 'retried', 'dead'],
-					right: 0,
-					top: 0,
-					itemWidth: 12,
-					itemHeight: 2,
-					textStyle: { fontSize: 10, fontFamily: "'Geist Mono', monospace", color: t.INK3 }
-				},
-				grid: { left: 32, right: 8, top: 28, bottom: 20, containLabel: false },
-				xAxis: {
-					type: 'category',
-					boundaryGap: false,
-					axisLine: { lineStyle: { color: t.HAIR } },
-					axisTick: { show: false },
-					axisLabel: {
-						color: t.INK3, fontSize: 10,
-						fontFamily: "'Geist Mono', monospace",
-						interval: 11
-					},
-					splitLine: { show: false }
-				},
-				yAxis: {
-					type: 'value',
-					minInterval: 1,
-					axisLine: { show: false },
-					axisTick: { show: false },
-					axisLabel: { color: t.INK3, fontSize: 10, fontFamily: "'Geist Mono', monospace" },
-					splitLine: { lineStyle: { color: t.HAIR } }
-				},
-				series: [
-					{ name: 'enqueued', type: 'line', smooth: false, showSymbol: false, lineStyle: { color: t.INK, width: 1.5 }, itemStyle: { color: t.INK } },
-					{ name: 'succeeded', type: 'line', smooth: false, showSymbol: false, lineStyle: { color: t.GOOD, width: 1.5 }, itemStyle: { color: t.GOOD } },
-					{ name: 'failed', type: 'line', smooth: false, showSymbol: false, lineStyle: { color: t.BAD, width: 1.5 }, itemStyle: { color: t.BAD } },
-					{ name: 'retried', type: 'line', smooth: false, showSymbol: false, lineStyle: { color: t.INK3, width: 1.5 }, itemStyle: { color: t.INK3 } },
-					{ name: 'dead', type: 'line', smooth: false, showSymbol: false, lineStyle: { color: t.BAD_DARK, width: 1.5 }, itemStyle: { color: t.BAD_DARK } },
-				]
-			};
+	window.kuuOpenRun=function(runId, push=true){
+		selectedRun=runId||'';
+		subscribe();
+		if(push){
+			const url=new URL(location.href);
+			if(selectedRun) url.searchParams.set('run',selectedRun); else url.searchParams.delete('run');
+			history.pushState({},'',url);
 		}
-
-		chart.setOption(buildBase());
-
-		async function refresh() {
-			try {
-				const r = await fetch('api/activity');
-				const d = await r.json();
-				chart.setOption({
-					xAxis: { data: d.times.map(t => new Date(t).toLocaleTimeString()) },
-					series: [
-						{ name: 'enqueued', data: d.enqueued },
-						{ name: 'succeeded', data: d.succeeded },
-						{ name: 'failed', data: d.failed },
-						{ name: 'retried', data: d.retried },
-						{ name: 'dead', data: d.dead },
-					]
-				});
-			} catch (_) { }
+		if(!selectedRun){
+			document.getElementById('run-detail-pane').innerHTML='<div class="run-empty"><strong>Select a Run</strong><span>Attempts, progress, logs, and failures appear here.</span></div>';
+			return;
 		}
+		htmx.ajax('GET','fragments/task-run-detail?message_id='+encodeURIComponent(selectedRun),{target:'#run-detail-pane',swap:'innerHTML'});
+	};
+	window.addEventListener('popstate',()=>kuuOpenRun(new URL(location.href).searchParams.get('run')||'',false));
+	newButton.addEventListener('click',()=>{
+		pendingRuns=0; newButton.hidden=true;
+		if(window.kuuLiveOnly) window.dispatchEvent(new CustomEvent('kuu-apply-new-runs'));
+		else htmx.ajax('GET','fragments/task-runs',{target:'#task-runs-frag',swap:'innerHTML'});
+	});
+	connect();
+	const linkedRun=new URL(location.href).searchParams.get('run');
+	if(linkedRun) kuuOpenRun(linkedRun,false);
 
-		refresh();
-		setInterval(refresh, 3000);
-		window.addEventListener('resize', () => chart.resize());
-
-		window.addEventListener('kuu-theme-change', () => {
-			chart.setOption(buildBase(), true);
-			refresh();
-		});
-	}());
+	const drawer=document.getElementById('system-drawer');
+	let chart;
+	drawer.addEventListener('toggle',()=>{
+		if(!drawer.open||chart||!window.echarts) return;
+		const el=document.getElementById('activity-chart');
+		chart=echarts.init(el,null,{renderer:'svg'});
+		async function refresh(){
+			try{
+				const d=await (await fetch('api/activity')).json();
+				const css=getComputedStyle(document.documentElement);
+				chart.setOption({animation:false,grid:{left:34,right:10,top:12,bottom:22},tooltip:{trigger:'axis'},xAxis:{type:'category',boundaryGap:false,data:d.times.map(t=>new Date(t).toLocaleTimeString()),axisLabel:{color:css.getPropertyValue('--ink-3'),fontSize:9}},yAxis:{type:'value',minInterval:1,splitLine:{lineStyle:{color:css.getPropertyValue('--hair')}}},series:[['enqueued','--signal'],['succeeded','--good'],['failed','--bad'],['retried','--amber']].map(([name,color])=>({name,type:'line',showSymbol:false,data:d[name],lineStyle:{width:1.5,color:css.getPropertyValue(color)}}))});
+			}catch(_){}
+		}
+		refresh(); setInterval(refresh,5000);
+	});
+})();
 </script>
-
 {% endblock %}

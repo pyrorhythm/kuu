@@ -56,6 +56,7 @@ class Events:
 			"task_enqueued",
 			"task_received",
 			"task_started",
+			"task_result",
 			"task_succeeded",
 			"task_failed",
 			"task_retried",

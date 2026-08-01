@@ -1,10 +1,20 @@
 from kuu.observability._broker_key import broker_key
-from kuu.observability._codec import envelope_from_bytes, envelope_to_bytes
+from kuu.observability._codec import (
+	command_from_bytes,
+	command_response_from_bytes,
+	command_response_to_bytes,
+	command_to_bytes,
+	envelope_from_bytes,
+	envelope_to_bytes,
+)
 from kuu.observability._commands import (
+	CancelCmd,
 	Cmd,
 	CmdResponse,
 	EnqueueCmd,
 	RemoveJobCmd,
+	ReplayCmd,
+	RetryCmd,
 	TriggerJobCmd,
 )
 from kuu.observability._local import InMemoryRegistry, MpQueueSink, MpQueueSource
@@ -31,7 +41,7 @@ from kuu.observability._protocol import (
 	TaskParam,
 	WorkerSnapshot,
 )
-from kuu.observability._ws import WsUplink
+from kuu.observability._ws import BrowserStream, WsUplink
 
 __all__ = [
 	"PROTOCOL_VERSION",
@@ -60,11 +70,19 @@ __all__ = [
 	"MpQueueSource",
 	"Cmd",
 	"EnqueueCmd",
+	"ReplayCmd",
+	"RetryCmd",
+	"CancelCmd",
 	"TriggerJobCmd",
 	"RemoveJobCmd",
 	"CmdResponse",
 	"WsUplink",
+	"BrowserStream",
 	"envelope_to_bytes",
 	"envelope_from_bytes",
+	"command_to_bytes",
+	"command_from_bytes",
+	"command_response_to_bytes",
+	"command_response_from_bytes",
 	"broker_key",
 ]

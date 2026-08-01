@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from kuu.config import PersistenceConfig
 from kuu.persistence._backend import NoopBackend, PersistenceBackend
-from kuu.persistence._rows import LogRow, PendingRun, RunRow
+from kuu.persistence._rows import LogRow, LogicalRunRow, PendingRun, RunRow
 from kuu.persistence._worker import PersistenceWorker
 
 
@@ -32,6 +32,7 @@ __all__ = [
 	"PersistenceWorker",
 	"NoopBackend",
 	"RunRow",
+	"LogicalRunRow",
 	"PendingRun",
 	"LogRow",
 	"create_backend",

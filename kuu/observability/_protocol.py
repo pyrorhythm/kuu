@@ -7,12 +7,12 @@ from typing import Any, Literal, Protocol
 from msgspec import Struct, field
 
 from kuu._util import utcnow
+from kuu.result import RemoteFailure
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 
-EventKind = Literal[
-	"enqueued", "started", "succeeded", "failed", "retried", "dead", "cancelled"
-]
+EventKind = Literal["enqueued", "started", "succeeded", "failed", "retried", "dead", "cancelled"]
+ObservationKind = Literal["log", "stdout", "stderr", "progress", "gap"]
 ByeReason = Literal["sigterm", "sigint", "crash", "manual"]
 
 
@@ -78,9 +78,14 @@ class Event(Struct, frozen=True, tag="event"):
 	attempt: int | None = None
 	args: Any | None = None
 	kwargs: Any | None = None
+	headers: Any | None = None
+	input_complete: bool = False
+	result_preview: Any | None = None
 	exc_type: str | None = None
 	exc_message: str | None = None
 	traceback: str | None = None
+	failure: RemoteFailure | None = None
+	replay_of: str | None = None
 
 
 class LogRecord(Struct, frozen=True):
@@ -90,6 +95,12 @@ class LogRecord(Struct, frozen=True):
 	logger: str
 	message: str
 	ts: float
+	kind: ObservationKind = "log"
+	seq: int = 0
+	fields: dict[str, Any] = field(default_factory=dict)
+	current: float | None = None
+	total: float | None = None
+	dropped: int = 0
 
 
 class LogBatch(Struct, frozen=True, tag="log_batch"):
@@ -142,6 +153,7 @@ class InstanceRegistry(Protocol):
 __all__ = [
 	"PROTOCOL_VERSION",
 	"EventKind",
+	"ObservationKind",
 	"ByeReason",
 	"BrokerInfo",
 	"WorkerSnapshot",

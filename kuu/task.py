@@ -20,18 +20,24 @@ class Task[**P, Res]:
 	max_attempts: int = 5
 	timeout: float | None = None
 	blocking: bool = False
+	capture_args: bool = False
+	capture_headers: bool = False
+	capture_result: bool = False
 	_bound_app: Kuu | None = None
 
 	def __init__(
-			self,
-			manager: Kuu,
-			original_func: _FnAny[P, Res],
-			task_name: str,
-			task_queue: str,
-			task_labels: Mapping[str, Any],
-			max_attempts: int = 5,
-			timeout: float | None = None,
-			blocking: bool = False,
+		self,
+		manager: Kuu,
+		original_func: _FnAny[P, Res],
+		task_name: str,
+		task_queue: str,
+		task_labels: Mapping[str, Any],
+		max_attempts: int = 5,
+		timeout: float | None = None,
+		blocking: bool = False,
+		capture_args: bool = False,
+		capture_headers: bool = False,
+		capture_result: bool = False,
 	) -> None:
 		self._bound_app = manager
 
@@ -44,11 +50,14 @@ class Task[**P, Res]:
 		self.max_attempts = max_attempts
 		self.timeout = timeout
 		self.blocking = blocking
+		self.capture_args = capture_args
+		self.capture_headers = capture_headers
+		self.capture_result = capture_result
 
 		if blocking and inspect.iscoroutinefunction(original_func):
 			raise TypeError(
-					f"task {task_name!r}: blocking=True is for sync functions; "
-					"async functions should not be offloaded to a thread"
+				f"task {task_name!r}: blocking=True is for sync functions; "
+				"async functions should not be offloaded to a thread"
 			)
 
 	async def __call__(self, *args: P.args, **kwargs: P.kwargs) -> Res:

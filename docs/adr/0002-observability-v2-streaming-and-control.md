@@ -1,0 +1,3 @@
+# Use protocol v2 for streaming observation and control
+
+Observability uses a coordinated protocol-v2 cutover with no v1 compatibility. Worker uplinks are bidirectional for idempotent operator commands, while browsers subscribe to compact Run updates or selected Run details through bounded WebSocket streams with monotonic cursors and persistence catch-up; overload is reported as an explicit gap and never blocks task execution. Without persistence the dashboard is explicitly live-only. Authentication and authorization remain the embedding application's responsibility, while standalone serving defaults to localhost with debug disabled.

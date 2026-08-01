@@ -25,6 +25,7 @@ class DashboardFragmentsMixin:
 	stats: StatsCollector
 	jinja: Environment
 	persistence_backend: "PersistenceBackend | None" = None
+	trace_url_template: str | None = None
 
 	def _render(self, name: str, **ctx) -> str:
 		return self.jinja.get_template(name).render(**ctx)
@@ -69,24 +70,23 @@ class DashboardFragmentsMixin:
 			groups: dict[str, dict] = {}
 			for entry in self.registry.all():
 				broker = entry.hello.broker
-				key = broker.key or f"{broker.type}:?"
+				broker_key = broker.key or f"{broker.type}:?"
 				preset = entry.hello.preset
+				key = f"{broker_key}:{preset}"
 				g = groups.setdefault(
 					key,
 					{
 						"broker_type": broker.type,
-						"broker_key": key,
-						"broker_key_short": (key[:12] + "…") if len(key) > 13 else key,
-						"presets": [],
-						"instance": entry.instance_id,
+						"broker_key": broker_key,
+						"broker_key_short": (broker_key[:12] + "…")
+						if len(broker_key) > 13
+						else broker_key,
+						"presets": [preset],
+						"target": preset,
 						"tasks": [],
 						"_seen_task_names": set(),
 					},
 				)
-				if preset not in g["presets"]:
-					g["presets"].append(preset)
-				if not g["instance"]:
-					g["instance"] = entry.instance_id
 				for t in entry.hello.tasks:
 					if t.name in g["_seen_task_names"]:
 						continue
@@ -104,7 +104,14 @@ class DashboardFragmentsMixin:
 			for name in sorted(self.app.registry.names()):
 				t = self.app.registry.get(name)
 				if t is not None:
-					tasks.append(t)
+					tasks.append(
+						{
+							"name": t.task_name,
+							"queue": t.task_queue,
+							"max_attempts": t.max_attempts,
+							"timeout": t.timeout,
+						}
+					)
 			if not tasks:
 				return []
 			return [
@@ -113,7 +120,7 @@ class DashboardFragmentsMixin:
 					"broker_key": "",
 					"broker_key_short": "",
 					"presets": ["default"],
-					"instance": None,
+					"target": "",
 					"tasks": tasks,
 				}
 			]
@@ -178,7 +185,7 @@ class DashboardFragmentsMixin:
 							"id": j.id,
 							"task": j.task,
 							"next_run": j.next_run,
-							"instance": entry.instance_id,
+							"target": entry.hello.preset,
 						}
 					)
 			return HTMLResponse(
@@ -194,7 +201,13 @@ class DashboardFragmentsMixin:
 
 	async def _frag_task_run_detail(self, request: Request) -> HTMLResponse:
 		mid = request.query_params.get("message_id", "")
-		return HTMLResponse(self._render("fragments/task_run_detail.html", message_id=mid))
+		return HTMLResponse(
+			self._render(
+				"fragments/task_run_detail.html",
+				message_id=mid,
+				trace_url_template=self.trace_url_template,
+			)
+		)
 
 	# ── broker ──────────────────────────────────────────────────────
 

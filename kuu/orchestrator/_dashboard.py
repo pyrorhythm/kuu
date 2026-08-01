@@ -39,7 +39,11 @@ class DashboardRunner:
 
 		kuu = import_object(self._config.app)  # type: ignore[arg-type]
 		import_tasks(self._config.task_modules, pattern=(), fs_discover=False)
-		dashboard = Dashboard(app=kuu, orchestrator=self._orch)
+		dashboard = Dashboard(
+			app=kuu,
+			orchestrator=self._orch,
+			trace_url_template=self._config.persistence.trace_url_template,
+		)
 		asgi_app = dashboard.build_app()
 
 		async def _serve_dashboard() -> None:

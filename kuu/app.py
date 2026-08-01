@@ -55,6 +55,9 @@ class Kuu:
 		max_attempts: int = ...,
 		timeout: float | None = ...,
 		blocking: bool = ...,
+		capture_args: bool = ...,
+		capture_headers: bool = ...,
+		capture_result: bool = ...,
 		**labels: Any,
 	) -> _Wrap[P, R]: ...
 
@@ -69,6 +72,9 @@ class Kuu:
 		max_attempts: int = 5,
 		timeout: float | None = None,
 		blocking: bool = False,
+		capture_args: bool = False,
+		capture_headers: bool = False,
+		capture_result: bool = False,
 		**labels: Any,
 	) -> _Wrap[P, R] | Task[P, R]:
 		"""Register function as a task
@@ -80,6 +86,9 @@ class Kuu:
 		:param max_attempts: retry budget before the task is declared dead.
 		:param timeout: per-run wall-clock limit in seconds; `None` means no limit.
 		:param blocking: when `True`, offloads a sync function to a thread.
+		:param capture_args: retain bounded, redacted inputs for observability and recovery.
+		:param capture_headers: retain bounded, redacted message headers.
+		:param capture_result: retain a bounded, redacted result preview.
 		:param labels: arbitrary metadata attached to the task.
 		"""
 
@@ -96,6 +105,9 @@ class Kuu:
 					max_attempts=max_attempts,
 					timeout=timeout,
 					blocking=blocking,
+					capture_args=capture_args,
+					capture_headers=capture_headers,
+					capture_result=capture_result,
 				)
 				self.registry.add(t)
 				return t
