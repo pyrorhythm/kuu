@@ -34,6 +34,7 @@ from kuu.orchestrator._worker import WorkerPool
 log = logging.getLogger("kuu.orchestrator")
 
 STATE_INTERVAL = 2.0
+HELLO_INTERVAL = 30.0
 
 
 class PresetSupervisor:
@@ -183,7 +184,15 @@ class PresetSupervisor:
 			log.exception("event=supervisor.events_sink_failed error=%s", e)
 
 	async def _emit_state_loop(self) -> None:
+		last_hello = anyio.current_time()
 		while not self._stop_event.is_set():
+			# re-announce periodically: a collector that stopped hearing from us needs
+			# Hello to show the instance again — it is what carries the preset and the
+			# task registry, and State alone cannot rebuild them
+			now = anyio.current_time()
+			if now - last_hello >= HELLO_INTERVAL:
+				last_hello = now
+				self._emit(self._snapshots().build_hello())
 			state = await self._snapshots().build_state()
 			self._emit(state)
 			with anyio.move_on_after(STATE_INTERVAL):

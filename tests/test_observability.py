@@ -157,6 +157,50 @@ class TestInMemoryRegistry:
 		assert reg.get("i-1") is None
 		assert reg.all() == []
 
+	def test_stale_instance_revives_on_next_state(self) -> None:
+		"""A gap in telemetry must not be terminal.
+
+		Only Hello can create an entry and a producer emits it rarely, so dropping a
+		stale entry outright hid a still-running instance from the dashboard forever.
+		"""
+		reg = InMemoryRegistry(stale_after=timedelta(seconds=0.05))
+		reg.ingest(_make_envelope(_hello()))
+		time.sleep(0.1)
+		assert reg.get("i-1") is None
+
+		reg.ingest(_make_envelope(State(workers=[WorkerSnapshot(pid=7, alive=True)])))
+		entry = reg.get("i-1")
+		assert entry is not None
+		assert entry.hello.preset == "dev"
+		assert entry.last_state is not None
+
+	def test_forgotten_instance_does_not_revive(self) -> None:
+		reg = InMemoryRegistry(
+			stale_after=timedelta(seconds=0.02), forget_after=timedelta(seconds=0.05)
+		)
+		reg.ingest(_make_envelope(_hello()))
+		time.sleep(0.1)
+		assert reg.all() == []  # read triggers the forget sweep
+
+		reg.ingest(_make_envelope(State()))
+		assert reg.get("i-1") is None
+
+	def test_last_seen_uses_arrival_not_producer_clock(self) -> None:
+		"""Producer ts and collector clock are different processes.
+
+		A backlogged transport delivers envelopes stamped long ago; treating that stamp
+		as liveness evicts a producer that is in fact healthy but behind.
+		"""
+		reg = InMemoryRegistry(stale_after=timedelta(seconds=5.0))
+		stale_env = Envelope(
+			v=PROTOCOL_VERSION,
+			instance="i-1",
+			ts=dt.now(tz=tz.utc) - timedelta(minutes=1),
+			body=_hello(),
+		)
+		reg.ingest(stale_env)
+		assert reg.get("i-1") is not None
+
 	def test_re_hello_preserves_last_state(self) -> None:
 		"""same instance reconnecting (same id) keeps its prior state snapshot"""
 		reg = InMemoryRegistry()

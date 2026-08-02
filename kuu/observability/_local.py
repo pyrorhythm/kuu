@@ -18,6 +18,7 @@ from kuu.observability._protocol import (
 )
 
 _STALE_AFTER = timedelta(seconds=5.0)
+_FORGET_AFTER = timedelta(minutes=10)
 
 
 class MpQueueSink:
@@ -65,13 +66,22 @@ class MpQueueSource:
 
 
 class InMemoryRegistry:
-	def __init__(self, stale_after: timedelta = _STALE_AFTER) -> None:
+	def __init__(
+		self,
+		stale_after: timedelta = _STALE_AFTER,
+		forget_after: timedelta = _FORGET_AFTER,
+	) -> None:
 		self._entries: dict[str, _Entry] = {}
 		self._stale_after = stale_after
+		self._forget_after = max(forget_after, stale_after)
 
 	def ingest(self, envelope: Envelope) -> None:
 		entry = self._entries.get(envelope.instance)
 		body = envelope.body
+		# stamped on arrival rather than taken from envelope.ts: those clocks belong to
+		# different processes, and a backlogged transport would otherwise deliver
+		# envelopes that are already older than stale_after, reading as a dead producer
+		now = utcnow()
 
 		match body:
 			case Hello():
@@ -79,30 +89,42 @@ class InMemoryRegistry:
 					instance_id=envelope.instance,
 					hello=body,
 					last_state=entry.last_state if entry else None,
-					last_seen=envelope.ts,
+					last_seen=now,
 				)
 			case State() if entry is not None:
 				entry.last_state = body
-				entry.last_seen = envelope.ts
+				entry.last_seen = now
 			case Bye():
 				self._entries.pop(envelope.instance, None)
 			case _ if entry is not None:
-				entry.last_seen = envelope.ts
+				entry.last_seen = now
 			case _:
 				pass
 
 	def get(self, instance_id: str) -> InstanceInfo | None:
-		self._evict_stale()
+		self._forget_expired()
 		entry = self._entries.get(instance_id)
-		return entry.snapshot() if entry is not None else None
+		if entry is None or self._is_stale(entry):
+			return None
+		return entry.snapshot()
 
 	def all(self) -> list[InstanceInfo]:
-		self._evict_stale()
-		return [e.snapshot() for e in self._entries.values()]
+		self._forget_expired()
+		return [e.snapshot() for e in self._entries.values() if not self._is_stale(e)]
 
-	def _evict_stale(self) -> None:
+	def _is_stale(self, entry: _Entry) -> bool:
+		return utcnow() - entry.last_seen > self._stale_after
+
+	def _forget_expired(self) -> None:
+		"""Drop entries silent long enough that the producer is certainly gone.
+
+		Going stale only hides an entry — its ``hello`` is kept, so the next ``State``
+		brings the instance straight back. Dropping it outright made any gap longer
+		than ``stale_after`` permanent: only ``Hello`` can create an entry, and a
+		producer emits it rarely.
+		"""
 		now = utcnow()
-		dead = [iid for iid, e in self._entries.items() if now - e.last_seen > self._stale_after]
+		dead = [iid for iid, e in self._entries.items() if now - e.last_seen > self._forget_after]
 		for iid in dead:
 			del self._entries[iid]
 
