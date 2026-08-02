@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from kuu._util import utcnow
+from kuu.persistence._rows import DashboardStats
 
 if TYPE_CHECKING:
 	from kuu.app import Kuu
@@ -68,6 +69,13 @@ class StatsCollector:
 	def ingest(self, event: str, task: str, ts: datetime) -> None:
 		self.totals[event] += 1
 		self.events_log.append(EventRecord(ts, task, event))
+
+	def dashboard_stats(self, since: datetime) -> DashboardStats:
+		totals = {name: 0 for name in ("enqueued", "succeeded", "failed", "retried", "dead")}
+		for event in self.events_log:
+			if event.ts >= since and event.event in totals:
+				totals[event.event] += 1
+		return DashboardStats(totals=totals)
 
 	def activity_series(
 		self, buckets: int = 60, bucket_sec: timedelta = timedelta(seconds=5)

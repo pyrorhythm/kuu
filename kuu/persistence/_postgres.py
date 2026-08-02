@@ -12,6 +12,7 @@ from kuu.config import PersistenceConfig
 from kuu.marshal import marshal as _m
 from kuu.persistence._backend import PersistenceBackend
 from kuu.persistence._rows import (
+	DashboardStats,
 	LogRow,
 	LogicalRunRow,
 	RunRow,
@@ -388,11 +389,36 @@ class PostgresBackend(PersistenceBackend):
 			)
 		return LogicalRunRow.fromrecord(row) if row is not None else None
 
+	async def query_dashboard_stats(self, since: datetime) -> DashboardStats:
+		assert self._pool is not None
+		lrt = self._qualified_logical_runs
+		since_naive = to_naive(since)
+		async with self._pool.acquire() as conn:
+			row = await conn.fetchrow(
+				f"""SELECT
+					COUNT(*) FILTER (WHERE created_at >= $1) AS enqueued,
+					COUNT(*) FILTER (WHERE status = 'succeeded' AND updated_at >= $1) AS succeeded,
+					COUNT(*) FILTER (WHERE status = 'failed' AND updated_at >= $1) AS failed,
+					COALESCE(SUM(GREATEST(attempt_count - 1, 0))
+						FILTER (WHERE created_at >= $1), 0) AS retried,
+					COUNT(*) FILTER (WHERE dead_lettered AND updated_at >= $1) AS dead
+					FROM {lrt}""",
+				since_naive,
+			)
+		return DashboardStats(
+			totals={
+				name: int(row[name])
+				for name in ("enqueued", "succeeded", "failed", "retried", "dead")
+			}
+		)
+
 	async def query_logical_runs(
 		self,
 		*,
 		task: str | None = None,
 		status: str | None = None,
+		queue: str | None = None,
+		search: str | None = None,
 		before: datetime | None = None,
 		after: datetime | None = None,
 		limit: int = 100,
@@ -401,15 +427,28 @@ class PostgresBackend(PersistenceBackend):
 		assert self._pool is not None
 		where: list[str] = []
 		params: list[Any] = []
+		if task is not None:
+			params.append(task)
+			where.append(f"POSITION(lower(${len(params)}) IN lower(task)) > 0")
 		for value, column, operator in (
-			(task, "task", "="),
 			(status, "status", "="),
+			(queue, "queue", "="),
 			(to_naive(before), "updated_at", "<="),
 			(to_naive(after), "updated_at", ">="),
 		):
 			if value is not None:
 				params.append(value)
 				where.append(f"{column} {operator} ${len(params)}")
+		if search is not None:
+			params.append(search)
+			position = len(params)
+			where.append(
+				f"""(POSITION(lower(${position}) IN lower(message_id)) > 0
+					OR POSITION(lower(${position}) IN lower(task)) > 0
+					OR EXISTS (SELECT 1 FROM {self._qualified_runs} AS attempt
+						WHERE attempt.message_id = {self._qualified_logical_runs}.message_id
+							AND POSITION(lower(${position}) IN lower(COALESCE(attempt.exc_message, ''))) > 0))"""
+			)
 		params.extend([limit, offset])
 		async with self._pool.acquire() as conn:
 			rows = await conn.fetch(

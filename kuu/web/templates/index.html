@@ -1,102 +1,157 @@
 {% extends "base.html" %}
-{% block title %}kuu run control{% endblock %}
+{% block title %}kuu dashboard{% endblock %}
 {% block content %}
 
-<div class="mission-kicker">
-	<span>KUU / RUN CONTROL</span>
-	<span class="live-beacon"><i></i><span id="ws-state">connecting</span></span>
-</div>
-
-<div hx-get="fragments/stats" hx-trigger="load, every 5s" hx-swap="innerHTML">
-	<div class="stat-strip">
-		<div class="stat-cell"><div class="stat-num dim">-</div><div class="stat-key">enqueued</div></div>
-		<div class="stat-cell"><div class="stat-num dim">-</div><div class="stat-key">succeeded</div></div>
-		<div class="stat-cell"><div class="stat-num dim">-</div><div class="stat-key">failed</div></div>
-		<div class="stat-cell"><div class="stat-num dim">-</div><div class="stat-key">retried</div></div>
-		<div class="stat-cell"><div class="stat-num dim">-</div><div class="stat-key">dead-lettered</div></div>
+<section class="ops-summary" aria-label="24 hour operational summary">
+	<div id="ops-summary-metrics" hx-get="fragments/stats" hx-trigger="load, every 10s" hx-swap="innerHTML">
+		<div class="summary-head is-loading"><span class="placeholder">loading 24 hour summary…</span></div>
 	</div>
-</div>
-
-<div class="run-toolbar">
-	<div>
-		<strong>Runs</strong>
-		<span class="dim">live and retained task executions</span>
+	<div class="summary-lower">
+		<div class="activity-ledger">
+			<div class="summary-label">live activity <span>last 5 minutes</span></div>
+			<div id="activity-chart" class="activity-chart" aria-label="Task activity chart"></div>
+		</div>
+		<div class="queue-ledger">
+			<div class="summary-label">queues <span>pending / scheduled</span></div>
+			<div class="queue-inline" id="ops-summary-queues"><span class="dim">loading…</span></div>
+		</div>
 	</div>
-	<button class="new-runs" id="new-runs" hidden><span>0</span> new — apply</button>
-</div>
+</section>
 
-<div class="run-control-grid">
-	<section class="run-pane run-list-pane" aria-label="Runs">
+<section class="view-panel" data-view-panel="runs">
+	<div id="runs-list-view">
+		<div class="workspace-head">
+			<div><span class="eyebrow">operations</span><h1>runs</h1></div>
+			<div class="workspace-actions">
+				<button class="btn new-runs" id="new-runs" hidden><span>0</span>&nbsp;new runs</button>
+				<a class="btn btn-primary" href="?view=tasks">launch task</a>
+			</div>
+		</div>
 		<div id="task-runs-frag" hx-get="fragments/task-runs" hx-trigger="load" hx-swap="innerHTML">
-			<p class="placeholder">acquiring run telemetry…</p>
-		</div>
-	</section>
-	<section class="run-pane run-detail-pane" id="run-detail-pane" aria-label="Selected Run">
-		<div class="run-empty">
-			<img src="static/kuu-moon.svg" alt="" width="34" height="34">
-			<strong>Select a Run</strong>
-			<span>Attempts, progress, logs, and failures appear here.</span>
-		</div>
-	</section>
-</div>
-
-<details class="system-drawer" id="system-drawer">
-	<summary>System telemetry <span>presets · tasks · schedules · queues</span></summary>
-	<div class="system-grid">
-		<div class="surface">
-			<div class="surface-head"><span class="surface-title">activity</span></div>
-			<div class="surface-body"><div id="activity-chart" style="height:180px;width:100%"></div></div>
-		</div>
-		<div class="surface">
-			<div class="surface-head"><span class="surface-title">presets</span></div>
-			<div class="surface-body flush" hx-get="fragments/presets" hx-trigger="revealed, every 5s" hx-swap="innerHTML"></div>
-		</div>
-		<div class="surface system-wide">
-			<div class="surface-head"><span class="surface-title">tasks / manual launch</span></div>
-			<div class="surface-body flush" hx-get="fragments/tasks" hx-trigger="revealed, every 10s" hx-swap="innerHTML"></div>
-		</div>
-		<div class="surface">
-			<div class="surface-head"><span class="surface-title">scheduler</span></div>
-			<div id="scheduler-frag" class="surface-body flush" hx-get="fragments/scheduler" hx-trigger="revealed, every 10s" hx-swap="innerHTML"></div>
-		</div>
-		<div class="surface">
-			<div class="surface-head"><span class="surface-title">queues</span></div>
-			<div class="surface-body flush" hx-get="fragments/queues" hx-trigger="revealed, every 5s" hx-swap="innerHTML"></div>
+			<p class="placeholder">loading runs…</p>
 		</div>
 	</div>
-</details>
+	<div id="run-detail-view" hidden>
+		<div id="run-detail-pane"><p class="placeholder">loading run…</p></div>
+	</div>
+</section>
+
+<section class="view-panel" data-view-panel="tasks" hidden>
+	<div class="workspace-head">
+		<div><span class="eyebrow">definitions</span><h1>tasks</h1></div>
+	</div>
+	<div class="flat-section" hx-get="fragments/tasks" hx-trigger="load, every 10s" hx-swap="innerHTML">
+		<p class="placeholder">loading tasks…</p>
+	</div>
+</section>
+
+<section class="view-panel" data-view-panel="system" hidden>
+	<div class="workspace-head">
+		<div><span class="eyebrow">runtime</span><h1>system</h1></div>
+	</div>
+	<div class="system-sections">
+		<section class="flat-section">
+			<header><h2>presets</h2><span>instances and worker capacity</span></header>
+			<div hx-get="fragments/presets" hx-trigger="load, every 5s" hx-swap="innerHTML"></div>
+		</section>
+		<section class="flat-section">
+			<header><h2>scheduler</h2><span>registered jobs and next execution</span></header>
+			<div id="scheduler-frag" hx-get="fragments/scheduler" hx-trigger="load, every 10s" hx-swap="innerHTML"></div>
+		</section>
+		<section class="flat-section">
+			<header><h2>queues</h2><span>in-flight and broker depth</span></header>
+			<div hx-get="fragments/queues" hx-trigger="load, every 5s" hx-swap="innerHTML"></div>
+		</section>
+	</div>
+</section>
 
 <script src="https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js"></script>
 <script>
 (function(){
-	let selectedRun = '';
-	let pendingRuns = 0;
+	const url=new URL(location.href);
+	const allowedViews=new Set(['runs','tasks','system']);
+	const view=allowedViews.has(url.searchParams.get('view'))?url.searchParams.get('view'):'runs';
+	let selectedRun=url.searchParams.get('run')||'';
+	let pendingRuns=0;
 	let socket;
-	let reconnectDelay = 500;
-	const newButton = document.getElementById('new-runs');
-	const wsState = document.getElementById('ws-state');
+	let chart;
+	let reconnectDelay=500;
+	const newButton=document.getElementById('new-runs');
+	const wsState=document.getElementById('ws-state');
+
+	function applyView(name,push){
+		if(!allowedViews.has(name)) name='runs';
+		document.querySelectorAll('[data-view-panel]').forEach(panel=>panel.hidden=panel.dataset.viewPanel!==name);
+		document.querySelectorAll('[data-view-link]').forEach(link=>{
+			link.classList.toggle('active',link.dataset.viewLink===name);
+			link.setAttribute('aria-current',link.dataset.viewLink===name?'page':'false');
+		});
+		if(push){
+			const next=new URL(location.href);
+			next.searchParams.set('view',name);
+			history.pushState({},'',next);
+		}
+	}
+	applyView(view,false);
+	document.addEventListener('click',event=>{
+		const link=event.target.closest('a[href^="?view="]');
+		if(!link||event.metaKey||event.ctrlKey||event.shiftKey||event.button!==0) return;
+		event.preventDefault();
+		applyView(new URL(link.href).searchParams.get('view'),true);
+	});
+
+	async function refreshActivityChart(){
+		const el=document.getElementById('activity-chart');
+		if(!el||!window.echarts) return;
+		if(!chart||chart.getDom()!==el){
+			chart?.dispose();
+			chart=echarts.init(el,null,{renderer:'svg'});
+		}
+		try{
+			const data=await (await fetch('api/activity')).json();
+			const css=getComputedStyle(document.documentElement);
+			const color=name=>css.getPropertyValue(name).trim();
+			chart.setOption({
+				animation:false,
+				grid:{left:30,right:8,top:8,bottom:18},
+				tooltip:{trigger:'axis',backgroundColor:color('--paper'),borderColor:color('--hair'),textStyle:{color:color('--ink'),fontFamily:'Geist Mono',fontSize:11}},
+				xAxis:{type:'category',boundaryGap:false,data:data.times.map(time=>new Date(time).toLocaleTimeString([], {minute:'2-digit',second:'2-digit'})),axisLine:{lineStyle:{color:color('--hair')}},axisTick:{show:false},axisLabel:{color:color('--ink-3'),fontFamily:'Geist Mono',fontSize:9,interval:14}},
+				yAxis:{type:'value',minInterval:1,axisLine:{show:false},axisTick:{show:false},axisLabel:{color:color('--ink-3'),fontFamily:'Geist Mono',fontSize:9},splitLine:{lineStyle:{color:color('--hair-2')}}},
+				series:[['enqueued','--ink'],['succeeded','--good'],['failed','--bad'],['retried','--ink-3']].map(([name,token])=>({name,type:'line',showSymbol:false,data:data[name],lineStyle:{width:1.5,color:color(token)},itemStyle:{color:color(token)}}))
+			},true);
+		}catch(_){}
+	}
+	window.addEventListener('kuu-theme-change',refreshActivityChart);
+	window.addEventListener('resize',()=>chart?.resize());
+	refreshActivityChart();
+	setInterval(refreshActivityChart,5000);
 
 	function socketUrl(){
-		const url = new URL('ws', document.baseURI);
-		url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-		return url;
+		const target=new URL('ws',document.baseURI);
+		target.protocol=location.protocol==='https:'?'wss:':'ws:';
+		return target;
 	}
-	function subscriptions(){ return ['runs'].concat(selectedRun ? ['run:'+selectedRun] : []); }
+	function subscriptions(){ return ['runs'].concat(selectedRun?['run:'+selectedRun]:[]); }
 	function subscribe(){
-		if(socket && socket.readyState === WebSocket.OPEN){
+		if(socket&&socket.readyState===WebSocket.OPEN){
 			socket.send(JSON.stringify({type:'subscribe',topics:subscriptions()}));
 		}
 	}
+	function setLive(text,live){
+		if(!wsState) return;
+		wsState.textContent=text;
+		wsState.closest('.live-state').classList.toggle('is-live',live);
+	}
 	function connect(){
-		wsState.textContent='connecting';
-		socket = new WebSocket(socketUrl());
-		socket.onopen=()=>{ wsState.textContent='live'; reconnectDelay=500; subscribe(); };
-		socket.onclose=()=>{ wsState.textContent='reconnecting'; setTimeout(connect,reconnectDelay); reconnectDelay=Math.min(reconnectDelay*2,10000); };
+		setLive('connecting',false);
+		socket=new WebSocket(socketUrl());
+		socket.onopen=()=>{ setLive('live',true); reconnectDelay=500; subscribe(); };
+		socket.onclose=()=>{ setLive('reconnecting',false); setTimeout(connect,reconnectDelay); reconnectDelay=Math.min(reconnectDelay*2,10000); };
 		socket.onerror=()=>socket.close();
 		socket.onmessage=async event=>{
 			let raw=event.data;
 			if(raw instanceof Blob) raw=await raw.text();
-			let data; try{ data=JSON.parse(raw); }catch(_){ return; }
+			let data; try{data=JSON.parse(raw);}catch(_){return;}
 			if(data.type==='gap') window.dispatchEvent(new CustomEvent('kuu-stream-gap',{detail:data}));
 			if(data.type!=='envelope') return;
 			window.dispatchEvent(new CustomEvent('kuu-envelope',{detail:data}));
@@ -109,45 +164,44 @@
 		};
 	}
 
-	window.kuuOpenRun=function(runId, push=true){
+	function updateRunUrl(runId,push,tab){
+		const next=new URL(location.href);
+		next.searchParams.set('view','runs');
+		if(runId) next.searchParams.set('run',runId); else next.searchParams.delete('run');
+		if(tab) next.searchParams.set('run_tab',tab); else if(!runId) next.searchParams.delete('run_tab');
+		if(push) history.pushState({},'',next);
+	}
+	window.kuuOpenRun=function(runId,push=true,tab=''){
 		selectedRun=runId||'';
 		subscribe();
-		if(push){
-			const url=new URL(location.href);
-			if(selectedRun) url.searchParams.set('run',selectedRun); else url.searchParams.delete('run');
-			history.pushState({},'',url);
-		}
+		updateRunUrl(selectedRun,push,tab);
+		const list=document.getElementById('runs-list-view');
+		const detail=document.getElementById('run-detail-view');
+		list.hidden=Boolean(selectedRun);
+		detail.hidden=!selectedRun;
 		if(!selectedRun){
-			document.getElementById('run-detail-pane').innerHTML='<div class="run-empty"><strong>Select a Run</strong><span>Attempts, progress, logs, and failures appear here.</span></div>';
+			document.getElementById('run-detail-pane').innerHTML='<p class="placeholder">select a run.</p>';
 			return;
 		}
-		htmx.ajax('GET','fragments/task-run-detail?message_id='+encodeURIComponent(selectedRun),{target:'#run-detail-pane',swap:'innerHTML'});
+		const activeTab=tab||new URL(location.href).searchParams.get('run_tab')||'';
+		const params=new URLSearchParams({message_id:selectedRun});
+		if(activeTab) params.set('tab',activeTab);
+		htmx.ajax('GET','fragments/task-run-detail?'+params,{target:'#run-detail-pane',swap:'innerHTML'});
 	};
-	window.addEventListener('popstate',()=>kuuOpenRun(new URL(location.href).searchParams.get('run')||'',false));
+	window.kuuBackToRuns=function(){ window.kuuOpenRun('',true); };
+	window.addEventListener('popstate',()=>{
+		const current=new URL(location.href);
+		applyView(current.searchParams.get('view')||'runs',false);
+		window.kuuOpenRun(current.searchParams.get('run')||'',false,current.searchParams.get('run_tab')||'');
+	});
 	newButton.addEventListener('click',()=>{
-		pendingRuns=0; newButton.hidden=true;
+		pendingRuns=0;
+		newButton.hidden=true;
 		if(window.kuuLiveOnly) window.dispatchEvent(new CustomEvent('kuu-apply-new-runs'));
 		else htmx.ajax('GET','fragments/task-runs',{target:'#task-runs-frag',swap:'innerHTML'});
 	});
 	connect();
-	const linkedRun=new URL(location.href).searchParams.get('run');
-	if(linkedRun) kuuOpenRun(linkedRun,false);
-
-	const drawer=document.getElementById('system-drawer');
-	let chart;
-	drawer.addEventListener('toggle',()=>{
-		if(!drawer.open||chart||!window.echarts) return;
-		const el=document.getElementById('activity-chart');
-		chart=echarts.init(el,null,{renderer:'svg'});
-		async function refresh(){
-			try{
-				const d=await (await fetch('api/activity')).json();
-				const css=getComputedStyle(document.documentElement);
-				chart.setOption({animation:false,grid:{left:34,right:10,top:12,bottom:22},tooltip:{trigger:'axis'},xAxis:{type:'category',boundaryGap:false,data:d.times.map(t=>new Date(t).toLocaleTimeString()),axisLabel:{color:css.getPropertyValue('--ink-3'),fontSize:9}},yAxis:{type:'value',minInterval:1,splitLine:{lineStyle:{color:css.getPropertyValue('--hair')}}},series:[['enqueued','--signal'],['succeeded','--good'],['failed','--bad'],['retried','--amber']].map(([name,color])=>({name,type:'line',showSymbol:false,data:d[name],lineStyle:{width:1.5,color:css.getPropertyValue(color)}}))});
-			}catch(_){}
-		}
-		refresh(); setInterval(refresh,5000);
-	});
+	if(view==='runs'&&selectedRun) window.kuuOpenRun(selectedRun,false,url.searchParams.get('run_tab')||'');
 })();
 </script>
 {% endblock %}

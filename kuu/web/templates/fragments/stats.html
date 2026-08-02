@@ -1,60 +1,22 @@
-<div class="stat-strip">
-  <div class="stat-cell">
-    <div class="stat-num">{{ totals['enqueued'] or 0 }}</div>
-    <div class="stat-key">enqueued</div>
-  </div>
-  <div class="stat-cell">
-    <div class="stat-num{% if totals['succeeded'] %} good{% endif %}">{{ totals['succeeded'] or 0 }}</div>
-    <div class="stat-key">succeeded</div>
-  </div>
-  <div class="stat-cell">
-    <div class="stat-num{% if totals['failed'] %} bad{% endif %}">{{ totals['failed'] or 0 }}</div>
-    <div class="stat-key">failed</div>
-  </div>
-  <div class="stat-cell">
-    <div class="stat-num dim">{{ totals['retried'] or 0 }}</div>
-    <div class="stat-key">retried</div>
-  </div>
-  <div class="stat-cell">
-    <div class="stat-num{% if totals['dead'] %} bad{% endif %}">{{ totals['dead'] or 0 }}</div>
-    <div class="stat-key">dead</div>
-  </div>
-  {% if broker_info.scheduled is defined %}
-  <div class="stat-cell">
-    <div class="stat-num dim">{{ broker_info.scheduled }}</div>
-    <div class="stat-key">scheduled</div>
-  </div>
-  {% endif %}
-  {% if broker_info.pending is defined %}
-  <div class="stat-cell">
-    <div class="stat-num dim">{{ broker_info.pending }}</div>
-    <div class="stat-key">pending</div>
-  </div>
-  {% endif %}
+<div class="summary-head">
+	<span class="eyebrow">last 24 hours</span>
+	<div class="summary-metrics">
+		{% for name in ('enqueued', 'succeeded', 'failed', 'retried', 'dead') %}
+		<div class="summary-metric{% if name in ('failed', 'dead') and totals[name] %} is-warn{% elif name == 'succeeded' and totals[name] %} is-good{% endif %}">
+			<strong>{{ "{:,}".format(totals[name] or 0) }}</strong>
+			<span>{{ name }}</span>
+		</div>
+		{% endfor %}
+	</div>
 </div>
 
-{% if broker_info.queues %}
-<div class="surface queue-table-wrap" style="margin-top: var(--s-4);">
-  <div class="surface-head"><span class="surface-title">queues</span></div>
-  <div class="surface-body flush">
-    <table class="kuu-table">
-      <thead>
-        <tr>
-          <th>queue</th>
-          <th>stream</th>
-          <th>scheduled</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for q, info in broker_info.queues.items() %}
-        <tr>
-          <td class="mono-cell">{{ q }}</td>
-          <td>{{ info.stream }}</td>
-          <td class="dim">{{ info.scheduled }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+<div class="queue-inline" id="ops-summary-queues" hx-swap-oob="true">
+	{% for queue in queues %}
+	<span{% if queue.dead %} class="is-warn"{% endif %}>
+		<b>{{ queue.name }}</b>
+		<code>{{ queue.pending if queue.pending is not none else '—' }}/{{ queue.scheduled if queue.scheduled is not none else '—' }}</code>
+	</span>
+	{% else %}
+	<span class="dim">queue telemetry unavailable</span>
+	{% endfor %}
 </div>
-{% endif %}

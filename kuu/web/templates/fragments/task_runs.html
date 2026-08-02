@@ -1,7 +1,6 @@
-<div class="run-list-head">
-	<label class="filter-search"><span>⌕</span><input id="tr-filter-task" placeholder="filter task…" autocomplete="off"></label>
-	<select id="tr-filter-status" class="filter-select" aria-label="Filter status">
-		<option value="">all states</option>
+<div class="run-filters" role="search">
+	<label><span>status</span><select id="tr-filter-status" aria-label="filter by status">
+		<option value="">all</option>
 		<option value="enqueued">enqueued</option>
 		<option value="running">running</option>
 		<option value="cancel_requested">cancel requested</option>
@@ -9,17 +8,20 @@
 		<option value="succeeded">succeeded</option>
 		<option value="failed">failed</option>
 		<option value="cancelled">cancelled</option>
-	</select>
+	</select></label>
+	<label><span>task</span><input id="tr-filter-task" placeholder="task name" autocomplete="off"></label>
+	<label><span>queue</span><input id="tr-filter-queue" placeholder="queue name" autocomplete="off"></label>
+	<label class="filter-grow"><span>search</span><input id="tr-filter-search" placeholder="run id or error" autocomplete="off"></label>
 </div>
 <div class="run-table-scroll">
 	<table class="kuu-table run-table" id="task-runs-table">
-		<thead><tr><th>task / run</th><th>attempt telemetry</th><th>state</th><th>elapsed</th><th>finished</th></tr></thead>
+		<thead><tr><th>Status</th><th>Task</th><th>Queue</th><th>Attempts</th><th>Duration</th><th>Updated</th></tr></thead>
 		<tbody id="task-runs-tbody"></tbody>
 	</table>
 </div>
-<div class="tasks-foot" id="task-runs-foot">
-	<div class="tasks-page-info" id="task-runs-page">acquiring…</div>
-	<div class="pager"><button class="btn" id="tr-btn-prev" disabled>←</button><button class="btn" id="tr-btn-next" disabled>→</button></div>
+<div class="table-foot" id="task-runs-foot">
+	<span id="task-runs-page">loading…</span>
+	<div class="pager"><button class="btn" id="tr-btn-prev" disabled>previous</button><button class="btn" id="tr-btn-next" disabled>next</button></div>
 </div>
 
 <script>
@@ -27,37 +29,52 @@
 	window.kuuRunListAbort?.abort();
 	const controller=new AbortController();
 	window.kuuRunListAbort=controller;
-	let offset=0, filterTimer, liveOnly=false;
+	const currentUrl=new URL(location.href);
+	let offset=Math.max(0,parseInt(currentUrl.searchParams.get('offset')||'0',10)||0);
+	let filterTimer,liveOnly=false;
 	const liveRows=new Map();
 	const visibleLiveRuns=new Set();
 	const LIMIT=100;
 	const status=document.getElementById('tr-filter-status');
 	const task=document.getElementById('tr-filter-task');
+	const queue=document.getElementById('tr-filter-queue');
+	const search=document.getElementById('tr-filter-search');
+	status.value=currentUrl.searchParams.get('status')||'';
+	task.value=currentUrl.searchParams.get('task')||'';
+	queue.value=currentUrl.searchParams.get('queue')||'';
+	search.value=currentUrl.searchParams.get('search')||'';
 
+	function syncUrl(){
+		const url=new URL(location.href);
+		for(const [name,value] of [['status',status.value],['task',task.value.trim()],['queue',queue.value.trim()],['search',search.value.trim()]]){
+			if(value) url.searchParams.set(name,value); else url.searchParams.delete(name);
+		}
+		if(offset) url.searchParams.set('offset',String(offset)); else url.searchParams.delete('offset');
+		history.replaceState({},'',url);
+	}
 	function loadRuns(){
-		const params=new URLSearchParams({limit:LIMIT,offset});
+		syncUrl();
+		const params=new URLSearchParams({limit:String(LIMIT),offset:String(offset)});
 		if(status.value) params.set('status',status.value);
 		if(task.value.trim()) params.set('task',task.value.trim());
-		fetch('api/task-runs?'+params).then(r=>r.json()).then(d=>{
-			if(!d.rows) return;
-			liveOnly=Boolean(d.live_only);
+		if(queue.value.trim()) params.set('queue',queue.value.trim());
+		if(search.value.trim()) params.set('search',search.value.trim());
+		fetch('api/task-runs?'+params).then(response=>response.json()).then(data=>{
+			if(!data.rows) return;
+			liveOnly=Boolean(data.live_only);
 			window.kuuLiveOnly=liveOnly;
-			const runs=d.runs&&!liveOnly ? parentRuns(d.runs) : groupRuns(d.rows);
+			const runs=data.runs&&!liveOnly?parentRuns(data.runs):groupRuns(data.rows);
 			renderRows(runs);
-			document.getElementById('task-runs-page').textContent=liveOnly ? 'LIVE-ONLY · no retained history' : (runs.length ? `${offset+1}–${offset+runs.length}` : 'no Runs');
+			document.getElementById('task-runs-page').textContent=liveOnly?'live only · history unavailable':(runs.length?`${offset+1}–${offset+runs.length}`:'no runs');
 			document.getElementById('tr-btn-prev').disabled=offset===0;
 			document.getElementById('tr-btn-next').disabled=runs.length<LIMIT;
-		}).catch(()=>document.getElementById('task-runs-page').textContent='telemetry unavailable');
+		}).catch(()=>document.getElementById('task-runs-page').textContent='Run telemetry unavailable');
 	}
 	function parentRuns(items){
 		return items.map(item=>{
-			const attempts=item.attempts.length?item.attempts:[{message_id:item.message_id,attempt:0,task:item.task,status:item.status}];
+			const attempts=item.attempts.length?item.attempts:[{message_id:item.message_id,attempt:0,task:item.task,queue:item.queue,status:item.status}];
 			const recorded=attempts[attempts.length-1];
-			return {
-				id:item.message_id,
-				attempts,
-				latest:{...recorded,task:item.task,status:item.status,instance_id:item.instance_id,dead_lettered:item.dead_lettered,finished_at:['succeeded','failed','cancelled'].includes(item.status)?item.updated_at:null},
-			};
+			return {id:item.message_id,attempts,latest:{...recorded,task:item.task,queue:item.queue,status:item.status,updated_at:item.updated_at,dead_lettered:item.dead_lettered}};
 		});
 	}
 	function groupRuns(rows){
@@ -74,65 +91,67 @@
 	}
 	function renderRows(runs){
 		const tbody=document.getElementById('task-runs-tbody');
-		if(!runs.length){ tbody.innerHTML='<tr><td colspan="5" class="placeholder">No Runs match this view.</td></tr>'; return; }
-		const selected=new URL(location.href).searchParams.get('run');
+		if(!runs.length){tbody.innerHTML='<tr><td colspan="6" class="placeholder">no runs match these filters.</td></tr>';return;}
 		tbody.innerHTML=runs.map(run=>{
-			const r=run.latest;
-			const short=run.id.length>10?run.id.slice(0,10)+'…':run.id;
-			const elapsed=r.time_elapsed!=null?r.time_elapsed.toFixed(2)+'s':'—';
-			const finished=r.finished_at?new Date(r.finished_at).toISOString().replace('T',' ').slice(5,19):'live';
-			const dlq=r.status==='dead'||r.dead_lettered;
-			const display=dlq?'failed':r.status;
-			const rail=run.attempts.map((a,i)=>`<i class="rail-node ${stateClass(a.status)}" title="Attempt ${i+1}: ${esc(a.status)}"><b>${i+1}</b></i>`).join('<span></span>');
-			return `<tr class="task-run-row ${selected===run.id?'selected':''}" data-mid="${esc(run.id)}">
-				<td><strong>${esc(r.task)}</strong><small class="mono">${esc(short)}</small></td>
-				<td><div class="attempt-rail">${rail}</div></td>
-				<td><span class="status-badge ${badge(r.status)}">${esc(display)}</span>${dlq?'<em class="dlq-chip">DLQ</em>':''}</td>
-				<td class="mono-cell">${elapsed}</td><td class="mono-cell dim">${finished}</td></tr>`;
+			const item=run.latest;
+			const elapsed=item.time_elapsed!=null?item.time_elapsed.toFixed(2)+'s':'—';
+			const updated=item.updated_at||item.finished_at||item.started_at;
+			const updatedText=updated?new Date(updated).toISOString().replace('T',' ').slice(5,19):'—';
+			const dlq=item.status==='dead'||item.dead_lettered;
+			const display=dlq?'failed':item.status;
+			return `<tr class="task-run-row" data-mid="${esc(run.id)}" tabindex="0">
+				<td><span class="status-text ${statusClass(item.status)}">${esc(display)}</span>${dlq?'<small class="state-note">DLQ</small>':''}</td>
+				<td><strong>${esc(item.task)}</strong><small class="run-id">${esc(run.id)}</small></td>
+				<td class="mono-cell">${esc(item.queue||'—')}</td>
+				<td class="mono-cell">${run.attempts.length}</td>
+				<td class="mono-cell">${elapsed}</td>
+				<td class="mono-cell dim">${updatedText}</td></tr>`;
 		}).join('');
-		tbody.querySelectorAll('.task-run-row').forEach(row=>row.addEventListener('click',()=>{
-			if(liveOnly){ document.getElementById('run-detail-pane').innerHTML='<div class="run-empty"><strong>Live-only Run</strong><span>Enable persistence for Attempts, logs, failures, Retry, and Replay.</span></div>'; return; }
-			window.kuuOpenRun(row.dataset.mid);
-		}));
+		tbody.querySelectorAll('.task-run-row').forEach(row=>{
+			const open=()=>{
+				if(liveOnly){window.kuuToast?.('Enable persistence to inspect this Run',false);return;}
+				window.kuuOpenRun(row.dataset.mid);
+			};
+			row.addEventListener('click',open);
+			row.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();open();}});
+		});
 	}
-	function badge(value){ if(value==='succeeded')return 'sb-ok'; if(value==='dead'||value==='failed')return 'sb-err'; if(value==='retried'||value==='unknown'||value==='lost'||value==='cancel_requested')return 'sb-retry'; if(value==='started'||value==='running'||value==='enqueued')return 'sb-running'; return ''; }
-	function stateClass(value){ return value==='succeeded'?'ok':value==='dead'||value==='failed'?'bad':value==='retried'||value==='unknown'||value==='lost'?'retry':value==='started'?'live':'idle'; }
-	function esc(value){ return String(value??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
+	function statusClass(value){if(value==='succeeded')return 'is-good';if(value==='dead'||value==='failed')return 'is-warn';return '';}
+	function esc(value){return String(value??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');}
+	function filtersChanged(){clearTimeout(filterTimer);filterTimer=setTimeout(()=>{offset=0;loadRuns();},180);}
+	function filteredLiveRows(){
+		let rows=Array.from(liveRows.values()).filter(item=>visibleLiveRuns.has(item.message_id));
+		if(status.value) rows=rows.filter(item=>item.status===status.value);
+		if(task.value.trim()) rows=rows.filter(item=>(item.task||'').toLowerCase().includes(task.value.trim().toLowerCase()));
+		if(queue.value.trim()) rows=rows.filter(item=>(item.queue||'').toLowerCase()===queue.value.trim().toLowerCase());
+		const term=search.value.trim().toLowerCase();
+		if(term) rows=rows.filter(item=>(item.message_id||'').toLowerCase().includes(term)||(item.task||'').toLowerCase().includes(term));
+		return rows;
+	}
 
 	document.getElementById('tr-btn-prev').addEventListener('click',()=>{offset=Math.max(0,offset-LIMIT);loadRuns();});
 	document.getElementById('tr-btn-next').addEventListener('click',()=>{offset+=LIMIT;loadRuns();});
 	status.addEventListener('change',()=>{offset=0;loadRuns();});
-	task.addEventListener('input',()=>{clearTimeout(filterTimer);filterTimer=setTimeout(()=>{offset=0;loadRuns();},180);});
+	for(const input of [task,queue,search]) input.addEventListener('input',filtersChanged);
 	window.addEventListener('kuu-envelope',event=>{
 		const envelope=event.detail.envelope||{};
 		const body=envelope.body;
 		if(!body||body.type!=='event'||!body.message_id) return;
 		if(liveOnly){
 			const key=body.message_id+':'+(body.attempt||0);
-			const row=liveRows.get(key)||{message_id:body.message_id,attempt:body.attempt||0,task:body.task,instance_id:envelope.instance};
+			const row=liveRows.get(key)||{message_id:body.message_id,attempt:body.attempt||0,task:body.task,queue:body.queue,instance_id:envelope.instance};
 			row.status=body.kind;
 			row.time_elapsed=body.elapsed;
-			if(body.kind==='started'&&!row.started_at) row.started_at=body.ts||envelope.ts;
-			if(['succeeded','dead','cancelled'].includes(body.kind)) row.finished_at=body.ts||envelope.ts;
+			row.updated_at=body.ts||envelope.ts;
 			liveRows.set(key,row);
-			if(!visibleLiveRuns.has(body.message_id)) return;
-			let rows=Array.from(liveRows.values()).filter(item=>visibleLiveRuns.has(item.message_id));
-			if(status.value) rows=rows.filter(item=>item.status===status.value);
-			if(task.value.trim()) rows=rows.filter(item=>item.task.includes(task.value.trim()));
-			renderRows(groupRuns(rows));
+			if(visibleLiveRuns.has(body.message_id)) renderRows(groupRuns(filteredLiveRows()));
 			return;
 		}
-		if(body.kind!=='enqueued'){
-			const row=document.querySelector(`.task-run-row[data-mid="${CSS.escape(body.message_id)}"]`);
-			if(row) loadRuns();
-		}
+		if(body.kind!=='enqueued'&&document.querySelector(`.task-run-row[data-mid="${CSS.escape(body.message_id)}"]`)) loadRuns();
 	},{signal:controller.signal});
 	window.addEventListener('kuu-apply-new-runs',()=>{
 		for(const row of liveRows.values()) visibleLiveRuns.add(row.message_id);
-		let rows=Array.from(liveRows.values());
-		if(status.value) rows=rows.filter(item=>item.status===status.value);
-		if(task.value.trim()) rows=rows.filter(item=>item.task.includes(task.value.trim()));
-		renderRows(groupRuns(rows));
+		renderRows(groupRuns(filteredLiveRows()));
 	},{signal:controller.signal});
 	loadRuns();
 })();

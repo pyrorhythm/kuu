@@ -38,6 +38,8 @@ return #items
 type _KT = bytes | str | memoryview
 type _ST = int | _KT
 
+_MOVE_LIMIT = 512
+
 log = logging.getLogger("kuu.brokers.redis")
 
 
@@ -182,16 +184,17 @@ class RedisBroker(Broker[RedisReceipt]):
 
 		move_sha = self._move_sha
 
-		async def _tick() -> None:
+		async def _tick() -> bool:
 			now = utcnow().timestamp()
-			await asyncio.gather(
+			moved = await asyncio.gather(
 				*[
 					_asyncify(self.r.evalsha)(
-						move_sha, 2, self._zset(q), self._stream(q), str(now), "128"
+						move_sha, 2, self._zset(q), self._stream(q), str(now), str(_MOVE_LIMIT)
 					)
 					for q in queues
 				]
 			)
+			return any(int(n) >= _MOVE_LIMIT for n in moved)
 
 		async def _idle() -> None:
 			await anyio.sleep(0.5)
@@ -240,38 +243,60 @@ class RedisBroker(Broker[RedisReceipt]):
 		for q in queues:
 			await self.declare(q)
 
-		last_claim = 0.0
-		claim_interval = max(1.0, self.claim_min_idle_ms / 1000 / 2)
+		count = max(1, prefetch)
+		streams: dict[_KT, _ST] = {self._stream(q): ">" for q in queues}
+		q_by_stream = {self._stream(q): q for q in queues}
 
-		handle = asyncio.ensure_future(self._pump_scheduled(queues))
+		# buffer decouples XREADGROUP from dispatch: without it the generator is
+		# pull-driven, so the next read only starts once the caller has drained and
+		# started the whole previous batch, and fetch never overlaps execution
+		send, recv = anyio.create_memory_object_stream[Delivery[RedisReceipt]](count)
 
-		try:
-			streams: dict[_KT, _ST] = {self._stream(q): ">" for q in queues}
-			q_by_stream = {self._stream(q): q for q in queues}
+		async def _read() -> None:
+			async with send:
+				while True:
+					resp = await self.r.xreadgroup(
+						self.group, self.consumer, streams, count=count, block=self.block_ms
+					)
+					if not resp:
+						continue
+					for stream_name, entries in resp:
+						q = q_by_stream[
+							stream_name.decode() if isinstance(stream_name, bytes) else stream_name
+						]
+						for sid, data in entries:
+							await send.send(
+								Delivery(
+									message=self.serializer.unmarshal(data[b"m"], into=Message),
+									receipt=RedisReceipt(queue=q, stream_id=sid),
+									queue=q,
+								)
+							)
+
+		async def _claim() -> None:
+			interval = max(1.0, self.claim_min_idle_ms / 1000 / 2)
 			while True:
-				now = anyio.current_time()
-				if now - last_claim >= claim_interval:
-					last_claim = now
-					for q in queues:
-						await self._claim_stale(q)
+				for q in queues:
+					await self._claim_stale(q)
+				await anyio.sleep(interval)
 
-				resp = await self.r.xreadgroup(
-					self.group, self.consumer, streams, count=prefetch, block=self.block_ms
-				)
-				if not resp:
-					continue
-				for stream_name, entries in resp:
-					q = q_by_stream[
-						stream_name.decode() if isinstance(stream_name, bytes) else stream_name
-					]
-					for sid, data in entries:
-						yield Delivery(
-							message=self.serializer.unmarshal(data[b"m"], into=Message),
-							receipt=RedisReceipt(queue=q, stream_id=sid),
-							queue=q,
-						)
+		tasks = [
+			asyncio.ensure_future(self._pump_scheduled(queues)),
+			asyncio.ensure_future(_read()),
+			asyncio.ensure_future(_claim()),
+		]
+		try:
+			async with recv:
+				async for delivery in recv:
+					yield delivery
+			# reader exited: surface its failure instead of ending the consume loop quietly
+			for task in tasks:
+				if task.done() and not task.cancelled() and task.exception() is not None:
+					raise cast(BaseException, task.exception())
 		finally:
-			handle.cancel()
+			for task in tasks:
+				task.cancel()
+			await asyncio.gather(*tasks, return_exceptions=True)
 
 	@_ensure_connected
 	async def revoke(self, task_id: str) -> None:

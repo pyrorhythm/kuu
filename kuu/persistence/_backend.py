@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Protocol
 
-from kuu.persistence._rows import LogRow, LogicalRunRow, RunRow
+from kuu.persistence._rows import DashboardStats, LogRow, LogicalRunRow, RunRow
 
 
 class PersistenceBackend(Protocol):
@@ -21,11 +21,15 @@ class PersistenceBackend(Protocol):
 
 	async def get_logical_run(self, message_id: str) -> LogicalRunRow | None: ...
 
+	async def query_dashboard_stats(self, since: datetime) -> DashboardStats: ...
+
 	async def query_logical_runs(
 		self,
 		*,
 		task: str | None = None,
 		status: str | None = None,
+		queue: str | None = None,
+		search: str | None = None,
 		before: datetime | None = None,
 		after: datetime | None = None,
 		limit: int = 100,
@@ -88,6 +92,12 @@ class NoopBackend:
 
 	async def get_logical_run(self, message_id: str) -> LogicalRunRow | None:
 		return None
+
+	async def query_dashboard_stats(self, since: datetime) -> DashboardStats:
+		del since
+		return DashboardStats(
+			totals={name: 0 for name in ("enqueued", "succeeded", "failed", "retried", "dead")}
+		)
 
 	async def query_logical_runs(self, **kwargs) -> list[LogicalRunRow]:
 		return []

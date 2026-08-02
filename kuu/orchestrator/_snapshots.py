@@ -138,23 +138,31 @@ class SnapshotBuilder:
 				log.warning("event=snapshots.queues_registry_failed")
 
 		out: dict[str, QueueSnapshot] = {}
-		for q in known_queues:
-			depth = await self._probe_depth(app, q)
-			out[q] = QueueSnapshot(in_flight=self._inflight.get(q, 0), depth=depth)
+		for queue in known_queues:
+			out[queue] = await self._probe_queue(app, queue)
 		return out
 
-	async def _probe_depth(self, app: Kuu | None, queue: str) -> int | None:
+	async def _probe_queue(self, app: Kuu | None, queue: str) -> QueueSnapshot:
+		in_flight = self._inflight.get(queue, 0)
 		if app is None:
-			return None
-		broker = app.broker
-		probe = getattr(broker, "queue_depth", None)
-		if probe is None:
-			return None
+			return QueueSnapshot(in_flight=in_flight)
 		try:
-			return await probe(queue)
+			breakdown = await app.broker.queue_breakdown(queue)
+			if breakdown is not None:
+				pending = breakdown.get("stream")
+				scheduled = breakdown.get("scheduled")
+				return QueueSnapshot(
+					in_flight=in_flight,
+					depth=(pending or 0) + (scheduled or 0),
+					pending=pending,
+					scheduled=scheduled,
+					dead=breakdown.get("dead"),
+				)
+			depth = await app.broker.queue_depth(queue)
+			return QueueSnapshot(in_flight=in_flight, depth=depth, pending=depth)
 		except Exception:
 			log.debug("event=snapshots.probe_depth_failed queue=%s", queue)
-			return None
+			return QueueSnapshot(in_flight=in_flight)
 
 	def _build_jobs(self) -> list[JobSnapshot]:
 		if not self._config.scheduler.enable:

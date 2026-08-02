@@ -153,6 +153,40 @@ async def test_consume_delivers_scheduled_message_via_pump(
 		await broker.close()
 
 
+async def test_consume_reads_ahead_while_caller_is_stalled(redis_transport: RedisTransport):
+	"""Fetching must not be gated on dispatch.
+
+	A caller holding a delivery is the normal case at high concurrency — it is busy
+	starting handlers. If the broker only re-reads once the caller comes back for the
+	next item, inflight collapses to arrival_rate x task_duration no matter how large
+	prefetch and concurrency are.
+	"""
+	broker = _broker(redis_transport, "readahead")
+	await broker.connect()
+	try:
+		await broker.declare("q")
+		await broker.enqueue(_msg())
+
+		agen = broker.consume(["q"], prefetch=16)
+		try:
+			with anyio.fail_after(10.0):
+				await agen.__anext__()
+
+				# caller never asks for another delivery from here on
+				for _ in range(4):
+					await broker.enqueue(_msg())
+
+				while True:
+					pending = await broker.r.xpending(broker._stream("q"), broker.group)
+					if pending["pending"] == 5:
+						break
+					await anyio.sleep(0.05)
+		finally:
+			await agen.aclose()
+	finally:
+		await broker.close()
+
+
 async def _put_in_pel(broker: RedisBroker, queue: str, consumer: str) -> None:
 	"""Read one message into `consumer`'s PEL without acking (simulates a crash)."""
 	resp = await broker.r.xreadgroup(broker.group, consumer, {broker._stream(queue): ">"}, count=1)

@@ -14,6 +14,7 @@ from kuu.config import PersistenceConfig
 from kuu.marshal import marshal as _m
 from kuu.persistence._backend import PersistenceBackend
 from kuu.persistence._rows import (
+	DashboardStats,
 	LogRow,
 	LogicalRunRow,
 	RunRow,
@@ -444,11 +445,43 @@ class SqliteBackend(PersistenceBackend):
 			dead_lettered=bool(row[9]),
 		)
 
+	async def query_dashboard_stats(self, since: datetime) -> DashboardStats:
+		return await anyio.to_thread.run_sync(
+			self._query_dashboard_stats_sync, int(since.timestamp())
+		)
+
+	def _query_dashboard_stats_sync(self, since: int) -> DashboardStats:
+		if not self._initialized:
+			self._connect_sync()
+		lrt = self._cfg.logical_runs_table
+		with self._lock:
+			row = self._conn.execute(
+				f'''SELECT
+					SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END),
+					SUM(CASE WHEN status = 'succeeded' AND updated_at >= ? THEN 1 ELSE 0 END),
+					SUM(CASE WHEN status = 'failed' AND updated_at >= ? THEN 1 ELSE 0 END),
+					SUM(CASE WHEN created_at >= ? THEN MAX(attempt_count - 1, 0) ELSE 0 END),
+					SUM(CASE WHEN dead_lettered = 1 AND updated_at >= ? THEN 1 ELSE 0 END)
+					FROM "{lrt}"''',
+				(since, since, since, since, since),
+			).fetchone()
+		return DashboardStats(
+			totals=dict(
+				zip(
+					("enqueued", "succeeded", "failed", "retried", "dead"),
+					(int(value or 0) for value in row),
+					strict=True,
+				)
+			)
+		)
+
 	async def query_logical_runs(
 		self,
 		*,
 		task: str | None = None,
 		status: str | None = None,
+		queue: str | None = None,
+		search: str | None = None,
 		before: datetime | None = None,
 		after: datetime | None = None,
 		limit: int = 100,
@@ -458,6 +491,8 @@ class SqliteBackend(PersistenceBackend):
 			self._query_logical_runs_sync,
 			task,
 			status,
+			queue,
+			search,
 			int(before.timestamp()) if before is not None else None,
 			int(after.timestamp()) if after is not None else None,
 			limit,
@@ -468,6 +503,8 @@ class SqliteBackend(PersistenceBackend):
 		self,
 		task: str | None,
 		status: str | None,
+		queue: str | None,
+		search: str | None,
 		before: int | None,
 		after: int | None,
 		limit: int,
@@ -476,17 +513,30 @@ class SqliteBackend(PersistenceBackend):
 		if not self._initialized:
 			self._connect_sync()
 		lrt = self._cfg.logical_runs_table
+		rt = self._cfg.runs_table
 		where: list[str] = []
 		params: list[Any] = []
+		if task is not None:
+			where.append("instr(lower(task), lower(?)) > 0")
+			params.append(task)
 		for value, clause in (
-			(task, "task = ?"),
 			(status, "status = ?"),
+			(queue, "queue = ?"),
 			(before, "updated_at <= ?"),
 			(after, "updated_at >= ?"),
 		):
 			if value is not None:
 				where.append(clause)
 				params.append(value)
+		if search is not None:
+			where.append(
+				f'''(instr(lower(message_id), lower(?)) > 0
+					OR instr(lower(task), lower(?)) > 0
+					OR EXISTS (SELECT 1 FROM "{rt}" AS attempt
+						WHERE attempt.message_id = "{lrt}".message_id
+							AND instr(lower(COALESCE(attempt.exc_message, '')), lower(?)) > 0))'''
+			)
+			params.extend([search, search, search])
 		params.extend([limit, offset])
 		with self._lock:
 			rows = self._conn.execute(

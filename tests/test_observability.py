@@ -64,7 +64,7 @@ class TestCodec:
 			State(
 				workers=[WorkerSnapshot(pid=1, alive=True), WorkerSnapshot(pid=2, alive=False)],
 				jobs=[JobSnapshot(id="j1", task="tt", next_run=999.0)],
-				queues={"q": QueueSnapshot(in_flight=3, depth=10)},
+				queues={"q": QueueSnapshot(in_flight=3, depth=10, pending=7, scheduled=3, dead=1)},
 			),
 			Bye(reason="manual"),
 		],

@@ -291,6 +291,103 @@ class TestBackend:
 		assert got[0].input_complete
 		assert got[0].result_preview == {"ok": True}
 
+	async def test_dashboard_stats_cover_last_24_hours(self, backend: PersistenceBackend) -> None:
+		now = _now()
+		runs = [
+			LogicalRunRow(
+				message_id=_uniq("running"),
+				task="task",
+				queue="q",
+				instance_id="i",
+				status="running",
+				created_at=now - timedelta(hours=1),
+				updated_at=now,
+			),
+			LogicalRunRow(
+				message_id=_uniq("succeeded"),
+				task="task",
+				queue="q",
+				instance_id="i",
+				status="succeeded",
+				created_at=now - timedelta(hours=2),
+				updated_at=now,
+			),
+			LogicalRunRow(
+				message_id=_uniq("failed"),
+				task="task",
+				queue="q",
+				instance_id="i",
+				status="failed",
+				created_at=now - timedelta(hours=3),
+				updated_at=now,
+				attempt_count=3,
+				dead_lettered=True,
+			),
+			LogicalRunRow(
+				message_id=_uniq("old"),
+				task="task",
+				queue="q",
+				instance_id="i",
+				status="failed",
+				created_at=now - timedelta(hours=26),
+				updated_at=now - timedelta(hours=25),
+				dead_lettered=True,
+			),
+		]
+		await backend.write_logical_runs(runs)
+
+		stats = await backend.query_dashboard_stats(now - timedelta(hours=24))
+
+		assert stats.totals == {
+			"enqueued": 3,
+			"succeeded": 1,
+			"failed": 1,
+			"retried": 2,
+			"dead": 1,
+		}
+
+	async def test_logical_run_filters_queue_task_and_search(
+		self, backend: PersistenceBackend
+	) -> None:
+		now = _now()
+		mid = _uniq("needle")
+		await backend.write_runs(
+			[
+				RunRow(
+					message_id=mid,
+					task="billing.charge",
+					queue="priority",
+					instance_id="i",
+					status="started",
+					exc_message="gateway timeout",
+				)
+			]
+		)
+		await backend.write_logical_runs(
+			[
+				LogicalRunRow(
+					message_id=mid,
+					task="billing.charge",
+					queue="priority",
+					instance_id="i",
+					status="running",
+					created_at=now,
+					updated_at=now,
+				)
+			]
+		)
+
+		assert [run.message_id for run in await backend.query_logical_runs(task="charge")] == [mid]
+		assert [run.message_id for run in await backend.query_logical_runs(queue="priority")] == [
+			mid
+		]
+		assert [run.message_id for run in await backend.query_logical_runs(search="gateway")] == [
+			mid
+		]
+		assert [run.message_id for run in await backend.query_logical_runs(search="needle")] == [
+			mid
+		]
+
 	async def test_terminal_logical_run_rejects_late_attempt(
 		self, backend: PersistenceBackend
 	) -> None:

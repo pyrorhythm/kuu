@@ -286,6 +286,8 @@ class DashbordAPIMixin:
 		qp = request.query_params
 		task = qp.get("task")
 		status = qp.get("status")
+		queue = qp.get("queue")
+		search = qp.get("search")
 		before = qp.get("before")
 		after = qp.get("after")
 		limit = max(1, min(500, int(qp.get("limit", "100"))))
@@ -295,6 +297,8 @@ class DashbordAPIMixin:
 			runs = await be.query_logical_runs(
 				task=task or None,
 				status=status or None,
+				queue=queue or None,
+				search=search or None,
 				before=datetime.fromtimestamp(float(before), tz=timezone.utc) if before else None,
 				after=datetime.fromtimestamp(float(after), tz=timezone.utc) if after else None,
 				limit=limit,

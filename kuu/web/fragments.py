@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import typing
+from datetime import timedelta
 
 from jinja2 import Environment
 from starlette.requests import Request
 from starlette.responses import HTMLResponse
 
+from kuu._util import utcnow
 from kuu.app import Kuu
 from kuu.observability import InstanceRegistry
 from kuu.orchestrator.main import PresetSupervisor
@@ -43,11 +45,20 @@ class DashboardFragmentsMixin:
 
 	async def _frag_stats(self, _: Request) -> HTMLResponse:
 		broker_info = await self._broker_stats()
+		since = utcnow() - timedelta(hours=24)
+		try:
+			summary = (
+				await self.persistence_backend.query_dashboard_stats(since)
+				if self.persistence_backend is not None
+				else self.stats.dashboard_stats(since)
+			)
+		except Exception:
+			summary = self.stats.dashboard_stats(since)
 		return HTMLResponse(
 			self._render(
 				"fragments/stats.html",
-				totals=self.stats.totals,
-				broker_info=broker_info,
+				totals=summary.totals,
+				queues=self._summary_queues(broker_info),
 			)
 		)
 
@@ -165,13 +176,38 @@ class DashboardFragmentsMixin:
 			for qname, qs in entry.last_state.queues.items():
 				row = agg.setdefault(
 					qname,
-					{"name": qname, "in_flight": 0, "depth": None, "instances": 0},
+					{
+						"name": qname,
+						"in_flight": 0,
+						"depth": None,
+						"pending": None,
+						"scheduled": None,
+						"dead": None,
+						"instances": 0,
+					},
 				)
 				row["in_flight"] += qs.in_flight
 				row["instances"] += 1
 				if qs.depth is not None:
 					row["depth"] = qs.depth
+				for name in ("pending", "scheduled", "dead"):
+					if (value := getattr(qs, name)) is not None:
+						row[name] = value
 		return sorted(agg.values(), key=lambda r: r["name"])
+
+	def _summary_queues(self, broker_info: dict) -> list[dict]:
+		if queues := broker_info.get("queues"):
+			return [
+				{
+					"name": name,
+					"pending": info.get("stream", info.get("total")),
+					"scheduled": info.get("scheduled"),
+					"dead": info.get("dead"),
+					"in_flight": None,
+				}
+				for name, info in sorted(queues.items())
+			]
+		return self._queues_rows()
 
 	async def _frag_scheduler(self, _: Request) -> HTMLResponse:
 		if self.registry is not None:
@@ -201,10 +237,12 @@ class DashboardFragmentsMixin:
 
 	async def _frag_task_run_detail(self, request: Request) -> HTMLResponse:
 		mid = request.query_params.get("message_id", "")
+		tab = request.query_params.get("tab", "")
 		return HTMLResponse(
 			self._render(
 				"fragments/task_run_detail.html",
 				message_id=mid,
+				tab=tab,
 				trace_url_template=self.trace_url_template,
 			)
 		)

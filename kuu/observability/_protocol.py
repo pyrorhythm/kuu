@@ -36,6 +36,9 @@ class JobSnapshot(Struct, frozen=True):
 class QueueSnapshot(Struct, frozen=True):
 	in_flight: int
 	depth: int | None = None
+	pending: int | None = None
+	scheduled: int | None = None
+	dead: int | None = None
 
 
 class TaskParam(Struct, frozen=True):

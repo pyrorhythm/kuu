@@ -29,6 +29,8 @@ class RedisResults(ResultBackend):
 		:param marshal_types: persist type info alongside the payload.
 		:param ttl: default expiry in seconds; ``None`` means no expiry.
 		:param replay: short-circuit task execution when a cached result is present.
+			Costs one extra ``GET`` round-trip before every execution; set ``False``
+			when throughput matters more than dedup.
 		:param store_errors: persist terminal failures so callers can observe them.
 		"""
 		self.serializer = serializer

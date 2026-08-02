@@ -231,6 +231,10 @@ class RunRow(Struct, frozen=True):
 		return RunRow(**rd)
 
 
+class DashboardStats(Struct, frozen=True):
+	totals: dict[str, int]
+
+
 class LogicalRunRow(Struct, frozen=True):
 	message_id: str
 	task: str
